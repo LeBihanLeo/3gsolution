@@ -10,7 +10,8 @@
 | 1 | Setup, Modèles, Auth | TICK-001 → 008 | 5,5 j |
 | 2 | API, Frontend Client | TICK-009 → 016 | 6,0 j |
 | 3 | Paiement, Admin, Email, PWA, Déploiement | TICK-017 → 027 | 6,5 j |
-| **Total** | | **27 tickets** | **~18 j** |
+| 4 | Créneaux 15 min & Suivi commande client | TICK-028 → 030 | 3,0 j |
+| **Total** | | **30 tickets** | **~21 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -494,6 +495,111 @@ Recette complète du flux de commande en environnement de staging/production ave
 
 ---
 
+## Sprint 4 — Créneaux 15 min & Suivi commande client (3,0 j)
+
+### TICK-028 — Créneaux horaires de 15 minutes avec plage restaurant
+**Épic :** Frontend Client
+**Priorité :** 🟠 Haute
+**Sizing :** 1,0 j
+**Dépendances :** TICK-012
+
+**Description :**
+Remplacer le champ créneau libre par un sélecteur de créneaux de 15 minutes générés dynamiquement à partir des horaires d'ouverture du restaurant. Les créneaux sont affichés sous la forme `12:00 – 12:15`, `12:15 – 12:30`, etc. Les horaires sont configurables via des variables d'environnement.
+
+**Périmètre technique :**
+- Nouvelle utility `lib/creneaux.ts` : génère la liste des créneaux depuis `RESTAURANT_OUVERTURE` / `RESTAURANT_FERMETURE` (format `"HH:MM"`) et un pas configurable `RESTAURANT_PAS_MINUTES` (défaut `15`)
+- Modification `models/Commande.ts` : `retrait.creneau` stocke le créneau complet au format `"HH:MM – HH:MM"`
+- Modification `components/client/FormulaireCommande.tsx` : remplacer l'input texte par un `<select>` alimenté par `lib/creneaux.ts`
+- Ajout variables d'env dans `.env.local.example`
+
+**Critères d'acceptance :**
+- [ ] `lib/creneaux.ts` exporte `genererCreneaux(ouverture: string, fermeture: string, pas: number): string[]`
+- [ ] Exemple avec 12:00–14:00 / pas 15 min → 8 créneaux : `12:00 – 12:15` … `13:45 – 14:00`
+- [ ] Le `<select>` est affiché uniquement si le type de retrait est `"creneau"` (comportement conditionnel inchangé)
+- [ ] La valeur soumise au backend est `"12:00 – 12:15"` (chaîne complète)
+- [ ] Validation Zod mise à jour : le champ `creneau` doit correspondre à un créneau valide de la liste générée
+- [ ] Variables d'env : `RESTAURANT_OUVERTURE=12:00`, `RESTAURANT_FERMETURE=14:00`, `RESTAURANT_PAS_MINUTES=15`
+- [ ] Affichage adapté mobile (le select est full-width)
+- [ ] Test : modification des variables d'env → liste recalculée automatiquement au redémarrage
+
+---
+
+### TICK-029 — API publique de suivi de commande
+**Épic :** Suivi commande
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-004, TICK-008
+
+**Description :**
+Créer un endpoint public `GET /api/commandes/suivi` permettant à un client de consulter le statut et les informations non-sensibles de sa commande à partir de son `stripeSessionId`. Cet endpoint ne renvoie **pas** les données personnelles complètes (téléphone masqué, pas d'email).
+
+**Route à créer :**
+
+| Méthode | Route | Action |
+|---------|-------|--------|
+| GET | `/api/commandes/suivi?session_id=xxx` | Statut commande (public, limité) |
+
+**Critères d'acceptance :**
+- [ ] Lookup Mongoose par `stripeSessionId` (index unique → requête O(1))
+- [ ] Réponse en cas de succès (HTTP 200) :
+  ```json
+  {
+    "statut": "payee" | "prete",
+    "retrait": { "type": "immediat" | "creneau", "creneau": "12:00 – 12:15" },
+    "produits": [{ "nom": "...", "quantite": 2 }],
+    "total": 1700,
+    "createdAt": "ISO8601"
+  }
+  ```
+- [ ] Données exclues : `client.telephone`, `client.email`, `stripeSessionId`, `_id`
+- [ ] `session_id` absent ou invalide → HTTP 400 / 404 avec `{ error: "..." }`
+- [ ] Statut `"en_attente_paiement"` → HTTP 404 (commande non encore confirmée par webhook)
+- [ ] Aucune auth requise (public)
+- [ ] Rate limiting recommandé (documenté, non-bloquant pour le ticket)
+
+---
+
+### TICK-030 — Page de suivi commande client (polling temps réel)
+**Épic :** Suivi commande
+**Priorité :** 🟠 Haute
+**Sizing :** 1,5 j
+**Dépendances :** TICK-013, TICK-029
+
+**Description :**
+Refondre `app/(client)/confirmation/page.tsx` en page de suivi active : après le paiement, le client voit l'état de sa commande mis à jour automatiquement toutes les 15 secondes jusqu'à ce qu'elle passe à `"prete"`. Un indicateur visuel clair distingue les deux états (`payee` = en préparation, `prete` = prête à récupérer).
+
+**Comportement attendu :**
+
+```
+[Étape 1] Commande reçue — paiement confirmé
+  └── Indicateur animé "En cours de préparation..."
+  └── Rappel du créneau choisi
+  └── Résumé des produits commandés
+
+[Étape 2] Commande prête (statut → "prete")
+  └── Message mis en avant : "Votre commande est prête ! Venez la récupérer."
+  └── Créneau affiché en gras
+  └── Arrêt du polling
+  └── Notification sonore légère (optionnel, si permissions navigateur)
+```
+
+**Critères d'acceptance :**
+- [ ] Lecture du `session_id` depuis le query param (comportement identique à TICK-013)
+- [ ] Appel initial `GET /api/commandes/suivi?session_id=xxx` au montage du composant
+- [ ] Polling `GET /api/commandes/suivi` toutes les **15 secondes** via `setInterval` + `useEffect`
+- [ ] Le polling s'arrête dès que `statut === "prete"` (pas de requêtes inutiles)
+- [ ] Nettoyage du `setInterval` au démontage du composant (`clearInterval` dans le return du useEffect)
+- [ ] État `payee` : bandeau orange/amber "En préparation" avec animation (pulse ou spinner)
+- [ ] État `prete` : bandeau vert "Commande prête — venez la récupérer !" (icône check)
+- [ ] Résumé non-interactif : liste produits (nom + quantité), total €, créneau de retrait
+- [ ] Le panier localStorage est vidé à l'arrivée sur cette page (identique à TICK-013)
+- [ ] Indicateur discret "Dernière mise à jour : il y a X s"
+- [ ] Gestion `session_id` absent / commande introuvable → message d'erreur + lien retour menu
+- [ ] Bouton "Retour au menu" visible en permanence
+- [ ] Page responsive mobile (le client consulte depuis son téléphone)
+
+---
+
 ## Tickets non-planifiés (post-MVP)
 
 | ID | Description | Complexité |
@@ -518,12 +624,12 @@ Semaine 1 (Jours 1-5)
 Semaine 2 (Jours 6-10)
 ├── J6 : TICK-010 (Page Menu)
 ├── J7 : TICK-011 (Panier localStorage)
-├── J8 : TICK-012 (Formulaire Commande)
+├── J8 : TICK-012 (Formulaire Commande) + TICK-028 (Créneaux 15 min)
 ├── J9 : TICK-017 (Stripe Checkout)
 └── J10 : TICK-018 (Webhook Stripe) + TICK-019 (Email)
 
 Semaine 3 (Jours 11-15)
-├── J11 : TICK-013 (Confirmation) + TICK-014 (Layout Admin)
+├── J11 : TICK-029 (API Suivi) + TICK-030 (Page Suivi) + TICK-014 (Layout Admin)
 ├── J12 : TICK-015 (Admin Commandes)
 ├── J13 : TICK-016 (Admin Menu)
 ├── J14 : TICK-020 (PWA) + TICK-021 (RGPD) + TICK-022 (Deploy)
@@ -532,4 +638,4 @@ Semaine 3 (Jours 11-15)
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.0*
+*Document généré le 2026-03-17 — Version 1.1 (Sprint 4 ajouté le 2026-03-17)*

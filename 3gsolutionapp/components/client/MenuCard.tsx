@@ -72,8 +72,8 @@ export default function MenuCard({ produitId, nom, description, prix, options }:
                 onChange={() => toggleOption(opt)}
                 className="rounded accent-blue-600"
               />
-              <span className="flex-1">{opt.nom}</span>
-              <span className="text-gray-500">+{formatPrix(opt.prix)}</span>
+              <span className="flex-1 text-gray-900">{opt.nom}</span>
+              <span className="text-gray-700">+{formatPrix(opt.prix)}</span>
             </label>
           ))}
         </div>

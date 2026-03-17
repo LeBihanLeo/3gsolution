@@ -87,32 +87,39 @@ export default function AdminCommandesPage() {
         </p>
       )}
 
-      {/* Commandes en attente de préparation */}
-      {commandesPayees.length > 0 && (
-        <section className="mb-8">
-          <h2 className="text-sm font-semibold text-blue-700 uppercase tracking-wider mb-3">
-            À préparer ({commandesPayees.length})
-          </h2>
-          <div className="space-y-3">
-            {commandesPayees.map((c) => (
-              <CommandeRow key={c._id} commande={c} onMarquerPrete={marquerPrete} />
-            ))}
-          </div>
-        </section>
-      )}
+      {/* Commandes en cours et prêtes côte à côte */}
+      {(commandesPayees.length > 0 || commandesPrêtes.length > 0) && (
+        <div className="grid grid-cols-2 gap-6 items-start">
+          {/* Commandes en attente de préparation */}
+          <section>
+            <h2 className="text-sm font-semibold text-blue-700 uppercase tracking-wider mb-3">
+              À préparer ({commandesPayees.length})
+            </h2>
+            <div className="space-y-3">
+              {commandesPayees.map((c) => (
+                <CommandeRow key={c._id} commande={c} onMarquerPrete={marquerPrete} />
+              ))}
+              {commandesPayees.length === 0 && (
+                <p className="text-xs text-gray-400 italic">Aucune commande en cours.</p>
+              )}
+            </div>
+          </section>
 
-      {/* Commandes prêtes */}
-      {commandesPrêtes.length > 0 && (
-        <section>
-          <h2 className="text-sm font-semibold text-green-700 uppercase tracking-wider mb-3">
-            Prêtes ({commandesPrêtes.length})
-          </h2>
-          <div className="space-y-3">
-            {commandesPrêtes.map((c) => (
-              <CommandeRow key={c._id} commande={c} onMarquerPrete={marquerPrete} />
-            ))}
-          </div>
-        </section>
+          {/* Commandes prêtes */}
+          <section>
+            <h2 className="text-sm font-semibold text-green-700 uppercase tracking-wider mb-3">
+              Prêtes ({commandesPrêtes.length})
+            </h2>
+            <div className="space-y-3">
+              {commandesPrêtes.map((c) => (
+                <CommandeRow key={c._id} commande={c} onMarquerPrete={marquerPrete} />
+              ))}
+              {commandesPrêtes.length === 0 && (
+                <p className="text-xs text-gray-400 italic">Aucune commande prête.</p>
+              )}
+            </div>
+          </section>
+        </div>
       )}
     </div>
   );

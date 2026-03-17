@@ -66,17 +66,17 @@ export default function Panier() {
                 onClick={() =>
                   updateQuantity(item.produitId, item.options, item.quantite - 1)
                 }
-                className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center text-lg leading-none hover:bg-gray-100 transition-colors"
+                className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center text-lg leading-none text-gray-900 hover:bg-gray-100 transition-colors"
                 aria-label="Diminuer"
               >
                 −
               </button>
-              <span className="font-medium w-6 text-center">{item.quantite}</span>
+              <span className="font-medium w-6 text-center text-gray-900">{item.quantite}</span>
               <button
                 onClick={() =>
                   updateQuantity(item.produitId, item.options, item.quantite + 1)
                 }
-                className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center text-lg leading-none hover:bg-gray-100 transition-colors"
+                className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center text-lg leading-none text-gray-900 hover:bg-gray-100 transition-colors"
                 aria-label="Augmenter"
               >
                 +

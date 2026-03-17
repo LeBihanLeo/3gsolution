@@ -53,7 +53,10 @@ function eurosToCentimes(str: string): number {
 }
 
 const inputCls =
-  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
+  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500';
+
+const inputFlexCls =
+  'flex-1 min-w-0 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500';
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -218,13 +221,13 @@ export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitForm
                 value={opt.nom}
                 onChange={(e) => updateOption(idx, 'nom', e.target.value)}
                 placeholder="Ex : Fromage supplémentaire"
-                className={`${inputCls} flex-1`}
+                className={inputFlexCls}
               />
               <input
                 value={opt.prix}
                 onChange={(e) => updateOption(idx, 'prix', e.target.value)}
                 placeholder="0,50"
-                className={`${inputCls} w-24`}
+                className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <span className="text-xs text-gray-400">€</span>
               <button

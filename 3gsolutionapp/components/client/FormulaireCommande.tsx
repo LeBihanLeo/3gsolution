@@ -38,7 +38,7 @@ const CRENEAUX = [
 ];
 
 const inputCls =
-  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
+  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500';
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -136,11 +136,11 @@ export default function FormulaireCommande() {
                   <span className="text-gray-400"> ({item.options.map((o) => o.nom).join(', ')})</span>
                 )}
               </span>
-              <span className="font-medium">{formatPrix(itemTotal(item))}</span>
+              <span className="font-medium text-gray-900">{formatPrix(itemTotal(item))}</span>
             </div>
           ))}
         </div>
-        <div className="border-t mt-3 pt-3 flex justify-between font-bold">
+        <div className="border-t mt-3 pt-3 flex justify-between font-bold text-gray-900">
           <span>Total</span>
           <span>{formatPrix(totalPrice)}</span>
         </div>
@@ -193,7 +193,7 @@ export default function FormulaireCommande() {
             Type de retrait <span className="text-red-400">*</span>
           </label>
           <div className="flex gap-4">
-            <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-900">
               <input
                 type="radio"
                 name="typeRetrait"
@@ -204,7 +204,7 @@ export default function FormulaireCommande() {
               />
               Dès que possible
             </label>
-            <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-900">
               <input
                 type="radio"
                 name="typeRetrait"
