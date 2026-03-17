@@ -1,0 +1,50 @@
+# Node modules
+node_modules/
+
+# Next.js build output
+.next/
+out/
+dist/
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor directories and files
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Test coverage
+coverage/
+
+# Optional npm cache folder
+.npm/
+
+# Optional REPL history
+.node_repl_history
+
+# Next.js static cache
+.next/cache
+
+# Mac specific
+.AppleDouble
+.LSOverride
+
+# Optional: public folder generated files
+public/build/
+3gsolutionapp/package-lock.json
