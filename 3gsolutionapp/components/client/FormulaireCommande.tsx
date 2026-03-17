@@ -3,6 +3,11 @@
 import { useState } from 'react';
 import { z } from 'zod';
 import { useCart, CartItem } from '@/lib/cartContext';
+import { creneauxDepuisEnv } from '@/lib/creneaux';
+
+// ─── Créneaux dynamiques (depuis variables d'env NEXT_PUBLIC_) ───────────────
+
+const CRENEAUX = creneauxDepuisEnv();
 
 // ─── Validation ─────────────────────────────────────────────────────────────
 
@@ -31,11 +36,6 @@ function formatPrix(centimes: number): string {
 function itemTotal(item: CartItem): number {
   return (item.prix + item.options.reduce((s, o) => s + o.prix, 0)) * item.quantite;
 }
-
-const CRENEAUX = [
-  '11h30', '12h00', '12h30', '13h00', '13h30',
-  '19h00', '19h30', '20h00', '20h30',
-];
 
 const inputCls =
   'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500';
@@ -76,9 +76,15 @@ export default function FormulaireCommande() {
     }
 
     const creneau = typeRetrait === 'creneau' ? getValue('creneau') : undefined;
-    if (typeRetrait === 'creneau' && !creneau) {
-      setFieldErrors({ creneau: 'Veuillez sélectionner un créneau horaire' });
-      return;
+    if (typeRetrait === 'creneau') {
+      if (!creneau) {
+        setFieldErrors({ creneau: 'Veuillez sélectionner un créneau horaire' });
+        return;
+      }
+      if (!CRENEAUX.includes(creneau)) {
+        setFieldErrors({ creneau: 'Créneau invalide, veuillez en choisir un dans la liste' });
+        return;
+      }
     }
 
     setLoading(true);
@@ -221,10 +227,10 @@ export default function FormulaireCommande() {
         {typeRetrait === 'creneau' && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Horaire de retrait <span className="text-red-400">*</span>
+              Créneau de retrait <span className="text-red-400">*</span>
             </label>
-            <select name="creneau" className={inputCls}>
-              <option value="">— Choisir un horaire —</option>
+            <select name="creneau" className={`${inputCls} w-full`}>
+              <option value="">— Choisir un créneau —</option>
               {CRENEAUX.map((c) => (
                 <option key={c} value={c}>{c}</option>
               ))}

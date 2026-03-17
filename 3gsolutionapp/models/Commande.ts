@@ -20,7 +20,7 @@ export interface ICommande extends Document {
   };
   retrait: {
     type: 'immediat' | 'creneau';
-    creneau?: string; // ex: "12h30"
+    creneau?: string; // ex: "12:00 – 12:15" (format TICK-028)
   };
   produits: IProduitSnapshot[];
   commentaire?: string;
