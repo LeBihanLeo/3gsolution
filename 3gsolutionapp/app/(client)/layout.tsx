@@ -40,23 +40,46 @@ export default async function ClientLayout({ children }: { children: ReactNode }
   return (
     <CartProvider>
       <div className="min-h-screen flex flex-col bg-gray-50">
-        <header className="bg-white shadow-sm sticky top-0 z-40">
-          {config.banniereUrl && (
-            <div className="w-full max-h-[200px] overflow-hidden">
-              <img
-                src={config.banniereUrl}
-                alt={`Bannière ${config.nomRestaurant}`}
-                className="w-full object-cover max-h-[200px]"
-              />
+
+        {config.banniereUrl ? (
+          /* ── Hero bannière ── */
+          <header
+            className="w-full flex items-center justify-center"
+            style={{
+              backgroundImage: `url(${config.banniereUrl})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              minHeight: '280px',
+            }}
+          >
+            <div className="flex items-center gap-5 w-full px-8 max-w-2xl mx-auto">
+              <div className="flex-1 h-px bg-white" />
+              <Link
+                href="/"
+                className="text-white text-3xl whitespace-nowrap shrink-0 uppercase tracking-widest"
+                style={{
+                  fontFamily: 'var(--font-montserrat)',
+                  fontWeight: 700,
+                  textShadow:
+                    '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
+                }}
+              >
+                {config.nomRestaurant}
+              </Link>
+              <div className="flex-1 h-px bg-white" />
             </div>
-          )}
-          <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-2">
-            <span className="text-2xl">🍔</span>
-            <Link href="/" className="font-bold text-gray-900 text-lg hover:text-blue-600 transition-colors">
-              {config.nomRestaurant}
-            </Link>
-          </div>
-        </header>
+          </header>
+        ) : (
+          /* ── Header fallback (pas de bannière) ── */
+          <header className="bg-white shadow-sm sticky top-0 z-40">
+            <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-2">
+              <span className="text-2xl">🍔</span>
+              <Link href="/" className="font-bold text-gray-900 text-lg hover:text-blue-600 transition-colors">
+                {config.nomRestaurant}
+              </Link>
+            </div>
+          </header>
+        )}
 
         <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6">
           {children}
