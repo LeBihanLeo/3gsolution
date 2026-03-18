@@ -13,6 +13,7 @@
 | Auth admin      | NextAuth.js (credentials) | Simple, pas d'OAuth tiers requis           |
 | Hébergement     | Vercel                    | Déploiement Next.js natif, HTTPS auto      |
 | PWA             | next-pwa                  | Manifest + service worker minimal          |
+| Stockage images | Vercel Blob               | CDN global, URLs permanentes, gratuit MVP  |
 
 ---
 
@@ -55,12 +56,14 @@
 │   └── admin/
 │       ├── CommandeRow.tsx
 │       ├── ProduitForm.tsx
-│       └── PersonnalisationApercu.tsx  # Aperçu temps réel vitrine
+│       ├── PersonnalisationApercu.tsx  # Aperçu temps réel vitrine
+│       └── DropZone.tsx               # Upload drag & drop réutilisable
 ├── lib/
 │   ├── mongodb.ts                 # Connexion Mongoose (singleton)
 │   ├── stripe.ts                  # Client Stripe
 │   ├── email.ts                   # Envoi email confirmation
-│   └── auth.ts                    # Config NextAuth
+│   ├── auth.ts                    # Config NextAuth
+│   └── blob.ts                    # Helper Vercel Blob (upload)
 ├── models/
 │   ├── Produit.ts
 │   ├── Commande.ts
@@ -88,6 +91,7 @@
   options: [             // suppléments
     { nom: string, prix: number }
   ],
+  imageUrl?: string,     // URL Vercel Blob (optionnel)
   actif: boolean,
   createdAt: Date
 }
@@ -177,6 +181,7 @@ pas avant, pour éviter les commandes fantômes.
 | PATCH   | /api/commandes/[id]/statut   | Marquer comme "prête"                | Admin  |
 | GET     | /api/site-config             | Lire la config vitrine               | Public |
 | PUT     | /api/site-config             | Mettre à jour la config vitrine      | Admin  |
+| POST    | /api/upload                  | Upload image vers Vercel Blob        | Admin  |
 
 ---
 
@@ -280,6 +285,9 @@ ADMIN_PASSWORD_HASH=$2b$10$...
 # Email (Resend)
 RESEND_API_KEY=re_...
 EMAIL_FROM=commandes@restaurant.fr
+
+# Vercel Blob (images)
+BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
 ```
 
 ---
@@ -316,11 +324,123 @@ EMAIL_FROM=commandes@restaurant.fr
     "resend": "^3",
     "next-pwa": "^5",
     "tailwindcss": "^3",
-    "zod": "^3"
+    "zod": "^3",
+    "@vercel/blob": "^0"
+  },
+  "devDependencies": {
+    "vitest": "^1",
+    "@vitest/coverage-v8": "^1",
+    "@testing-library/react": "^14",
+    "@testing-library/user-event": "^14",
+    "@testing-library/jest-dom": "^6",
+    "msw": "^2",
+    "mongodb-memory-server": "^9",
+    "jsdom": "^24"
   }
 }
 ```
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.1 (Personnalisation vitrine ajoutée le 2026-03-18)*
+## Images produits & Bannière
+
+Les images sont stockées dans **Vercel Blob** (CDN global, URLs HTTPS permanentes).
+
+- Le modèle `Produit` expose un champ `imageUrl?` optionnel.
+- Le modèle `SiteConfig` conserve son champ `banniereUrl` — désormais alimenté par upload plutôt que par saisie manuelle d'URL.
+- Le composant `DropZone` est réutilisé pour les deux cas d'usage (produit et bannière).
+- Le domaine `blob.vercel-storage.com` doit être ajouté dans `next.config.js` → `images.remotePatterns` pour que `next/image` accepte les URLs Blob.
+
+---
+
+## Stratégie de tests
+
+### Stack de test
+
+| Outil | Rôle |
+|-------|------|
+| `vitest` | Runner de tests (remplace Jest — natif ESM/TypeScript, compatible Next.js) |
+| `@testing-library/react` | Rendu et assertions sur les composants React |
+| `@testing-library/user-event` | Simulation réaliste des interactions clavier/souris |
+| `@testing-library/jest-dom` | Matchers DOM étendus (`toBeInTheDocument`, `toHaveValue`, etc.) |
+| `msw` (Mock Service Worker) | Interception des appels `fetch` dans les tests composants |
+| `mongodb-memory-server` | Base MongoDB in-memory pour les tests de modèles Mongoose |
+| `@vitest/coverage-v8` | Rapport de couverture (HTML + lcov) |
+
+### Organisation des tests
+
+```
+__tests__/
+├── helpers/
+│   └── mongoMemory.ts         # Setup/teardown mongodb-memory-server partagé
+├── lib/
+│   └── creneaux.test.ts       # Tests fonctions pures
+├── models/
+│   ├── Produit.test.ts
+│   ├── Commande.test.ts
+│   └── SiteConfig.test.ts
+├── api/
+│   ├── produits.test.ts
+│   ├── produits-id.test.ts
+│   ├── commandes.test.ts
+│   ├── commandes-statut.test.ts
+│   ├── commandes-suivi.test.ts
+│   ├── checkout.test.ts
+│   ├── webhook-stripe.test.ts
+│   ├── site-config.test.ts
+│   └── upload.test.ts
+└── components/
+    ├── client/
+    │   ├── MenuCard.test.tsx
+    │   ├── Panier.test.tsx
+    │   ├── FormulaireCommande.test.tsx
+    │   └── ConfirmationSuivi.test.tsx
+    └── admin/
+        ├── CommandeRow.test.tsx
+        ├── ProduitForm.test.tsx
+        ├── DropZone.test.tsx
+        └── PersonnalisationApercu.test.tsx
+__mocks__/
+├── next/
+│   └── navigation.ts          # Mock useRouter, useSearchParams, usePathname
+└── next-auth/
+    └── react.ts               # Mock useSession, signIn, signOut
+```
+
+### Périmètre et couverture cible
+
+| Couche | Type de test | Cible couverture |
+|--------|-------------|-----------------|
+| `lib/creneaux.ts` | Unitaire (fonctions pures) | 100 % |
+| Schémas Zod | Unitaire | 100 % |
+| `models/` | Intégration (MongoDB in-memory) | 90 % |
+| `app/api/` | Unitaire (handlers mockés) | 70 % |
+| `components/` | Composant (RTL + MSW) | 70 % |
+
+> **Non couvert volontairement :** `lib/mongodb.ts` (connexion réelle), `lib/stripe.ts` (SDK tiers), pages Next.js entières (couvert par TICK-023 E2E).
+
+### Conventions de mock
+
+- **Mongoose** : chaque test de route API mock le modèle via `vi.mock('../../models/Produit')` — jamais la vraie base.
+- **`getServerSession`** : mocké via `vi.mock('next-auth')` pour retourner `null` (non-auth) ou un objet session admin.
+- **Stripe** : mocké via `vi.mock('stripe')` ; `constructEvent` retourne un objet événement synthétique.
+- **`@vercel/blob`** : mocké via `vi.mock('@vercel/blob')` ; `put` retourne `{ url: 'https://blob.vercel-storage.com/test.jpg' }`.
+- **`localStorage`** : réinitialisé via `localStorage.clear()` dans `afterEach`.
+- **Timers** : `vi.useFakeTimers()` pour tester le polling (`setInterval`) sans attente réelle.
+
+---
+
+## Cache client (localStorage) — Conformité RGPD
+
+Le formulaire de commande peut mémoriser le nom, téléphone et email du client en `localStorage` pour faciliter les commandes suivantes.
+
+**Règles RGPD appliquées :**
+- Consentement explicite via checkbox non cochée par défaut
+- Information claire affichée sous la checkbox
+- Bouton "Effacer mes informations" accessible à tout moment
+- Aucune donnée envoyée à nos serveurs depuis le cache
+- Mention dédiée dans la page `/mentions-legales`
+
+---
+
+*Document généré le 2026-03-17 — Version 1.3 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18)*

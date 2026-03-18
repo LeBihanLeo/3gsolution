@@ -12,7 +12,9 @@
 | 3 | Paiement, Admin, Email, PWA, Déploiement | TICK-017 → 027 | 6,5 j |
 | 4 | Créneaux 15 min & Suivi commande client | TICK-028 → 030 | 3,0 j |
 | 5 | Personnalisation de la vitrine | TICK-031 → 033 | 2,0 j |
-| **Total** | | **33 tickets** | **~23 j** |
+| 6 | Images produits, Upload bannière, Cache RGPD | TICK-034 → 040 | 5,5 j |
+| 7 | Tests unitaires & intégration | TICK-041 → 049 | 7,0 j |
+| **Total** | | **49 tickets** | **~35,5 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -688,6 +690,530 @@ Modifier `app/(client)/layout.tsx` pour charger la `SiteConfig` côté serveur (
 
 ---
 
+## Sprint 6 — Images produits, Upload bannière, Cache client RGPD (5,5 j)
+
+### TICK-034 — API Upload d'images (Vercel Blob)
+**Épic :** Upload & Stockage
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-005, TICK-022
+
+**Description :**
+Créer `app/api/upload/route.ts` — route POST protégée admin pour uploader un fichier image vers Vercel Blob et retourner l'URL publique persistante.
+
+**Critères d'acceptance :**
+- [ ] POST `/api/upload` : accepte un `FormData` avec un champ `file` (image uniquement)
+- [ ] Vérification du type MIME : `image/jpeg`, `image/png`, `image/webp`, `image/gif` uniquement — rejet HTTP 400 sinon
+- [ ] Taille maximale : 5 Mo — rejet HTTP 413 sinon
+- [ ] Upload via `@vercel/blob` : `put(filename, file, { access: 'public' })`
+- [ ] Retourne `{ url: string }` (URL Vercel Blob publique et permanente)
+- [ ] Route protégée par `getServerSession` (admin uniquement)
+- [ ] Variable d'env : `BLOB_READ_WRITE_TOKEN` (généré depuis Vercel Dashboard)
+- [ ] Ajout de `BLOB_READ_WRITE_TOKEN` dans `.env.local.example`
+
+---
+
+### TICK-035 — Composant DropZone (réutilisable)
+**Épic :** Upload & Stockage
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,0 j
+**Dépendances :** TICK-034
+
+**Description :**
+Créer `components/admin/DropZone.tsx` — composant générique d'upload d'image supportant le drag & drop et le clic pour ouvrir le sélecteur de fichier natif. Utilisé aussi bien pour les images produit que pour la bannière.
+
+**Interface du composant :**
+```typescript
+interface DropZoneProps {
+  currentImageUrl?: string       // URL de l'image existante (prévisualisation initiale)
+  onUploadSuccess: (url: string) => void  // callback avec l'URL Vercel Blob
+  onRemove?: () => void          // callback optionnel pour supprimer l'image
+  label?: string                 // ex: "Image du produit", "Bannière"
+  aspectRatio?: 'square' | 'banner'  // contrôle le ratio de prévisualisation
+}
+```
+
+**Critères d'acceptance :**
+- [ ] Zone de drop avec bordure en tirets, texte indicatif "Glissez une image ici ou cliquez pour parcourir"
+- [ ] `<input type="file" accept="image/*" hidden>` déclenché au clic sur la zone
+- [ ] Gestion du drag : `dragover` → highlight de la zone, `dragleave` → retour normal, `drop` → upload
+- [ ] Upload immédiat au dépôt/sélection : POST `FormData` vers `/api/upload`
+- [ ] Indicateur de chargement pendant l'upload (spinner ou barre de progression)
+- [ ] Prévisualisation de l'image après upload réussi (`<img>` avec `object-fit: cover`)
+- [ ] Bouton "Supprimer l'image" (croix) sur la prévisualisation → appelle `onRemove` + efface la prévisualisation
+- [ ] Si `currentImageUrl` fourni à l'initialisation → prévisualisation affichée d'emblée
+- [ ] Message d'erreur inline si upload échoue (format non supporté, taille dépassée, erreur réseau)
+- [ ] `aspectRatio="square"` → prévisualisation carrée (produits) ; `aspectRatio="banner"` → ratio 16:3 (bannière)
+- [ ] Accessible : label associé à l'input, `aria-label` sur la zone de drop
+
+---
+
+### TICK-036 — Images produits : modèle + API
+**Épic :** Images produits
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-003, TICK-034
+
+**Description :**
+Ajouter le champ `imageUrl` au modèle `Produit` et mettre à jour les routes API pour le lire et l'écrire.
+
+**Critères d'acceptance :**
+- [ ] `models/Produit.ts` : ajout du champ `imageUrl?: string` (optionnel) dans le schéma et l'interface `IProduit`
+- [ ] `GET /api/produits` : le champ `imageUrl` est inclus dans la réponse
+- [ ] `POST /api/produits` et `PUT /api/produits/[id]` : le champ `imageUrl` est accepté, validé par Zod comme `z.string().url().optional()`
+- [ ] Aucune migration nécessaire : les produits existants sans image fonctionnent normalement
+- [ ] `imageUrl` absent ou `null` → le produit est retourné sans ce champ (pas de valeur vide)
+
+---
+
+### TICK-037 — Images produits : formulaire admin (ProduitForm)
+**Épic :** Images produits
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-035, TICK-036, TICK-016
+
+**Description :**
+Intégrer le composant `DropZone` dans `components/admin/ProduitForm.tsx` pour permettre l'ajout, le remplacement et la suppression d'une image par produit.
+
+**Critères d'acceptance :**
+- [ ] `DropZone` intégré sous les champs nom/description, avec `label="Image du produit"` et `aspectRatio="square"`
+- [ ] À l'upload réussi (`onUploadSuccess`) : `imageUrl` du formulaire mis à jour avec l'URL retournée
+- [ ] À la suppression (`onRemove`) : `imageUrl` remis à `undefined` dans le formulaire
+- [ ] En mode édition : si le produit a déjà un `imageUrl`, il est passé en `currentImageUrl` au composant DropZone
+- [ ] Le `imageUrl` est inclus dans le body du POST/PUT envoyé à l'API
+- [ ] Pas de double upload : si l'image n'a pas changé lors d'un PUT, `imageUrl` conserve l'URL existante
+
+---
+
+### TICK-038 — Images produits : affichage client (MenuCard)
+**Épic :** Images produits
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-036, TICK-010
+
+**Description :**
+Mettre à jour `components/client/MenuCard.tsx` pour afficher l'image du produit lorsqu'elle est disponible.
+
+**Critères d'acceptance :**
+- [ ] Si `imageUrl` présent : affichage d'un `<img>` (ou `<Image>` Next.js) en haut de la carte, ratio 4:3, `object-fit: cover`
+- [ ] Si `imageUrl` absent : aucun espace vide — layout sans image (comportement actuel)
+- [ ] Image lazy-loaded (`loading="lazy"`) pour ne pas pénaliser le LCP
+- [ ] Domaine Vercel Blob ajouté dans `next.config.js` → `images.remotePatterns` (obligatoire pour `next/image`)
+- [ ] Alt text = nom du produit
+- [ ] Pas de régression sur le layout existant (nom, description, prix, bouton "Ajouter" inchangés)
+- [ ] Responsive : image pleine largeur sur mobile, hauteur fixe sur desktop
+
+---
+
+### TICK-039 — Bannière : upload via DropZone (remplacement du champ URL)
+**Épic :** Personnalisation
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-035, TICK-032, TICK-033
+
+**Description :**
+Modifier `app/(admin)/personnalisation/page.tsx` pour remplacer le champ `<input type="url">` de la bannière par le composant `DropZone`. Le champ `banniereUrl` dans `SiteConfig` reste inchangé (il stocke toujours l'URL), mais l'URL est désormais obtenue par upload plutôt que saisie manuelle.
+
+**Critères d'acceptance :**
+- [ ] Le champ `<input type="url">` de la bannière est remplacé par `<DropZone aspectRatio="banner" label="Bannière du site">`
+- [ ] Si `banniereUrl` existe en base : passé en `currentImageUrl` au composant DropZone (prévisualisation au chargement)
+- [ ] À l'upload réussi : `banniereUrl` du formulaire mis à jour avec l'URL Vercel Blob
+- [ ] À la suppression : `banniereUrl` mis à `undefined` → PUT sauvegarde sans bannière → le layout client n'affiche plus la bannière
+- [ ] L'aperçu temps réel existant (`PersonnalisationApercu`) continue de fonctionner avec la nouvelle URL
+- [ ] Aucun changement sur `models/SiteConfig.ts` ni sur les routes API `GET/PUT /api/site-config`
+
+---
+
+### TICK-040 — Cache client RGPD (email + téléphone)
+**Épic :** Expérience client & RGPD
+**Priorité :** 🟡 Moyenne
+**Sizing :** 1,0 j
+**Dépendances :** TICK-012, TICK-021
+
+**Description :**
+Permettre au client de sauvegarder son email et téléphone en `localStorage` pour pré-remplir les prochaines commandes, en respectant les exigences RGPD minimales : consentement explicite, information claire, suppression facile, et mention dans la politique de confidentialité.
+
+**Comportement attendu :**
+
+```
+[Formulaire commande]
+  └── Checkbox (non cochée par défaut) :
+      "Mémoriser mes informations sur cet appareil pour mes prochaines commandes"
+  └── Si cochée + submit réussi → localStorage.setItem('client_cache', { nom, telephone, email })
+  └── Au chargement suivant : champs pré-remplis silencieusement
+
+[Bouton "Effacer mes informations"]
+  └── Affiché uniquement si un cache existe
+  └── Vide localStorage + vide les champs + décoche la checkbox
+
+[Texte informatif sous la checkbox]
+  └── "Ces informations restent sur votre appareil et ne sont jamais transmises à nos serveurs."
+```
+
+**Critères d'acceptance :**
+- [ ] Nouvelle clé localStorage : `client_cache` → `{ nom: string, telephone: string, email?: string }` (JSON)
+- [ ] Checkbox `"Mémoriser mes informations sur cet appareil"` sous les champs client, **non cochée par défaut**
+- [ ] Texte informatif associé à la checkbox : `"Ces informations restent sur votre appareil et ne sont jamais transmises à nos serveurs."`
+- [ ] Si cache existant au chargement de la page : champs nom, téléphone, email pré-remplis **et** checkbox cochée automatiquement
+- [ ] Sauvegarde uniquement au submit du formulaire (pas en temps réel)
+- [ ] Si checkbox décochée au submit : supprimer le cache existant (`localStorage.removeItem('client_cache')`)
+- [ ] Bouton **"Effacer mes informations"** (visible uniquement si `client_cache` existe) : vide le cache, vide les champs, décoche la checkbox
+- [ ] Aucune donnée de cache envoyée au backend — les champs du formulaire restent la seule source de vérité pour le POST `/api/checkout`
+- [ ] Mise à jour de `app/(client)/mentions-legales/page.tsx` (TICK-021) : ajout d'une section **"Données stockées localement"** expliquant le cache localStorage, comment le supprimer, et que ces données ne sont pas transmises
+- [ ] La checkbox et le bouton "Effacer" sont stylisés de manière cohérente avec le reste du formulaire (Tailwind)
+- [ ] Accessible : `<label>` associé à la checkbox, `aria-describedby` pointant vers le texte informatif
+
+---
+
+## Sprint 7 — Tests unitaires & intégration (7,0 j)
+
+### TICK-041 — Infrastructure de test (Vitest + Testing Library + MSW)
+**Épic :** Tests
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-001
+
+**Description :**
+Mettre en place l'outillage de test complet : Vitest comme runner (plus rapide que Jest, natif TypeScript/ESM), React Testing Library pour les composants, MSW pour le mock des routes API dans les tests composants, et `mongodb-memory-server` pour les tests de modèles Mongoose.
+
+**Stack de test retenue :**
+
+| Outil | Usage |
+|-------|-------|
+| `vitest` | Runner de tests, remplacement Jest |
+| `@testing-library/react` | Rendu et assertions composants |
+| `@testing-library/user-event` | Simulation interactions utilisateur |
+| `@testing-library/jest-dom` | Matchers DOM supplémentaires (`toBeInTheDocument`, etc.) |
+| `msw` (Mock Service Worker) | Mock des appels fetch dans les tests composants |
+| `mongodb-memory-server` | Base MongoDB in-memory pour les tests de modèles |
+| `@vitest/coverage-v8` | Rapport de couverture de code |
+
+**Critères d'acceptance :**
+- [ ] `vitest.config.ts` à la racine : environnement `jsdom`, alias `@/` → `./`, setup file `vitest.setup.ts`
+- [ ] `vitest.setup.ts` : import `@testing-library/jest-dom/vitest`, configuration globale MSW
+- [ ] `package.json` : scripts `test`, `test:watch`, `test:coverage`
+- [ ] `__tests__/` à la racine (ou `*.test.ts` colocalisés) : convention documentée dans README
+- [ ] Fichier `__mocks__/next/navigation.ts` : mock de `useRouter`, `useSearchParams`, `usePathname`
+- [ ] Fichier `__mocks__/next-auth/react.ts` : mock de `useSession`, `signIn`, `signOut`
+- [ ] `npm run test` exécute la suite sans erreur sur le projet vierge (0 tests = 0 failures)
+- [ ] `npm run test:coverage` génère le rapport HTML dans `coverage/`
+- [ ] Seuil de couverture cible documenté : **70 % lignes** pour `lib/`, `models/`, `app/api/`
+
+---
+
+### TICK-042 — Tests unitaires : utilitaires purs (`lib/creneaux.ts`, schémas Zod)
+**Épic :** Tests
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-041, TICK-028
+
+**Description :**
+Tester exhaustivement les fonctions pures et les schémas de validation Zod. Ces tests sont les plus simples à écrire et couvrent une logique métier critique (génération des créneaux, validation des formulaires).
+
+**Fichiers cibles :**
+- `lib/creneaux.ts` → `__tests__/lib/creneaux.test.ts`
+- Schémas Zod de `app/api/checkout/route.ts`, `app/api/produits/route.ts`, `app/api/site-config/route.ts`
+
+**Critères d'acceptance :**
+
+`lib/creneaux.ts` :
+- [ ] Cas nominal : 12:00–14:00, pas 15 min → 8 créneaux exacts `["12:00 – 12:15", ..., "13:45 – 14:00"]`
+- [ ] Cas : plage d'1 heure, pas 30 min → 2 créneaux
+- [ ] Cas : `ouverture === fermeture` → tableau vide
+- [ ] Cas : pas > plage totale → tableau vide
+- [ ] Cas : valeurs limites (00:00–00:15, pas 15) → 1 créneau
+- [ ] Invariant : dernier créneau se termine exactement à `fermeture`
+
+Schémas Zod (validation) :
+- [ ] Schéma produit : `prix` négatif → erreur Zod ; `nom` vide → erreur ; options malformées → erreur
+- [ ] Schéma checkout : `produits` vide → erreur ; `client.telephone` absent → erreur ; `client.email` invalide → erreur
+- [ ] Schéma site-config : couleur `"#ZZZZZZ"` → erreur ; couleur `"#E63946"` → valide ; chaîne vide → erreur
+- [ ] Tous les schémas : cas valides passent sans erreur
+
+---
+
+### TICK-043 — Tests unitaires : modèles Mongoose
+**Épic :** Tests
+**Priorité :** 🟠 Haute
+**Sizing :** 1,0 j
+**Dépendances :** TICK-041, TICK-003, TICK-004, TICK-031
+
+**Description :**
+Tester les validations, valeurs par défaut et contraintes des trois modèles Mongoose via `mongodb-memory-server`. L'objectif est de vérifier que le schéma rejette les données invalides et accepte les données conformes, indépendamment de toute route API.
+
+**Fichiers cibles :**
+- `models/Produit.ts` → `__tests__/models/Produit.test.ts`
+- `models/Commande.ts` → `__tests__/models/Commande.test.ts`
+- `models/SiteConfig.ts` → `__tests__/models/SiteConfig.test.ts`
+
+**Setup partagé :** `__tests__/helpers/mongoMemory.ts` — `beforeAll` connect, `afterEach` clear collections, `afterAll` disconnect.
+
+**Critères d'acceptance :**
+
+`Produit` :
+- [ ] Sauvegarde valide : tous les champs obligatoires → document créé sans erreur
+- [ ] `prix` négatif → `ValidationError`
+- [ ] `nom` absent → `ValidationError`
+- [ ] `actif` absent → valeur par défaut `true`
+- [ ] `options` : sous-document avec `nom` et `prix` → sauvegardé correctement
+- [ ] `imageUrl` absent → champ omis (pas de `null`)
+
+`Commande` :
+- [ ] `statut` valeur hors enum → `ValidationError`
+- [ ] `stripeSessionId` dupliqué → erreur d'index unique (`E11000`)
+- [ ] Snapshot produit : `produits[0].nom`, `prix`, `quantite` tous requis → `ValidationError` si absent
+- [ ] `total` en centimes → nombre entier stocké tel quel
+
+`SiteConfig` :
+- [ ] `upsert: true` — deux appels `findOneAndUpdate` successifs → toujours 1 seul document en base
+- [ ] `couleurBordureGauche` format invalide → `ValidationError` (regex `^#[0-9A-Fa-f]{6}$`)
+- [ ] `updatedAt` mis à jour automatiquement à chaque `save`
+
+---
+
+### TICK-044 — Tests unitaires : API Routes produits
+**Épic :** Tests
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-041, TICK-043, TICK-007
+
+**Description :**
+Tester les handlers des routes `app/api/produits/route.ts` et `app/api/produits/[id]/route.ts` en mockant Mongoose et `getServerSession`. Chaque test instancie le handler directement avec un objet `Request` synthétique.
+
+**Fichiers cibles :**
+- `__tests__/api/produits.test.ts`
+- `__tests__/api/produits-id.test.ts`
+
+**Mocks requis :** `lib/mongodb.ts` (no-op), `mongoose` (modèle `Produit` mocké), `next-auth` (`getServerSession`).
+
+**Critères d'acceptance :**
+
+`GET /api/produits` :
+- [ ] Retourne 200 + liste des produits `actif: true`
+- [ ] Ne retourne pas les produits `actif: false`
+- [ ] Base vide → 200 + `[]`
+
+`POST /api/produits` :
+- [ ] Sans session → 401
+- [ ] Body invalide (prix manquant) → 400 avec message Zod
+- [ ] Body valide + session admin → 201 + document créé
+
+`PUT /api/produits/[id]` :
+- [ ] Sans session → 401
+- [ ] ID inexistant → 404
+- [ ] Mise à jour valide → 200 + document mis à jour
+
+`PATCH /api/produits/[id]` (toggle actif) :
+- [ ] Sans session → 401
+- [ ] Toggle `actif` → valeur inversée retournée
+
+`DELETE /api/produits/[id]` :
+- [ ] Sans session → 401
+- [ ] ID inexistant → 404
+- [ ] Suppression réussie → 200
+
+---
+
+### TICK-045 — Tests unitaires : API Routes commandes & suivi
+**Épic :** Tests
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-041, TICK-043, TICK-008, TICK-029
+
+**Description :**
+Tester les handlers des routes de lecture/mise à jour des commandes (admin) et de l'endpoint public de suivi.
+
+**Fichiers cibles :**
+- `__tests__/api/commandes.test.ts`
+- `__tests__/api/commandes-statut.test.ts`
+- `__tests__/api/commandes-suivi.test.ts`
+
+**Critères d'acceptance :**
+
+`GET /api/commandes` (admin) :
+- [ ] Sans session → 401
+- [ ] Avec session → 200 + liste triée par `createdAt` DESC
+
+`PATCH /api/commandes/[id]/statut` :
+- [ ] Sans session → 401
+- [ ] Body `{ statut: "prete" }` valide → 200 + commande mise à jour
+- [ ] Body `{ statut: "payee" }` (non autorisé via ce endpoint) → 400
+- [ ] ID inexistant → 404
+
+`GET /api/commandes/suivi?session_id=xxx` :
+- [ ] `session_id` absent → 400
+- [ ] `session_id` inconnu → 404
+- [ ] Commande avec statut `"en_attente_paiement"` → 404
+- [ ] Commande `"payee"` → 200 + réponse sans `client.telephone`, `client.email`, `stripeSessionId`
+- [ ] Commande `"prete"` → 200 + `statut: "prete"`
+- [ ] Champs sensibles absents de la réponse (vérification stricte de la shape)
+
+---
+
+### TICK-046 — Tests unitaires : API checkout & webhook Stripe
+**Épic :** Tests
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,0 j
+**Dépendances :** TICK-041, TICK-043, TICK-017, TICK-018
+
+**Description :**
+Tester le handler de création de session Stripe et le webhook. Ce sont les routes les plus critiques métier : un bug ici empêche toute commande ou crée des commandes fantômes. Stripe est mocké via `vi.mock('stripe')`.
+
+**Fichiers cibles :**
+- `__tests__/api/checkout.test.ts`
+- `__tests__/api/webhook-stripe.test.ts`
+
+**Critères d'acceptance :**
+
+`POST /api/checkout` :
+- [ ] Body invalide (produits vides) → 400
+- [ ] Body valide → appel `stripe.checkout.sessions.create` avec les bons `line_items`
+- [ ] `metadata` contient les infos client encodées
+- [ ] Retourne `{ url: "https://checkout.stripe.com/..." }` (URL mockée)
+- [ ] Erreur Stripe → 500 avec message d'erreur
+
+`POST /api/webhooks/stripe` :
+- [ ] Signature invalide → 400 (mock `stripe.webhooks.constructEvent` qui lève une erreur)
+- [ ] Événement `payment_intent.created` (non géré) → 200 (silencieux)
+- [ ] Événement `checkout.session.completed` :
+  - [ ] Crée une `Commande` en base avec `statut: "payee"`
+  - [ ] Appelle `sendConfirmationEmail` si `customer_email` présent dans la session
+  - [ ] Ne crée **pas** d'email si `customer_email` absent
+  - [ ] Idempotence : `stripeSessionId` déjà en base → retourne 200 sans créer de doublon
+- [ ] Le handler retourne toujours HTTP 200 même si `sendConfirmationEmail` lève une exception (pas de crash)
+
+---
+
+### TICK-047 — Tests unitaires : API site-config & upload
+**Épic :** Tests
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-041, TICK-043, TICK-031, TICK-034
+
+**Description :**
+Tester les routes de configuration de la vitrine et d'upload d'images, en mockant `@vercel/blob`.
+
+**Fichiers cibles :**
+- `__tests__/api/site-config.test.ts`
+- `__tests__/api/upload.test.ts`
+
+**Critères d'acceptance :**
+
+`GET /api/site-config` :
+- [ ] Aucun document en base → retourne les valeurs par défaut (`nomRestaurant: "Mon Restaurant"`)
+- [ ] Document existant → retourne les valeurs sans `_id` ni `__v`
+
+`PUT /api/site-config` :
+- [ ] Sans session → 401
+- [ ] Couleur invalide (`#ZZZ`) → 400 Zod
+- [ ] Body valide → 200 + document upserted
+
+`POST /api/upload` :
+- [ ] Sans session → 401
+- [ ] Fichier non-image (PDF) → 400
+- [ ] Fichier > 5 Mo → 413
+- [ ] Image JPEG valide → mock `@vercel/blob` appelé → retourne `{ url: "https://blob.vercel-storage.com/..." }`
+
+---
+
+### TICK-048 — Tests composants React : zone client
+**Épic :** Tests
+**Priorité :** 🟠 Haute
+**Sizing :** 1,5 j
+**Dépendances :** TICK-041, TICK-010, TICK-011, TICK-012, TICK-030
+
+**Description :**
+Tester les composants de la zone client avec React Testing Library. MSW intercepte les appels fetch pour simuler les réponses API. Le `localStorage` est réinitialisé entre chaque test.
+
+**Fichiers cibles :**
+- `__tests__/components/client/MenuCard.test.tsx`
+- `__tests__/components/client/Panier.test.tsx`
+- `__tests__/components/client/FormulaireCommande.test.tsx`
+- `__tests__/components/client/ConfirmationSuivi.test.tsx`
+
+**Critères d'acceptance :**
+
+`MenuCard` :
+- [ ] Rendu : nom, prix formaté en `€`, description affichés
+- [ ] `imageUrl` présent → `<img>` rendu avec `alt` = nom du produit
+- [ ] `imageUrl` absent → pas d'élément `<img>`
+- [ ] Clic \"Ajouter\" → callback `onAjouter` appelé avec le bon produit
+- [ ] Produit avec options → le composant de sélection d'option est rendu
+
+`Panier` :
+- [ ] Panier vide → bouton \"Commander\" désactivé
+- [ ] Ajout d'un produit → total mis à jour en euros
+- [ ] Modification quantité → recalcul du total
+- [ ] Bouton \"Vider le panier\" → panier réinitialisé, `localStorage` vidé
+- [ ] Rechargement simulé (`localStorage` pré-rempli) → panier restauré
+- [ ] Clic \"Commander\" → navigation vers `/commande`
+
+`FormulaireCommande` :
+- [ ] Submit sans nom → message d'erreur Zod visible
+- [ ] Téléphone format invalide → erreur Zod
+- [ ] Type retrait `"creneau"` → `<select>` créneaux visible ; `"immediat"` → caché
+- [ ] Submit valide → POST `/api/checkout` déclenché (intercepté par MSW)
+- [ ] Erreur réseau checkout → message d'erreur affiché
+- [ ] Checkbox \"Mémoriser\" cochée + submit → `localStorage.getItem('client_cache')` non nul
+- [ ] Checkbox décochée + cache existant → cache supprimé au submit
+
+`ConfirmationSuivi` (page suivi) :
+- [ ] `session_id` absent → message d'erreur + lien retour menu visible
+- [ ] Statut `"payee"` → bandeau \"En préparation\" visible, spinner/animation présent
+- [ ] Statut `"prete"` → bandeau vert \"Commande prête\" visible, polling arrêté
+- [ ] Panier `localStorage` vidé à l'arrivée sur la page
+- [ ] Après 15s simulés (`vi.useFakeTimers`) → second appel MSW effectué
+
+---
+
+### TICK-049 — Tests composants React : zone admin
+**Épic :** Tests
+**Priorité :** 🟠 Haute
+**Sizing :** 1,0 j
+**Dépendances :** TICK-041, TICK-015, TICK-016, TICK-035, TICK-032
+
+**Description :**
+Tester les composants de l'espace admin. La session NextAuth est mockée avec un utilisateur admin valide.
+
+**Fichiers cibles :**
+- `__tests__/components/admin/CommandeRow.test.tsx`
+- `__tests__/components/admin/ProduitForm.test.tsx`
+- `__tests__/components/admin/DropZone.test.tsx`
+- `__tests__/components/admin/PersonnalisationApercu.test.tsx`
+
+**Critères d'acceptance :**
+
+`CommandeRow` :
+- [ ] Rendu : ID court, nom client, téléphone, total €, créneau, statut affichés
+- [ ] Statut `"payee"` → bouton \"Marquer comme prête\" visible
+- [ ] Statut `"prete"` → bouton absent
+- [ ] Clic bouton → PATCH `/api/commandes/[id]/statut` déclenché (MSW) → callback `onStatutChange` appelé
+
+`ProduitForm` :
+- [ ] Mode création : champs vides, submit sans nom → erreur Zod
+- [ ] Mode édition : champs pré-remplis depuis `produit` prop
+- [ ] Ajout d'option dynamique → nouvelle ligne de champs visible
+- [ ] Suppression d'option → ligne retirée
+- [ ] Submit valide (création) → POST `/api/produits` déclenché
+- [ ] Submit valide (édition) → PUT `/api/produits/[id]` déclenché
+
+`DropZone` :
+- [ ] Rendu initial sans `currentImageUrl` → zone de drop avec texte indicatif, pas d'`<img>`
+- [ ] `currentImageUrl` fourni → image prévisualisée dès le rendu
+- [ ] Clic sur la zone → `<input type="file">` déclenché (simulé avec `userEvent`)
+- [ ] Sélection fichier valide → POST `/api/upload` déclenché (MSW) → `onUploadSuccess` appelé avec l'URL
+- [ ] Sélection fichier invalide (MSW retourne 400) → message d'erreur inline visible
+- [ ] Clic bouton supprimer → `<img>` retiré, `onRemove` appelé
+- [ ] Drag & drop : `dragover` → classe CSS de highlight ; `drop` → upload déclenché
+
+`PersonnalisationApercu` :
+- [ ] Props `couleurGauche="#E63946"` → `<div>` gauche a `backgroundColor: "#E63946"` en style inline
+- [ ] `banniereUrl` fourni → `<img>` bannière visible
+- [ ] `banniereUrl` absent → pas d'`<img>` bannière
+- [ ] `nomRestaurant` → texte affiché dans l'aperçu
+
+---
+
 ## Tickets non-planifiés (post-MVP)
 
 | ID | Description | Complexité |
@@ -722,8 +1248,22 @@ Semaine 3 (Jours 11-15)
 ├── J13 : TICK-016 (Admin Menu)
 ├── J14 : TICK-020 (PWA) + TICK-021 (RGPD) + TICK-022 (Deploy)
 └── J15 : TICK-023 (Recette E2E)
+
+Semaine 4 (Jours 16-20)
+├── J16 : TICK-034 (API Upload) + TICK-035 (DropZone)
+├── J17 : TICK-036 (Modèle image produit) + TICK-037 (ProduitForm)
+├── J18 : TICK-038 (MenuCard) + TICK-039 (Bannière upload)
+└── J19 : TICK-040 (Cache RGPD)
+
+Semaine 5 (Jours 20-25)
+├── J20 : TICK-041 (Setup test infra)
+├── J21 : TICK-042 (Tests utilitaires) + TICK-043 (Tests modèles — partie 1)
+├── J22 : TICK-043 (Tests modèles — partie 2) + TICK-044 (Tests API produits)
+├── J23 : TICK-045 (Tests API commandes) + TICK-046 (Tests checkout + webhook)
+├── J24 : TICK-047 (Tests site-config + upload) + TICK-048 (Tests composants client — partie 1)
+└── J25 : TICK-048 (Tests composants client — partie 2) + TICK-049 (Tests composants admin)
 ```
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.2 (Sprint 5 ajouté le 2026-03-18)*
+*Document généré le 2026-03-17 — Version 1.4 (Sprint 7 Tests ajouté le 2026-03-18)*
