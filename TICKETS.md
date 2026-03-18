@@ -11,7 +11,8 @@
 | 2 | API, Frontend Client | TICK-009 → 016 | 6,0 j |
 | 3 | Paiement, Admin, Email, PWA, Déploiement | TICK-017 → 027 | 6,5 j |
 | 4 | Créneaux 15 min & Suivi commande client | TICK-028 → 030 | 3,0 j |
-| **Total** | | **30 tickets** | **~21 j** |
+| 5 | Personnalisation de la vitrine | TICK-031 → 033 | 2,0 j |
+| **Total** | | **33 tickets** | **~23 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -600,6 +601,93 @@ Refondre `app/(client)/confirmation/page.tsx` en page de suivi active : après l
 
 ---
 
+## Sprint 5 — Personnalisation de la vitrine (2,0 j)
+
+### TICK-031 — Modèle Mongoose : SiteConfig + API CRUD
+**Épic :** Personnalisation
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-002, TICK-005
+
+**Description :**
+Créer le modèle `models/SiteConfig.ts` (document singleton) et les routes API permettant de lire la configuration publiquement et de la modifier depuis l'espace admin.
+
+**Schéma :**
+```typescript
+{
+  _id: ObjectId,
+  nomRestaurant: string,       // "Le Bistrot du Coin"
+  banniereUrl?: string,        // URL absolue ou chemin /public
+  couleurBordureGauche: string, // ex: "#E63946"
+  couleurBordureDroite: string, // ex: "#457B9D"
+  updatedAt: Date
+}
+```
+
+**Routes à créer :**
+
+| Méthode | Route | Action |
+|---------|-------|--------|
+| GET | `/api/site-config` | Lire la config (public) |
+| PUT | `/api/site-config` | Mettre à jour la config (admin) |
+
+**Critères d'acceptance :**
+- [ ] `models/SiteConfig.ts` : interface `ISiteConfig` exportée, validation Mongoose sur les champs obligatoires
+- [ ] Document unique en base : utiliser `findOneAndUpdate` avec `upsert: true` (jamais plus d'un document)
+- [ ] `couleurBordureGauche` et `couleurBordureDroite` validées comme chaînes hexadécimales (`/^#[0-9A-Fa-f]{6}$/`)
+- [ ] GET public : retourne la config complète (sans `_id`, sans `__v`)
+- [ ] PUT admin : protégé par `getServerSession`, validation Zod du body
+- [ ] Valeurs par défaut sensées si aucune config en base (nom = `"Mon Restaurant"`, couleurs = `"#000000"`)
+- [ ] Variable d'env **aucune** requise (données persistées en base)
+
+---
+
+### TICK-032 — Page Admin : Personnalisation de la vitrine
+**Épic :** Personnalisation
+**Priorité :** 🟠 Haute
+**Sizing :** 1,0 j
+**Dépendances :** TICK-031, TICK-014
+
+**Description :**
+Implémenter `app/(admin)/personnalisation/page.tsx` avec un formulaire permettant à l'admin de configurer le nom du restaurant, l'URL de la bannière et les couleurs des bordures. Un aperçu en temps réel est affiché sous le formulaire.
+
+**Critères d'acceptance :**
+- [ ] Chargement initial : GET `/api/site-config` pour pré-remplir les champs
+- [ ] Champ **Nom du restaurant** : `<input type="text">` (requis, max 80 caractères)
+- [ ] Champ **URL de la bannière** : `<input type="url">` (optionnel) — accepte une URL externe (HTTPS) ou un chemin relatif `/images/...`
+- [ ] Champ **Couleur bordure gauche** : `<input type="color">` + `<input type="text">` synchronisés (valeur hex)
+- [ ] Champ **Couleur bordure droite** : idem
+- [ ] **Aperçu en temps réel** sous le formulaire :
+  - Bande colorée gauche / droite aux couleurs choisies
+  - Bannière visible si URL renseignée (`<img>` avec fallback gracieux si URL invalide)
+  - Nom du restaurant affiché dans l'aperçu
+- [ ] Bouton "Enregistrer" : PUT `/api/site-config` avec les valeurs du formulaire
+- [ ] Validation Zod côté client (couleurs hexadécimales, URL valide ou vide)
+- [ ] Feedback visuel après sauvegarde (toast "Modifications enregistrées" ou message inline)
+- [ ] Lien "Personnalisation" ajouté dans la navigation du layout admin (`TICK-014`)
+
+---
+
+### TICK-033 — Application de la config dans le layout client
+**Épic :** Personnalisation
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-031, TICK-009
+
+**Description :**
+Modifier `app/(client)/layout.tsx` pour charger la `SiteConfig` côté serveur (SSR) et l'appliquer visuellement : bordures colorées gauche/droite sur toute la hauteur de la page, bannière en haut du header, et nom du restaurant dans le `<title>` et le header.
+
+**Critères d'acceptance :**
+- [ ] Fetch `GET /api/site-config` dans le Server Component du layout (pas de fetch côté client)
+- [ ] **Bordures latérales** : deux `<div>` fixes de largeur `4px` (ou configurable via Tailwind), positionnées `fixed left-0` et `fixed right-0`, pleine hauteur (`h-screen`), couleurs issues de `SiteConfig`
+- [ ] **Bannière** : si `banniereUrl` renseignée, afficher `<img>` en haut du header (largeur 100%, hauteur max `200px`, `object-fit: cover`) ; sinon, aucun espace vide
+- [ ] **Nom du restaurant** : injecté dans le `<title>` de la page via `generateMetadata` Next.js et affiché dans le header à la place de la valeur statique
+- [ ] Si la config est absente (base vide), le layout fonctionne avec des valeurs par défaut (pas de crash)
+- [ ] Aucune régression sur le layout existant (panier, navigation, footer inchangés)
+- [ ] Les couleurs de bordure sont appliquées avec `style={{ backgroundColor: couleur }}` (inline) car les valeurs sont dynamiques — non purgeable par Tailwind
+
+---
+
 ## Tickets non-planifiés (post-MVP)
 
 | ID | Description | Complexité |
@@ -638,4 +726,4 @@ Semaine 3 (Jours 11-15)
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.1 (Sprint 4 ajouté le 2026-03-17)*
+*Document généré le 2026-03-17 — Version 1.2 (Sprint 5 ajouté le 2026-03-18)*

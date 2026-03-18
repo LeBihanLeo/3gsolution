@@ -30,6 +30,7 @@ export default function AdminNav() {
           <span className="font-bold text-gray-900 mr-4">Admin</span>
           {navLink('/admin/commandes', 'Commandes')}
           {navLink('/admin/menu', 'Menu')}
+          {navLink('/admin/personnalisation', 'Personnalisation')}
         </div>
         <button
           onClick={() => signOut({ callbackUrl: '/admin/login' })}

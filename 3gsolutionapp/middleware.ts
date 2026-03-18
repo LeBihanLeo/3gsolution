@@ -18,6 +18,7 @@ export const config = {
   matcher: [
     '/admin/commandes/:path*',
     '/admin/menu/:path*',
+    '/admin/personnalisation/:path*',
     // Protège toutes les routes commandes SAUF /api/commandes/suivi (publique)
     '/api/commandes',
     '/api/commandes/:id/statut',

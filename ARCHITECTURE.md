@@ -31,6 +31,7 @@
 │   │   ├── login/page.tsx
 │   │   ├── commandes/page.tsx     # Liste commandes + statuts
 │   │   ├── menu/page.tsx          # Gestion produits
+│   │   ├── personnalisation/page.tsx  # Bannière, nom, couleurs bordures
 │   │   └── layout.tsx             # Auth guard
 │   └── api/
 │       ├── produits/
@@ -42,6 +43,8 @@
 │       │       └── statut/route.ts # PATCH statut (admin)
 │       ├── checkout/
 │       │   └── route.ts           # Création session Stripe
+│       ├── site-config/
+│       │   └── route.ts           # GET public / PUT admin (personnalisation)
 │       └── webhooks/
 │           └── stripe/route.ts    # Validation paiement Stripe
 ├── components/
@@ -51,7 +54,8 @@
 │   │   └── FormulaireCommande.tsx
 │   └── admin/
 │       ├── CommandeRow.tsx
-│       └── ProduitForm.tsx
+│       ├── ProduitForm.tsx
+│       └── PersonnalisationApercu.tsx  # Aperçu temps réel vitrine
 ├── lib/
 │   ├── mongodb.ts                 # Connexion Mongoose (singleton)
 │   ├── stripe.ts                  # Client Stripe
@@ -59,7 +63,8 @@
 │   └── auth.ts                    # Config NextAuth
 ├── models/
 │   ├── Produit.ts
-│   └── Commande.ts
+│   ├── Commande.ts
+│   └── SiteConfig.ts          # Config vitrine (singleton)
 ├── public/
 │   ├── manifest.json              # PWA manifest
 │   └── icons/
@@ -87,6 +92,23 @@
   createdAt: Date
 }
 ```
+
+### SiteConfig
+
+```typescript
+{
+  _id: ObjectId,
+  nomRestaurant: string,         // "Le Bistrot du Coin"
+  banniereUrl?: string,          // URL image (HTTPS ou chemin /public)
+  couleurBordureGauche: string,  // hex ex: "#E63946"
+  couleurBordureDroite: string,  // hex ex: "#457B9D"
+  updatedAt: Date
+}
+```
+
+> Document **singleton** : un seul enregistrement en base, mis à jour par `upsert`.
+
+---
 
 ### Commande
 
@@ -153,6 +175,8 @@ pas avant, pour éviter les commandes fantômes.
 | POST    | /api/checkout                | Crée session Stripe + commande draft | Public |
 | POST    | /api/webhooks/stripe         | Confirme paiement, envoie email      | Stripe |
 | PATCH   | /api/commandes/[id]/statut   | Marquer comme "prête"                | Admin  |
+| GET     | /api/site-config             | Lire la config vitrine               | Public |
+| PUT     | /api/site-config             | Mettre à jour la config vitrine      | Admin  |
 
 ---
 
@@ -273,7 +297,8 @@ EMAIL_FROM=commandes@restaurant.fr
 | Admin menu          | Faible     | 1 page, 4 routes   |
 | Auth admin          | Faible     | NextAuth config    |
 | Email               | Faible     | 1 fonction         |
-| **Total**           |            | ~8 pages, ~10 API  |
+| Personnalisation    | Faible     | 1 page admin, 2 routes |
+| **Total**           |            | ~9 pages, ~12 API  |
 
 ---
 
@@ -298,4 +323,4 @@ EMAIL_FROM=commandes@restaurant.fr
 
 ---
 
-*Document généré le 2026-03-17 — Version MVP*
+*Document généré le 2026-03-17 — Version 1.1 (Personnalisation vitrine ajoutée le 2026-03-18)*
