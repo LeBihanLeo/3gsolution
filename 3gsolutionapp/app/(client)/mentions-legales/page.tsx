@@ -86,6 +86,27 @@ export default function MentionsLegalesPage() {
         </p>
       </section>
 
+      {/* TICK-040 — Section cache localStorage RGPD */}
+      <section className="mb-6">
+        <h2 className="text-lg font-semibold text-gray-800 mb-2">Données stockées localement</h2>
+        <p className="text-sm text-gray-600 mb-2">
+          Si vous avez coché &laquo; Mémoriser mes informations &raquo; sur le formulaire de commande,
+          votre nom, numéro de téléphone et adresse email (si fourni) sont enregistrés dans le
+          stockage local de votre navigateur (<strong>localStorage</strong>) sur cet appareil
+          uniquement.
+        </p>
+        <ul className="text-sm text-gray-600 list-disc pl-5 space-y-1 mb-2">
+          <li>Ces données <strong>ne sont jamais transmises à nos serveurs</strong> depuis le cache.</li>
+          <li>Elles servent uniquement à pré-remplir le formulaire lors de votre prochaine commande.</li>
+          <li>Elles restent sur votre appareil jusqu&apos;à ce que vous les supprimiez manuellement.</li>
+        </ul>
+        <p className="text-sm text-gray-600">
+          Pour supprimer ces données, rendez-vous sur la page de commande et cliquez sur
+          &laquo; Effacer mes informations &raquo;, ou videz le stockage local de votre navigateur
+          depuis les paramètres de confidentialité.
+        </p>
+      </section>
+
       <Link href="/" className="text-sm text-blue-600 hover:underline">
         ← Retour au menu
       </Link>

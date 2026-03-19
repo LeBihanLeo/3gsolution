@@ -11,6 +11,7 @@ export interface IProduit extends Document {
   categorie: string;
   prix: number; // en centimes (ex: 850 = 8,50€)
   options: IOption[];
+  imageUrl?: string; // URL Vercel Blob (optionnel) — TICK-036
   actif: boolean;
   createdAt: Date;
 }
@@ -30,6 +31,7 @@ const ProduitSchema = new Schema<IProduit>(
     categorie: { type: String, required: true },
     prix: { type: Number, required: true, min: 0 },
     options: { type: [OptionSchema], default: [] },
+    imageUrl: { type: String }, // optionnel — TICK-036
     actif: { type: Boolean, default: true },
   },
   { timestamps: { createdAt: true, updatedAt: false } }

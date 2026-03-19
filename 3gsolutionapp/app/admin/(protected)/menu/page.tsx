@@ -19,7 +19,7 @@ export default function AdminMenuPage() {
   const [produits, setProduits] = useState<ProduitData[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [mode, setMode] = useState<'list' | 'create' | 'edit'>('list');
+  const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ProduitData | null>(null);
 
   const showToast = (message: string, type: Toast['type'] = 'success') => {
@@ -48,10 +48,12 @@ export default function AdminMenuPage() {
   // ── Créer ──────────────────────────────────────────────────────────────────
 
   const handleCreate = async (values: ProduitFormValues) => {
+    // null imageUrl n'est pas valide pour un POST (champ optionnel non défini)
+    const body = { ...values, imageUrl: values.imageUrl || undefined };
     const res = await fetch('/api/produits', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(values),
+      body: JSON.stringify(body),
     });
     const json = await res.json();
     if (!res.ok) {
@@ -59,7 +61,7 @@ export default function AdminMenuPage() {
       return;
     }
     setProduits((prev) => [json.data, ...prev]);
-    setMode('list');
+    setCreating(false);
     showToast('Produit créé avec succès');
   };
 
@@ -78,7 +80,6 @@ export default function AdminMenuPage() {
       return;
     }
     setProduits((prev) => prev.map((p) => (p._id === editing._id ? json.data : p)));
-    setMode('list');
     setEditing(null);
     showToast('Produit mis à jour');
   };
@@ -131,9 +132,9 @@ export default function AdminMenuPage() {
       {/* En-tête */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Menu</h1>
-        {mode === 'list' && (
+        {!creating && (
           <button
-            onClick={() => setMode('create')}
+            onClick={() => { setCreating(true); setEditing(null); }}
             className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
           >
             + Nouveau produit
@@ -141,19 +142,13 @@ export default function AdminMenuPage() {
         )}
       </div>
 
-      {/* Formulaire (création / édition) */}
-      {(mode === 'create' || mode === 'edit') && (
+      {/* Formulaire de création */}
+      {creating && (
         <div className="bg-white rounded-xl border shadow-sm p-6 mb-6">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">
-            {mode === 'create' ? 'Nouveau produit' : `Modifier "${editing?.nom}"`}
-          </h2>
+          <h2 className="text-lg font-semibold text-gray-800 mb-4">Nouveau produit</h2>
           <ProduitForm
-            initial={mode === 'edit' ? editing ?? undefined : undefined}
-            onSubmit={mode === 'create' ? handleCreate : handleUpdate}
-            onCancel={() => {
-              setMode('list');
-              setEditing(null);
-            }}
+            onSubmit={handleCreate}
+            onCancel={() => setCreating(false)}
           />
         </div>
       )}
@@ -176,54 +171,67 @@ export default function AdminMenuPage() {
       {!loading && produits.length > 0 && (
         <div className="space-y-2">
           {produits.map((p) => (
-            <div
-              key={p._id}
-              className={`bg-white rounded-xl border shadow-sm px-4 py-3 flex items-center gap-3 transition-opacity ${
-                !p.actif ? 'opacity-50' : ''
-              }`}
-            >
-              {/* Badge statut */}
-              <span
-                className={`shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${
-                  p.actif ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+            <div key={p._id} className="bg-white rounded-xl border shadow-sm overflow-hidden">
+              {/* Ligne principale */}
+              <div
+                className={`px-4 py-3 flex items-center gap-3 transition-opacity ${
+                  !p.actif ? 'opacity-50' : ''
                 }`}
               >
-                {p.actif ? 'Actif' : 'Inactif'}
-              </span>
+                {/* Badge statut */}
+                <span
+                  className={`shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    p.actif ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                  }`}
+                >
+                  {p.actif ? 'Actif' : 'Inactif'}
+                </span>
 
-              {/* Infos */}
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-gray-900 truncate">{p.nom}</p>
-                <p className="text-xs text-gray-500 truncate">
-                  {p.categorie} · {formatPrix(p.prix)}
-                  {p.options.length > 0 && ` · ${p.options.length} option(s)`}
-                </p>
+                {/* Infos */}
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-gray-900 truncate">{p.nom}</p>
+                  <p className="text-xs text-gray-500 truncate">
+                    {p.categorie} · {formatPrix(p.prix)}
+                    {p.options.length > 0 && ` · ${p.options.length} option(s)`}
+                  </p>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setEditing(editing?._id === p._id ? null : p)}
+                    className="text-xs text-blue-600 hover:underline"
+                  >
+                    {editing?._id === p._id ? 'Fermer' : 'Modifier'}
+                  </button>
+                  <button
+                    onClick={() => toggleActif(p)}
+                    className="text-xs text-gray-500 hover:text-gray-800 hover:underline"
+                  >
+                    {p.actif ? 'Désactiver' : 'Activer'}
+                  </button>
+                  <button
+                    onClick={() => handleDelete(p)}
+                    className="text-xs text-red-400 hover:text-red-600 hover:underline"
+                  >
+                    Supprimer
+                  </button>
+                </div>
               </div>
 
-              {/* Actions */}
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => {
-                    setEditing(p);
-                    setMode('edit');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
-                  className="text-xs text-blue-600 hover:underline"
-                >
-                  Modifier
-                </button>
-                <button
-                  onClick={() => toggleActif(p)}
-                  className="text-xs text-gray-500 hover:text-gray-800 hover:underline"
-                >
-                  {p.actif ? 'Désactiver' : 'Activer'}
-                </button>
-                <button
-                  onClick={() => handleDelete(p)}
-                  className="text-xs text-red-400 hover:text-red-600 hover:underline"
-                >
-                  Supprimer
-                </button>
+              {/* Formulaire d'édition inline (accordéon animé) */}
+              <div className={`grid transition-all duration-300 ease-in-out ${
+                editing?._id === p._id ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+              }`}>
+                <div className="overflow-hidden">
+                  <div className="border-t px-4 py-4 bg-gray-50">
+                    <ProduitForm
+                      initial={p}
+                      onSubmit={handleUpdate}
+                      onCancel={() => setEditing(null)}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           ))}

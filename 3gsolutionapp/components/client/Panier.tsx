@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { useCart, CartItem } from '@/lib/cartContext';
 
 function formatPrix(centimes: number): string {
@@ -47,18 +48,31 @@ export default function Panier() {
             key={idx}
             className="bg-white rounded-xl border border-gray-100 shadow-sm p-4"
           >
-            <div className="flex justify-between items-start gap-2">
+            <div className="flex items-start gap-3">
+              {item.imageUrl && (
+                <div className="relative w-14 h-14 shrink-0 rounded-lg overflow-hidden border border-gray-100">
+                  <Image
+                    src={item.imageUrl}
+                    alt={item.nom}
+                    fill
+                    className="object-cover"
+                    sizes="56px"
+                  />
+                </div>
+              )}
               <div className="flex-1 min-w-0">
-                <p className="font-semibold text-gray-900">{item.nom}</p>
+                <div className="flex justify-between items-start gap-2">
+                  <p className="font-semibold text-gray-900">{item.nom}</p>
+                  <p className="font-bold text-gray-900 whitespace-nowrap">
+                    {formatPrix(itemTotal(item))}
+                  </p>
+                </div>
                 {item.options.length > 0 && (
                   <p className="text-xs text-gray-500 mt-0.5">
                     + {item.options.map((o) => o.nom).join(', ')}
                   </p>
                 )}
               </div>
-              <p className="font-bold text-gray-900 whitespace-nowrap">
-                {formatPrix(itemTotal(item))}
-              </p>
             </div>
 
             <div className="flex items-center gap-2 mt-3">

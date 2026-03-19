@@ -38,6 +38,7 @@ export async function GET(req: NextRequest) {
 
   // Réponse filtrée : on exclut les données personnelles sensibles
   return NextResponse.json({
+    commandeId: commande._id.toString(),
     statut: commande.statut,
     retrait: commande.retrait,
     produits: commande.produits.map((p) => ({

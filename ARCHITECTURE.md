@@ -44,6 +44,8 @@
 │       │       └── statut/route.ts # PATCH statut (admin)
 │       ├── checkout/
 │       │   └── route.ts           # Création session Stripe
+│       ├── upload/
+│       │   └── route.ts           # POST upload image (Vercel Blob ou fallback local)
 │       ├── site-config/
 │       │   └── route.ts           # GET public / PUT admin (personnalisation)
 │       └── webhooks/
@@ -70,7 +72,8 @@
 │   └── SiteConfig.ts          # Config vitrine (singleton)
 ├── public/
 │   ├── manifest.json              # PWA manifest
-│   └── icons/
+│   ├── icons/
+│   └── uploads/                   # Fallback dev upload local (gitignored)
 ├── next.config.js                 # Config PWA
 └── .env.local
 ```
@@ -181,7 +184,7 @@ pas avant, pour éviter les commandes fantômes.
 | PATCH   | /api/commandes/[id]/statut   | Marquer comme "prête"                | Admin  |
 | GET     | /api/site-config             | Lire la config vitrine               | Public |
 | PUT     | /api/site-config             | Mettre à jour la config vitrine      | Admin  |
-| POST    | /api/upload                  | Upload image vers Vercel Blob        | Admin  |
+| POST    | /api/upload                  | Upload image (Vercel Blob ou local)  | Admin  |
 
 ---
 
@@ -287,6 +290,7 @@ RESEND_API_KEY=re_...
 EMAIL_FROM=commandes@restaurant.fr
 
 # Vercel Blob (images)
+# Optionnel en développement : si absent, les uploads sont sauvegardés dans public/uploads/
 BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
 ```
 
@@ -312,44 +316,68 @@ BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
 
 ## Dépendances principales
 
+> Versions réelles installées au 2026-03-19.
+
 ```json
 {
   "dependencies": {
-    "next": "^14",
-    "react": "^18",
-    "mongoose": "^8",
-    "stripe": "^14",
-    "next-auth": "^4",
-    "bcryptjs": "^2",
-    "resend": "^3",
-    "next-pwa": "^5",
-    "tailwindcss": "^3",
-    "zod": "^3",
-    "@vercel/blob": "^0"
+    "next": "16.1.7",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "mongoose": "^8.23.0",
+    "stripe": "^20.4.1",
+    "next-auth": "^4.24.13",
+    "bcryptjs": "^2.4.3",
+    "@types/bcryptjs": "^2.4.6",
+    "resend": "^3.5.0",
+    "tailwindcss": "^4",
+    "zod": "^3.25.76",
+    "@vercel/blob": "^0",
+    "@ducanh2912/next-pwa": "^10.2.9"
   },
   "devDependencies": {
-    "vitest": "^1",
-    "@vitest/coverage-v8": "^1",
-    "@testing-library/react": "^14",
-    "@testing-library/user-event": "^14",
-    "@testing-library/jest-dom": "^6",
-    "msw": "^2",
-    "mongodb-memory-server": "^9",
-    "jsdom": "^24"
+    "typescript": "^5",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@tailwindcss/postcss": "^4",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.7"
   }
 }
 ```
+
+> **Note PWA :** `@ducanh2912/next-pwa` remplace `next-pwa` (incompatible Turbopack). La PWA est implémentée manuellement via `public/sw.js` + composant `SwRegister.tsx`.
+
+> **Tests (Sprint 7) :** Vitest, Testing Library, MSW, mongodb-memory-server seront ajoutés en devDependencies lors du Sprint 7.
 
 ---
 
 ## Images produits & Bannière
 
-Les images sont stockées dans **Vercel Blob** (CDN global, URLs HTTPS permanentes).
+### Stratégie de stockage
+
+La route `POST /api/upload` adopte une stratégie à deux modes selon l'environnement :
+
+```
+BLOB_READ_WRITE_TOKEN présent (production) ?
+  ├── OUI → @vercel/blob : CDN global, URLs HTTPS permanentes
+  │          retourne https://<store>.public.blob.vercel-storage.com/<uuid>.<ext>
+  └── NON → Fallback local (développement) :
+             sauvegarde dans public/uploads/<uuid>.<ext>
+             retourne /uploads/<uuid>.<ext>
+             public/uploads/ est dans .gitignore
+```
+
+Les validations (type MIME, taille 5 Mo, auth admin) s'appliquent dans les deux modes.
+
+### Points clés
 
 - Le modèle `Produit` expose un champ `imageUrl?` optionnel.
 - Le modèle `SiteConfig` conserve son champ `banniereUrl` — désormais alimenté par upload plutôt que par saisie manuelle d'URL.
 - Le composant `DropZone` est réutilisé pour les deux cas d'usage (produit et bannière).
-- Le domaine `blob.vercel-storage.com` doit être ajouté dans `next.config.js` → `images.remotePatterns` pour que `next/image` accepte les URLs Blob.
+- Le domaine `*.public.blob.vercel-storage.com` est ajouté dans `next.config.ts` → `images.remotePatterns` pour que `next/image` accepte les URLs Blob. Les URLs locales (`/uploads/...`) sont nativement acceptées.
+- `imageUrl: null` dans un PUT supprime l'image du produit en base (champ MongoDB mis à `null`, ignoré à l'affichage).
 
 ---
 
@@ -434,13 +462,36 @@ __mocks__/
 
 Le formulaire de commande peut mémoriser le nom, téléphone et email du client en `localStorage` pour faciliter les commandes suivantes.
 
+**Clé localStorage :** `client_cache` → `{ nom, telephone, email? }` (JSON)
+
 **Règles RGPD appliquées :**
 - Consentement explicite via checkbox non cochée par défaut
 - Information claire affichée sous la checkbox
-- Bouton "Effacer mes informations" accessible à tout moment
+- Bouton "Effacer mes informations" accessible à tout moment (visible uniquement si cache existant)
 - Aucune donnée envoyée à nos serveurs depuis le cache
-- Mention dédiée dans la page `/mentions-legales`
+- Mention dédiée dans la page `/mentions-legales` (section "Données stockées localement")
+
+**Détail d'implémentation :**
+- Lecture du cache via `useEffect` + `useRef` (champs non-contrôlés) pour éviter les erreurs SSR
+- Sauvegarde uniquement au submit, pas en temps réel
+- Si checkbox décochée au submit → cache supprimé (`localStorage.removeItem`)
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.3 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18)*
+## Numéro de commande (preuve de commande)
+
+Chaque commande MongoDB possède un `_id` ObjectId. Les 6 derniers caractères en majuscules servent de **numéro court** affiché à la fois côté admin et côté client.
+
+- **Admin** (`CommandeRow`) : badge `#XXXXXX` en tête de chaque ligne
+- **Client** (`/confirmation`) : badge `#XXXXXX` affiché dans le bandeau de statut (en préparation ou prête), coloré selon le statut (amber / green)
+- **API** (`GET /api/commandes/suivi`) : expose `commandeId` (toString de `_id`) — donnée non personnelle, sûre à exposer publiquement
+
+```typescript
+function idCourt(id: string): string {
+  return id.slice(-6).toUpperCase(); // ex: "A3F9C1"
+}
+```
+
+---
+
+*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19)*

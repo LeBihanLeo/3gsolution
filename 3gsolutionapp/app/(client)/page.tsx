@@ -17,6 +17,7 @@ interface Produit {
   categorie: string;
   prix: number;
   options: Option[];
+  imageUrl?: string; // TICK-038
 }
 
 export default function MenuPage() {
@@ -82,6 +83,7 @@ export default function MenuPage() {
                     description={p.description}
                     prix={p.prix}
                     options={p.options}
+                    imageUrl={p.imageUrl}
                   />
                 ))}
             </div>

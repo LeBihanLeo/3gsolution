@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+// TICK-040 — Cache client RGPD (email + téléphone)
+import { useState, useEffect, useRef } from 'react';
 import { z } from 'zod';
 import { useCart, CartItem } from '@/lib/cartContext';
 import { creneauxDepuisEnv } from '@/lib/creneaux';
@@ -8,6 +9,33 @@ import { creneauxDepuisEnv } from '@/lib/creneaux';
 // ─── Créneaux dynamiques (depuis variables d'env NEXT_PUBLIC_) ───────────────
 
 const CRENEAUX = creneauxDepuisEnv();
+
+// ─── Cache RGPD ─────────────────────────────────────────────────────────────
+
+const CACHE_KEY = 'client_cache';
+
+interface ClientCache {
+  nom: string;
+  telephone: string;
+  email?: string;
+}
+
+function readCache(): ClientCache | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    return raw ? (JSON.parse(raw) as ClientCache) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCache(data: ClientCache) {
+  localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+}
+
+function clearCache() {
+  localStorage.removeItem(CACHE_KEY);
+}
 
 // ─── Validation ─────────────────────────────────────────────────────────────
 
@@ -49,6 +77,34 @@ export default function FormulaireCommande() {
   const [serverError, setServerError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // ─── TICK-040 : Cache RGPD ───────────────────────────────────────────────
+  const [memoriser, setMemoriser] = useState(false);
+  const [cacheExists, setCacheExists] = useState(false);
+  const nomRef = useRef<HTMLInputElement>(null);
+  const telRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+
+  // Pré-remplir les champs si un cache existe
+  useEffect(() => {
+    const cache = readCache();
+    if (cache) {
+      setCacheExists(true);
+      setMemoriser(true);
+      if (nomRef.current) nomRef.current.value = cache.nom;
+      if (telRef.current) telRef.current.value = cache.telephone;
+      if (emailRef.current) emailRef.current.value = cache.email ?? '';
+    }
+  }, []);
+
+  function handleEffacerCache() {
+    clearCache();
+    setCacheExists(false);
+    setMemoriser(false);
+    if (nomRef.current) nomRef.current.value = '';
+    if (telRef.current) telRef.current.value = '';
+    if (emailRef.current) emailRef.current.value = '';
+  }
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setFieldErrors({});
@@ -85,6 +141,17 @@ export default function FormulaireCommande() {
         setFieldErrors({ creneau: 'Créneau invalide, veuillez en choisir un dans la liste' });
         return;
       }
+    }
+
+    // ─── TICK-040 : gérer le cache RGPD au submit ────────────────────────
+    if (memoriser) {
+      saveCache({
+        nom: raw.nom,
+        telephone: raw.telephone,
+        ...(raw.email ? { email: raw.email } : {}),
+      });
+    } else {
+      clearCache();
     }
 
     setLoading(true);
@@ -159,7 +226,7 @@ export default function FormulaireCommande() {
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Nom <span className="text-red-400">*</span>
           </label>
-          <input name="nom" type="text" required autoComplete="name" className={inputCls} />
+          <input ref={nomRef} name="nom" type="text" required autoComplete="name" className={inputCls} />
           {fieldErrors.nom && <p className="text-xs text-red-500 mt-1">{fieldErrors.nom}</p>}
         </div>
 
@@ -168,6 +235,7 @@ export default function FormulaireCommande() {
             Téléphone <span className="text-red-400">*</span>
           </label>
           <input
+            ref={telRef}
             name="telephone"
             type="tel"
             required
@@ -185,6 +253,7 @@ export default function FormulaireCommande() {
             Email <span className="text-gray-400 font-normal">(optionnel, pour confirmation)</span>
           </label>
           <input
+            ref={emailRef}
             name="email"
             type="email"
             autoComplete="email"
@@ -251,6 +320,38 @@ export default function FormulaireCommande() {
             placeholder="Allergies, sans oignons, etc."
             className={`${inputCls} resize-none`}
           />
+        </div>
+
+        {/* ─── TICK-040 : Cache RGPD ─────────────────────────────────────── */}
+        <div className="border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50">
+          <label
+            htmlFor="memoriser-checkbox"
+            className="flex items-start gap-2.5 cursor-pointer"
+          >
+            <input
+              id="memoriser-checkbox"
+              type="checkbox"
+              checked={memoriser}
+              onChange={(e) => setMemoriser(e.target.checked)}
+              aria-describedby="memoriser-info"
+              className="mt-0.5 accent-blue-600 shrink-0"
+            />
+            <span className="text-sm text-gray-700">
+              Mémoriser mes informations sur cet appareil pour mes prochaines commandes
+            </span>
+          </label>
+          <p id="memoriser-info" className="text-xs text-gray-500 pl-6">
+            Ces informations restent sur votre appareil et ne sont jamais transmises à nos serveurs.
+          </p>
+          {cacheExists && (
+            <button
+              type="button"
+              onClick={handleEffacerCache}
+              className="ml-6 text-xs text-red-600 hover:underline"
+            >
+              Effacer mes informations
+            </button>
+          )}
         </div>
 
         {serverError && (

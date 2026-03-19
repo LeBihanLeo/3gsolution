@@ -19,6 +19,7 @@ export interface CartItem {
   prix: number; // prix de base en centimes
   quantite: number;
   options: CartOption[];
+  imageUrl?: string;
 }
 
 interface CartState {

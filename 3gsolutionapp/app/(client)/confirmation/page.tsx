@@ -10,11 +10,16 @@ import { useCart } from '@/lib/cartContext';
 type StatutCommande = 'payee' | 'prete';
 
 interface SuiviReponse {
+  commandeId: string;
   statut: StatutCommande;
   retrait: { type: 'immediat' | 'creneau'; creneau?: string };
   produits: { nom: string; quantite: number }[];
   total: number;
   createdAt: string;
+}
+
+function idCourt(id: string): string {
+  return id.slice(-6).toUpperCase();
 }
 
 const POLL_INTERVAL_MS = 15_000;
@@ -151,6 +156,11 @@ function SuiviContent() {
             Commande prête !
           </h1>
           <p className="text-green-700 text-sm">Venez la récupérer.</p>
+          {data?.commandeId && (
+            <p className="mt-3 font-mono text-xs text-green-600 bg-green-100 rounded px-3 py-1 inline-block">
+              #{idCourt(data.commandeId)}
+            </p>
+          )}
         </div>
       ) : (
         <div className="rounded-2xl bg-amber-50 border border-amber-200 p-6 text-center">
@@ -163,6 +173,11 @@ function SuiviContent() {
           <p className="text-amber-700 text-sm">
             Nous vous préviendrons dès que votre commande est prête.
           </p>
+          {data?.commandeId && (
+            <p className="mt-3 font-mono text-xs text-amber-600 bg-amber-100 rounded px-3 py-1 inline-block">
+              #{idCourt(data.commandeId)}
+            </p>
+          )}
         </div>
       )}
 

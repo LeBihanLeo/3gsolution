@@ -16,6 +16,7 @@ const ProduitSchema = z.object({
   categorie: z.string().min(1, 'La catégorie est requise'),
   prix: z.number().int().min(0, 'Le prix doit être positif'),
   options: z.array(OptionSchema).default([]),
+  imageUrl: z.string().url().optional(), // TICK-036
   actif: z.boolean().default(true),
 });
 

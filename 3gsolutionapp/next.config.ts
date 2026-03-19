@@ -4,6 +4,15 @@ import type { NextConfig } from "next";
 // La PWA est implémentée manuellement via public/sw.js + SwRegister client component.
 const nextConfig: NextConfig = {
   turbopack: {},
+  images: {
+    remotePatterns: [
+      {
+        // TICK-038 — Autoriser les images Vercel Blob pour next/image
+        protocol: 'https',
+        hostname: '*.public.blob.vercel-storage.com',
+      },
+    ],
+  },
 };
 
 export default nextConfig;

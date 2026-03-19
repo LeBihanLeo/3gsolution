@@ -16,6 +16,7 @@ const ProduitUpdateSchema = z.object({
   categorie: z.string().min(1).optional(),
   prix: z.number().int().min(0).optional(),
   options: z.array(OptionSchema).optional(),
+  imageUrl: z.string().min(1).optional().nullable(), // TICK-036 — null pour supprimer l'image (chemin relatif ou URL absolue)
   actif: z.boolean().optional(),
 });
 

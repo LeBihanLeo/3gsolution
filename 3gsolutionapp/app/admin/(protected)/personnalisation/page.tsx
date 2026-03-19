@@ -1,7 +1,9 @@
 'use client';
 
+// TICK-039 — Bannière via DropZone (remplace le champ URL)
 import { useEffect, useState } from 'react';
 import PersonnalisationApercu from '@/components/admin/PersonnalisationApercu';
+import DropZone from '@/components/admin/DropZone';
 
 interface FormData {
   nomRestaurant: string;
@@ -42,9 +44,6 @@ export default function PersonnalisationPage() {
   function validate(): string | null {
     if (!form.nomRestaurant.trim()) return 'Le nom du restaurant est requis.';
     if (form.nomRestaurant.length > 80) return 'Le nom ne doit pas dépasser 80 caractères.';
-    if (form.banniereUrl && !/^https?:\/\//.test(form.banniereUrl) && !form.banniereUrl.startsWith('/')) {
-      return "L'URL de la bannière doit être HTTPS ou un chemin relatif (/...).";
-    }
     return null;
   }
 
@@ -109,19 +108,14 @@ export default function PersonnalisationPage() {
           <p className="text-xs text-gray-400 mt-1">{form.nomRestaurant.length}/80</p>
         </div>
 
-        {/* URL de la bannière */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            URL de la bannière <span className="text-gray-400 font-normal">(optionnel)</span>
-          </label>
-          <input
-            type="url"
-            value={form.banniereUrl}
-            onChange={(e) => set('banniereUrl', e.target.value)}
-            placeholder="https://exemple.com/banniere.jpg  ou  /images/banniere.jpg"
-            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
+        {/* Bannière via DropZone — TICK-039 */}
+        <DropZone
+          label="Bannière du site"
+          aspectRatio="banner"
+          currentImageUrl={form.banniereUrl || undefined}
+          onUploadSuccess={(url) => set('banniereUrl', url)}
+          onRemove={() => set('banniereUrl', '')}
+        />
 
         {/* Message feedback */}
         {message && (

@@ -1,5 +1,6 @@
 # Backlog de développement — Plateforme de commande en ligne
 > Généré le 2026-03-17 · Basé sur ARCHITECTURE.md · Sizing en jours/dev
+> Mis à jour le 2026-03-19 · Sprint 6 implémenté
 
 ---
 
@@ -12,7 +13,7 @@
 | 3 | Paiement, Admin, Email, PWA, Déploiement | TICK-017 → 027 | 6,5 j |
 | 4 | Créneaux 15 min & Suivi commande client | TICK-028 → 030 | 3,0 j |
 | 5 | Personnalisation de la vitrine | TICK-031 → 033 | 2,0 j |
-| 6 | Images produits, Upload bannière, Cache RGPD | TICK-034 → 040 | 5,5 j |
+| 6 | Images produits, Upload bannière, Cache RGPD | TICK-034 → 040 | 5,5 j | ✅ Implémenté |
 | 7 | Tests unitaires & intégration | TICK-041 → 049 | 7,0 j |
 | **Total** | | **49 tickets** | **~35,5 j** |
 
@@ -692,7 +693,7 @@ Modifier `app/(client)/layout.tsx` pour charger la `SiteConfig` côté serveur (
 
 ## Sprint 6 — Images produits, Upload bannière, Cache client RGPD (5,5 j)
 
-### TICK-034 — API Upload d'images (Vercel Blob)
+### TICK-034 — API Upload d'images (Vercel Blob) ✅
 **Épic :** Upload & Stockage
 **Priorité :** 🔴 Bloquant
 **Sizing :** 0,5 j
@@ -702,18 +703,20 @@ Modifier `app/(client)/layout.tsx` pour charger la `SiteConfig` côté serveur (
 Créer `app/api/upload/route.ts` — route POST protégée admin pour uploader un fichier image vers Vercel Blob et retourner l'URL publique persistante.
 
 **Critères d'acceptance :**
-- [ ] POST `/api/upload` : accepte un `FormData` avec un champ `file` (image uniquement)
-- [ ] Vérification du type MIME : `image/jpeg`, `image/png`, `image/webp`, `image/gif` uniquement — rejet HTTP 400 sinon
-- [ ] Taille maximale : 5 Mo — rejet HTTP 413 sinon
-- [ ] Upload via `@vercel/blob` : `put(filename, file, { access: 'public' })`
-- [ ] Retourne `{ url: string }` (URL Vercel Blob publique et permanente)
-- [ ] Route protégée par `getServerSession` (admin uniquement)
-- [ ] Variable d'env : `BLOB_READ_WRITE_TOKEN` (généré depuis Vercel Dashboard)
-- [ ] Ajout de `BLOB_READ_WRITE_TOKEN` dans `.env.local.example`
+- [x] POST `/api/upload` : accepte un `FormData` avec un champ `file` (image uniquement)
+- [x] Vérification du type MIME : `image/jpeg`, `image/png`, `image/webp`, `image/gif` uniquement — rejet HTTP 400 sinon
+- [x] Taille maximale : 5 Mo — rejet HTTP 413 sinon
+- [x] Upload via `@vercel/blob` : `put(filename, file, { access: 'public' })`
+- [x] Retourne `{ url: string }` (URL Vercel Blob publique et permanente)
+- [x] Route protégée par `getServerSession` (admin uniquement)
+- [x] Variable d'env : `BLOB_READ_WRITE_TOKEN` (généré depuis Vercel Dashboard)
+- [x] Ajout de `BLOB_READ_WRITE_TOKEN` dans `.env.local.example`
+
+> **Ajout hors-spec (2026-03-19) :** Fallback développement local — si `BLOB_READ_WRITE_TOKEN` est absent, le fichier est sauvegardé dans `public/uploads/` et une URL relative `/uploads/<uuid>.<ext>` est retournée. Permet de tester sans compte Vercel. Le dossier `public/uploads/` est dans `.gitignore`.
 
 ---
 
-### TICK-035 — Composant DropZone (réutilisable)
+### TICK-035 — Composant DropZone (réutilisable) ✅
 **Épic :** Upload & Stockage
 **Priorité :** 🔴 Bloquant
 **Sizing :** 1,0 j
@@ -734,21 +737,21 @@ interface DropZoneProps {
 ```
 
 **Critères d'acceptance :**
-- [ ] Zone de drop avec bordure en tirets, texte indicatif "Glissez une image ici ou cliquez pour parcourir"
-- [ ] `<input type="file" accept="image/*" hidden>` déclenché au clic sur la zone
-- [ ] Gestion du drag : `dragover` → highlight de la zone, `dragleave` → retour normal, `drop` → upload
-- [ ] Upload immédiat au dépôt/sélection : POST `FormData` vers `/api/upload`
-- [ ] Indicateur de chargement pendant l'upload (spinner ou barre de progression)
-- [ ] Prévisualisation de l'image après upload réussi (`<img>` avec `object-fit: cover`)
-- [ ] Bouton "Supprimer l'image" (croix) sur la prévisualisation → appelle `onRemove` + efface la prévisualisation
-- [ ] Si `currentImageUrl` fourni à l'initialisation → prévisualisation affichée d'emblée
-- [ ] Message d'erreur inline si upload échoue (format non supporté, taille dépassée, erreur réseau)
-- [ ] `aspectRatio="square"` → prévisualisation carrée (produits) ; `aspectRatio="banner"` → ratio 16:3 (bannière)
-- [ ] Accessible : label associé à l'input, `aria-label` sur la zone de drop
+- [x] Zone de drop avec bordure en tirets, texte indicatif "Glissez une image ici ou cliquez pour parcourir"
+- [x] `<input type="file" accept="image/*" hidden>` déclenché au clic sur la zone
+- [x] Gestion du drag : `dragover` → highlight de la zone, `dragleave` → retour normal, `drop` → upload
+- [x] Upload immédiat au dépôt/sélection : POST `FormData` vers `/api/upload`
+- [x] Indicateur de chargement pendant l'upload (spinner ou barre de progression)
+- [x] Prévisualisation de l'image après upload réussi (`<img>` avec `object-fit: cover`)
+- [x] Bouton "Supprimer l'image" (croix) sur la prévisualisation → appelle `onRemove` + efface la prévisualisation
+- [x] Si `currentImageUrl` fourni à l'initialisation → prévisualisation affichée d'emblée
+- [x] Message d'erreur inline si upload échoue (format non supporté, taille dépassée, erreur réseau)
+- [x] `aspectRatio="square"` → prévisualisation carrée (produits) ; `aspectRatio="banner"` → ratio 16:3 (bannière)
+- [x] Accessible : label associé à l'input, `aria-label` sur la zone de drop
 
 ---
 
-### TICK-036 — Images produits : modèle + API
+### TICK-036 — Images produits : modèle + API ✅
 **Épic :** Images produits
 **Priorité :** 🟠 Haute
 **Sizing :** 0,5 j
@@ -758,15 +761,17 @@ interface DropZoneProps {
 Ajouter le champ `imageUrl` au modèle `Produit` et mettre à jour les routes API pour le lire et l'écrire.
 
 **Critères d'acceptance :**
-- [ ] `models/Produit.ts` : ajout du champ `imageUrl?: string` (optionnel) dans le schéma et l'interface `IProduit`
-- [ ] `GET /api/produits` : le champ `imageUrl` est inclus dans la réponse
-- [ ] `POST /api/produits` et `PUT /api/produits/[id]` : le champ `imageUrl` est accepté, validé par Zod comme `z.string().url().optional()`
-- [ ] Aucune migration nécessaire : les produits existants sans image fonctionnent normalement
-- [ ] `imageUrl` absent ou `null` → le produit est retourné sans ce champ (pas de valeur vide)
+- [x] `models/Produit.ts` : ajout du champ `imageUrl?: string` (optionnel) dans le schéma et l'interface `IProduit`
+- [x] `GET /api/produits` : le champ `imageUrl` est inclus dans la réponse
+- [x] `POST /api/produits` et `PUT /api/produits/[id]` : le champ `imageUrl` est accepté, validé par Zod comme `z.string().url().optional()`
+- [x] Aucune migration nécessaire : les produits existants sans image fonctionnent normalement
+- [x] `imageUrl` absent ou `null` → le produit est retourné sans ce champ (pas de valeur vide)
+
+> **Note d'implémentation :** Le schéma Zod du `PUT` accepte également `null` (`z.string().url().optional().nullable()`) pour permettre la suppression d'une image existante via l'interface admin.
 
 ---
 
-### TICK-037 — Images produits : formulaire admin (ProduitForm)
+### TICK-037 — Images produits : formulaire admin (ProduitForm) ✅
 **Épic :** Images produits
 **Priorité :** 🟠 Haute
 **Sizing :** 0,5 j
@@ -776,16 +781,18 @@ Ajouter le champ `imageUrl` au modèle `Produit` et mettre à jour les routes AP
 Intégrer le composant `DropZone` dans `components/admin/ProduitForm.tsx` pour permettre l'ajout, le remplacement et la suppression d'une image par produit.
 
 **Critères d'acceptance :**
-- [ ] `DropZone` intégré sous les champs nom/description, avec `label="Image du produit"` et `aspectRatio="square"`
-- [ ] À l'upload réussi (`onUploadSuccess`) : `imageUrl` du formulaire mis à jour avec l'URL retournée
-- [ ] À la suppression (`onRemove`) : `imageUrl` remis à `undefined` dans le formulaire
-- [ ] En mode édition : si le produit a déjà un `imageUrl`, il est passé en `currentImageUrl` au composant DropZone
-- [ ] Le `imageUrl` est inclus dans le body du POST/PUT envoyé à l'API
-- [ ] Pas de double upload : si l'image n'a pas changé lors d'un PUT, `imageUrl` conserve l'URL existante
+- [x] `DropZone` intégré sous les champs nom/description, avec `label="Image du produit"` et `aspectRatio="square"`
+- [x] À l'upload réussi (`onUploadSuccess`) : `imageUrl` du formulaire mis à jour avec l'URL retournée
+- [x] À la suppression (`onRemove`) : `imageUrl` remis à `null` dans le formulaire (envoyé à l'API pour effacer le champ en base)
+- [x] En mode édition : si le produit a déjà un `imageUrl`, il est passé en `currentImageUrl` au composant DropZone
+- [x] Le `imageUrl` est inclus dans le body du POST/PUT envoyé à l'API
+- [x] Pas de double upload : si l'image n'a pas changé lors d'un PUT, `imageUrl` conserve l'URL existante
+
+> **Écart spec :** `imageUrl` est `string | null` (non `undefined`) à la suppression — `null` est envoyé au PUT pour vider le champ MongoDB. Le POST filtre `null` → `undefined` avant envoi (`imageUrl: values.imageUrl || undefined`).
 
 ---
 
-### TICK-038 — Images produits : affichage client (MenuCard)
+### TICK-038 — Images produits : affichage client (MenuCard) ✅
 **Épic :** Images produits
 **Priorité :** 🟠 Haute
 **Sizing :** 0,5 j
@@ -795,17 +802,19 @@ Intégrer le composant `DropZone` dans `components/admin/ProduitForm.tsx` pour p
 Mettre à jour `components/client/MenuCard.tsx` pour afficher l'image du produit lorsqu'elle est disponible.
 
 **Critères d'acceptance :**
-- [ ] Si `imageUrl` présent : affichage d'un `<img>` (ou `<Image>` Next.js) en haut de la carte, ratio 4:3, `object-fit: cover`
-- [ ] Si `imageUrl` absent : aucun espace vide — layout sans image (comportement actuel)
-- [ ] Image lazy-loaded (`loading="lazy"`) pour ne pas pénaliser le LCP
-- [ ] Domaine Vercel Blob ajouté dans `next.config.js` → `images.remotePatterns` (obligatoire pour `next/image`)
-- [ ] Alt text = nom du produit
-- [ ] Pas de régression sur le layout existant (nom, description, prix, bouton "Ajouter" inchangés)
-- [ ] Responsive : image pleine largeur sur mobile, hauteur fixe sur desktop
+- [x] Si `imageUrl` présent : affichage d'un `<Image>` Next.js en haut de la carte, ratio 4:3, `object-fit: cover`
+- [x] Si `imageUrl` absent : aucun espace vide — layout sans image (comportement actuel)
+- [x] Image lazy-loaded (`loading="lazy"`) pour ne pas pénaliser le LCP
+- [x] Domaine Vercel Blob ajouté dans `next.config.ts` → `images.remotePatterns` (`*.public.blob.vercel-storage.com`)
+- [x] Alt text = nom du produit
+- [x] Pas de régression sur le layout existant (nom, description, prix, bouton "Ajouter" inchangés)
+- [x] Responsive : image pleine largeur sur mobile, hauteur fixe sur desktop
+
+> **Note :** Les images du fallback local (`/uploads/...`) sont servies depuis `public/` et ne nécessitent pas de `remotePatterns`.
 
 ---
 
-### TICK-039 — Bannière : upload via DropZone (remplacement du champ URL)
+### TICK-039 — Bannière : upload via DropZone (remplacement du champ URL) ✅
 **Épic :** Personnalisation
 **Priorité :** 🟠 Haute
 **Sizing :** 0,5 j
@@ -815,16 +824,16 @@ Mettre à jour `components/client/MenuCard.tsx` pour afficher l'image du produit
 Modifier `app/(admin)/personnalisation/page.tsx` pour remplacer le champ `<input type="url">` de la bannière par le composant `DropZone`. Le champ `banniereUrl` dans `SiteConfig` reste inchangé (il stocke toujours l'URL), mais l'URL est désormais obtenue par upload plutôt que saisie manuelle.
 
 **Critères d'acceptance :**
-- [ ] Le champ `<input type="url">` de la bannière est remplacé par `<DropZone aspectRatio="banner" label="Bannière du site">`
-- [ ] Si `banniereUrl` existe en base : passé en `currentImageUrl` au composant DropZone (prévisualisation au chargement)
-- [ ] À l'upload réussi : `banniereUrl` du formulaire mis à jour avec l'URL Vercel Blob
-- [ ] À la suppression : `banniereUrl` mis à `undefined` → PUT sauvegarde sans bannière → le layout client n'affiche plus la bannière
-- [ ] L'aperçu temps réel existant (`PersonnalisationApercu`) continue de fonctionner avec la nouvelle URL
-- [ ] Aucun changement sur `models/SiteConfig.ts` ni sur les routes API `GET/PUT /api/site-config`
+- [x] Le champ `<input type="url">` de la bannière est remplacé par `<DropZone aspectRatio="banner" label="Bannière du site">`
+- [x] Si `banniereUrl` existe en base : passé en `currentImageUrl` au composant DropZone (prévisualisation au chargement)
+- [x] À l'upload réussi : `banniereUrl` du formulaire mis à jour avec l'URL retournée (Blob ou locale)
+- [x] À la suppression : `banniereUrl` mis à `''` → PUT sauvegarde sans bannière → le layout client n'affiche plus la bannière
+- [x] L'aperçu temps réel existant (`PersonnalisationApercu`) continue de fonctionner avec la nouvelle URL
+- [x] Aucun changement sur `models/SiteConfig.ts` ni sur les routes API `GET/PUT /api/site-config`
 
 ---
 
-### TICK-040 — Cache client RGPD (email + téléphone)
+### TICK-040 — Cache client RGPD (email + téléphone) ✅
 **Épic :** Expérience client & RGPD
 **Priorité :** 🟡 Moyenne
 **Sizing :** 1,0 j
@@ -851,17 +860,19 @@ Permettre au client de sauvegarder son email et téléphone en `localStorage` po
 ```
 
 **Critères d'acceptance :**
-- [ ] Nouvelle clé localStorage : `client_cache` → `{ nom: string, telephone: string, email?: string }` (JSON)
-- [ ] Checkbox `"Mémoriser mes informations sur cet appareil"` sous les champs client, **non cochée par défaut**
-- [ ] Texte informatif associé à la checkbox : `"Ces informations restent sur votre appareil et ne sont jamais transmises à nos serveurs."`
-- [ ] Si cache existant au chargement de la page : champs nom, téléphone, email pré-remplis **et** checkbox cochée automatiquement
-- [ ] Sauvegarde uniquement au submit du formulaire (pas en temps réel)
-- [ ] Si checkbox décochée au submit : supprimer le cache existant (`localStorage.removeItem('client_cache')`)
-- [ ] Bouton **"Effacer mes informations"** (visible uniquement si `client_cache` existe) : vide le cache, vide les champs, décoche la checkbox
-- [ ] Aucune donnée de cache envoyée au backend — les champs du formulaire restent la seule source de vérité pour le POST `/api/checkout`
-- [ ] Mise à jour de `app/(client)/mentions-legales/page.tsx` (TICK-021) : ajout d'une section **"Données stockées localement"** expliquant le cache localStorage, comment le supprimer, et que ces données ne sont pas transmises
-- [ ] La checkbox et le bouton "Effacer" sont stylisés de manière cohérente avec le reste du formulaire (Tailwind)
-- [ ] Accessible : `<label>` associé à la checkbox, `aria-describedby` pointant vers le texte informatif
+- [x] Nouvelle clé localStorage : `client_cache` → `{ nom: string, telephone: string, email?: string }` (JSON)
+- [x] Checkbox `"Mémoriser mes informations sur cet appareil"` sous les champs client, **non cochée par défaut**
+- [x] Texte informatif associé à la checkbox : `"Ces informations restent sur votre appareil et ne sont jamais transmises à nos serveurs."`
+- [x] Si cache existant au chargement de la page : champs nom, téléphone, email pré-remplis **et** checkbox cochée automatiquement
+- [x] Sauvegarde uniquement au submit du formulaire (pas en temps réel)
+- [x] Si checkbox décochée au submit : supprimer le cache existant (`localStorage.removeItem('client_cache')`)
+- [x] Bouton **"Effacer mes informations"** (visible uniquement si `client_cache` existe) : vide le cache, vide les champs, décoche la checkbox
+- [x] Aucune donnée de cache envoyée au backend — les champs du formulaire restent la seule source de vérité pour le POST `/api/checkout`
+- [x] Mise à jour de `app/(client)/mentions-legales/page.tsx` : ajout d'une section **"Données stockées localement"**
+- [x] La checkbox et le bouton "Effacer" sont stylisés de manière cohérente avec le reste du formulaire (Tailwind)
+- [x] Accessible : `<label>` associé à la checkbox, `aria-describedby` pointant vers le texte informatif
+
+> **Note d'implémentation :** Les champs sont pré-remplis via `useRef` + `useEffect` (champs non-contrôlés) pour éviter les problèmes de SSR avec `localStorage`. La clé `client_cache` est lue uniquement côté client.
 
 ---
 

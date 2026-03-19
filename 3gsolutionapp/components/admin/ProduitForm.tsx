@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { z } from 'zod';
+import DropZone from '@/components/admin/DropZone';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -12,6 +13,7 @@ export interface ProduitData {
   categorie: string;
   prix: number; // centimes
   options: { nom: string; prix: number }[];
+  imageUrl?: string; // TICK-037
   actif: boolean;
 }
 
@@ -27,6 +29,7 @@ export interface ProduitFormValues {
   categorie: string;
   prix: number; // centimes
   options: { nom: string; prix: number }[];
+  imageUrl?: string | null; // TICK-037 — null = supprimer l'image existante
   actif: boolean;
 }
 
@@ -67,6 +70,8 @@ export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitForm
     initial?.options.map((o) => ({ nom: o.nom, prix: centimesToEuros(o.prix) })) ?? []
   );
   const [actif, setActif] = useState(initial?.actif ?? true);
+  // TICK-037 — null = image explicitement supprimée, undefined = jamais définie
+  const [imageUrl, setImageUrl] = useState<string | null>(initial?.imageUrl ?? null);
 
   const addOption = () => setOptions((prev) => [...prev, { nom: '', prix: '0' }]);
 
@@ -125,6 +130,7 @@ export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitForm
           nom: o.nom.trim(),
           prix: eurosToCentimes(o.prix),
         })),
+        imageUrl, // TICK-037 — string = image, null = supprimer, undefined = pas de changement
         actif,
       });
     } finally {
@@ -196,6 +202,15 @@ export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitForm
           )}
         </div>
       </div>
+
+      {/* Image produit — TICK-037 */}
+      <DropZone
+        label="Image du produit"
+        aspectRatio="square"
+        currentImageUrl={initial?.imageUrl}
+        onUploadSuccess={(url) => setImageUrl(url)}
+        onRemove={() => setImageUrl(null)}
+      />
 
       {/* Options */}
       <div>
