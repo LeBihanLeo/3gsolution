@@ -34,7 +34,7 @@ export default function RootLayout({
     <html lang="fr" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${montserrat.variable} antialiased`}
-      >
+      >   
         {children}
         <SwRegister />
       </body>

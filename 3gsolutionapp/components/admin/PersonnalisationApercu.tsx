@@ -14,6 +14,7 @@ export default function PersonnalisationApercu({
       {banniereUrl ? (
         /* ── Hero bannière ── */
         <div
+          data-testid="hero"
           className="w-full flex items-center justify-center"
           style={{
             backgroundImage: `url(${banniereUrl})`,

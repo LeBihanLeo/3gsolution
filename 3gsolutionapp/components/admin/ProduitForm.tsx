@@ -41,8 +41,7 @@ const FormSchema = z.object({
   categorie: z.string().min(1, 'La catégorie est requise'),
   prixEuros: z
     .string()
-    .regex(/^\d+([.,]\d{1,2})?$/, 'Prix invalide (ex : 8,50)')
-    .refine((v) => parseFloat(v.replace(',', '.')) >= 0, 'Le prix doit être positif'),
+    .regex(/^\d+([.,]\d{1,2})?$/, 'Prix invalide (ex : 8,50)'),
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

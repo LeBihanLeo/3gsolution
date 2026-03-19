@@ -455,6 +455,11 @@ __mocks__/
 - **`@vercel/blob`** : mocké via `vi.mock('@vercel/blob')` ; `put` retourne `{ url: 'https://blob.vercel-storage.com/test.jpg' }`.
 - **`localStorage`** : réinitialisé via `localStorage.clear()` dans `afterEach`.
 - **Timers** : `vi.useFakeTimers()` pour tester le polling (`setInterval`) sans attente réelle.
+- **`window.location`** : stubbé via `vi.stubGlobal('location', { href: '' })` dans `beforeEach` dès qu'un test déclenche une redirection ; restauré via `vi.unstubAllGlobals()` dans `afterEach`. Ne pas utiliser `Object.defineProperty(window, 'location', ...)` directement (mutation globale sans cleanup possible).
+- **Variables d'environnement** : stubbées via `vi.stubEnv(...)` dans `beforeEach` ; restaurées via `vi.unstubAllEnvs()` dans `afterEach` pour éviter toute fuite entre tests.
+- **`Object.defineProperty` sur éléments DOM** : toujours passer `configurable: true` pour permettre la redéfinition lors d'exécutions successives (ex : `input.files`).
+- **État DOM ciblé** : utiliser `data-testid` pour cibler les éléments avec style inline (ex : `data-testid="hero"` sur le div bannière de `PersonnalisationApercu`). Éviter les traversées `querySelectorAll` + `find` sur le style.
+- **MongoDB in-memory** : `mongoMemory.ts` inclut un guard `mongoose.disconnect()` dans `connect()` pour gérer les configurations Vitest non-standard (`singleFork`). En mode par défaut (pool `threads`), chaque fichier de test a son propre worker isolé.
 
 ---
 
@@ -494,4 +499,4 @@ function idCourt(id: string): string {
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19)*
+*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19)*
