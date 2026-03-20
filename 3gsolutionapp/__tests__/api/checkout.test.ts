@@ -14,12 +14,23 @@ vi.mock('@/lib/mockStore', () => ({
   mockSessions: new Map(),
 }));
 
+// TICK-050 — Le checkout vérifie les prix en BDD : il faut mocker connectDB + Produit
+vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined) }));
+
+// vi.hoisted() garantit que la variable est initialisée avant le hoist de vi.mock
+const { mockProduitFind } = vi.hoisted(() => ({ mockProduitFind: vi.fn() }));
+vi.mock('@/models/Produit', () => ({
+  default: { find: mockProduitFind },
+}));
+
 import { POST } from '@/app/api/checkout/route';
 
+// Note : `prix` et `nom` sont ignorés par le schéma Zod côté serveur (TICK-050),
+// les tests en-dessous valident que le prix vient de la BDD mockée (850 centimes).
 const validBody = {
   client: { nom: 'Jean Dupont', telephone: '0612345678', email: 'jean@example.com' },
   retrait: { type: 'immediat' },
-  produits: [{ produitId: 'p1', nom: 'Burger', prix: 850, quantite: 1, options: [] }],
+  produits: [{ produitId: 'p1', quantite: 1, options: [] }],
 };
 
 const makeReq = (body: unknown) =>
@@ -29,11 +40,22 @@ const makeReq = (body: unknown) =>
     body: JSON.stringify(body),
   });
 
+// Produit mocké retourné par la BDD pour les tests valides
+const mockProduitDB = {
+  _id: { toString: () => 'p1' },
+  nom: 'Burger',
+  prix: 850,
+  actif: true,
+  options: [],
+};
+
 describe('POST /api/checkout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_fake');
     vi.stubEnv('NEXTAUTH_URL', 'http://localhost:3000');
+    // Par défaut : la BDD retourne le produit valide
+    mockProduitFind.mockReturnValue({ lean: vi.fn().mockResolvedValue([mockProduitDB]) });
   });
 
   afterEach(() => vi.unstubAllEnvs());

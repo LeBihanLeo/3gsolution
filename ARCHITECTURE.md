@@ -65,7 +65,9 @@
 │   ├── stripe.ts                  # Client Stripe
 │   ├── email.ts                   # Envoi email confirmation
 │   ├── auth.ts                    # Config NextAuth
-│   └── blob.ts                    # Helper Vercel Blob (upload)
+│   ├── blob.ts                    # Helper Vercel Blob (upload)
+│   ├── ratelimit.ts               # TICK-052 — Rate limiting login (Upstash/in-memory)
+│   └── logger.ts                  # TICK-059 — Logs de sécurité structurés (JSON prod)
 ├── models/
 │   ├── Produit.ts
 │   ├── Commande.ts
@@ -144,9 +146,12 @@
   ],
   commentaire?: string,
   total: number,               // en centimes
+  purgeAt: Date,               // TICK-057 — RGPD Art. 5(1)(e) : createdAt + 12 mois
   createdAt: Date
 }
 ```
+
+> **RGPD (TICK-057) :** `purgeAt` est calculé à `createdAt + 12 mois` (obligation comptable légale). L'admin peut anonymiser les PII d'une commande `"prete"` via `DELETE /api/commandes/[id]` — le document est conservé, seuls nom/téléphone/email sont remplacés par `[Supprimé]`.
 
 ---
 
@@ -171,20 +176,22 @@ pas avant, pour éviter les commandes fantômes.
 
 ## API Routes
 
-| Méthode | Route                        | Rôle                                 | Auth   |
-|---------|------------------------------|--------------------------------------|--------|
-| GET     | /api/produits                | Liste produits actifs                | Public |
-| POST    | /api/produits                | Créer produit                        | Admin  |
-| PUT     | /api/produits/[id]           | Modifier produit                     | Admin  |
-| PATCH   | /api/produits/[id]           | Activer/désactiver                   | Admin  |
-| DELETE  | /api/produits/[id]           | Supprimer produit                    | Admin  |
-| GET     | /api/commandes               | Liste commandes (admin)              | Admin  |
-| POST    | /api/checkout                | Crée session Stripe + commande draft | Public |
-| POST    | /api/webhooks/stripe         | Confirme paiement, envoie email      | Stripe |
-| PATCH   | /api/commandes/[id]/statut   | Marquer comme "prête"                | Admin  |
-| GET     | /api/site-config             | Lire la config vitrine               | Public |
-| PUT     | /api/site-config             | Mettre à jour la config vitrine      | Admin  |
-| POST    | /api/upload                  | Upload image (Vercel Blob ou local)  | Admin  |
+| Méthode | Route                        | Rôle                                        | Auth   |
+|---------|------------------------------|---------------------------------------------|--------|
+| GET     | /api/produits                | Liste produits actifs                       | Public |
+| POST    | /api/produits                | Créer produit                               | Admin  |
+| PUT     | /api/produits/[id]           | Modifier produit                            | Admin  |
+| PATCH   | /api/produits/[id]           | Activer/désactiver                          | Admin  |
+| DELETE  | /api/produits/[id]           | Supprimer produit                           | Admin  |
+| GET     | /api/commandes               | Liste commandes (admin)                     | Admin  |
+| DELETE  | /api/commandes/[id]          | Anonymiser les PII (RGPD Art. 17)           | Admin  |
+| POST    | /api/checkout                | Crée session Stripe (prix vérifiés en BDD)  | Public |
+| POST    | /api/webhooks/stripe         | Confirme paiement, envoie email             | Stripe |
+| PATCH   | /api/commandes/[id]/statut   | Marquer comme "prête"                       | Admin  |
+| GET     | /api/commandes/suivi         | Suivi commande public (sans PII)            | Public |
+| GET     | /api/site-config             | Lire la config vitrine                      | Public |
+| PUT     | /api/site-config             | Mettre à jour la config vitrine             | Admin  |
+| POST    | /api/upload                  | Upload image (magic bytes + UUID filename)  | Admin  |
 
 ---
 
@@ -212,13 +219,27 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 - **NextAuth.js** avec provider `Credentials`
 - 1 seul compte admin (email + mot de passe hashé en env)
 - Session JWT (stateless, pas de table sessions)
-- Middleware Next.js protège toutes les routes `/admin/*` et `/api/commandes/*`
+- Middleware Next.js protège les routes admin et applique le rate limiting login
+
+**Routes protégées par le middleware (TICK-052, TICK-054) :**
+
+| Routes | Protection |
+|--------|-----------|
+| `/admin/commandes/*`, `/admin/menu/*`, `/admin/personnalisation/*` | Token JWT requis |
+| `/api/commandes`, `/api/commandes/:id/statut` | Token JWT requis |
+| `/api/upload`, `/api/site-config`, `/api/produits`, `/api/produits/:id` | Token JWT requis (défense en profondeur) |
+| `/api/auth/callback/credentials` | Rate limiting 10 req / 15 min par IP |
+
+**Routes publiques intentionnelles :** `GET /api/produits`, `GET /api/site-config`, `GET /api/commandes/suivi`, `POST /api/checkout`, `POST /api/webhooks/stripe`
 
 ```
 Variables d'env :
 ADMIN_EMAIL
 ADMIN_PASSWORD_HASH   # bcrypt hash
 NEXTAUTH_SECRET
+# Rate limiting (TICK-052) — plan gratuit Upstash Redis
+UPSTASH_REDIS_REST_URL
+UPSTASH_REDIS_REST_TOKEN
 ```
 
 ---
@@ -253,18 +274,26 @@ Envoyé depuis le webhook Stripe (source de vérité = paiement confirmé).
 
 ---
 
-## Sécurité & RGPD (minimum viable)
+## Sécurité & RGPD (Sprint 8 — audit 2026-03-20 / Sprint 9 — correctifs 2026-03-20)
 
-| Point                 | Implémentation                                           |
-|-----------------------|----------------------------------------------------------|
-| HTTPS                 | Vercel (automatique, certificat Let's Encrypt)           |
-| Données bancaires     | Jamais stockées (tout via Stripe)                        |
-| Données personnelles  | nom, téléphone, email — suppression manuelle si besoin   |
-| Webhook Stripe        | Vérification signature `stripe.webhooks.constructEvent`  |
-| Routes admin          | Middleware NextAuth, JWT                                 |
-| Variables sensibles   | `.env.local` jamais committé (`.gitignore`)              |
-| Mentions légales      | Page statique `/mentions-legales`                        |
-| Bandeau cookies       | Simple (pas de tracking tiers, juste session auth)       |
+| Point | Implémentation | Ticket |
+|-------|---------------|--------|
+| HTTPS | Vercel (automatique, certificat Let's Encrypt) | — |
+| Données bancaires | Jamais stockées (tout via Stripe) | — |
+| **Validation des prix** | Prix rechargés depuis MongoDB — valeurs client ignorées | TICK-050 |
+| **Headers HTTP** | CSP dynamique (sans `unsafe-eval` en prod), X-Frame-Options, nosniff, Referrer-Policy | TICK-051, TICK-061 |
+| **Rate limiting login** | 10 req / 15 min / IP — Upstash prod, in-memory dev, fail-safe sur panne Redis | TICK-052, TICK-063 |
+| **Validation MIME upload** | Magic bytes via `file-type` — nom de fichier remplacé par UUID | TICK-053 |
+| **Middleware étendu** | Toutes routes admin couvertes + `/api/commandes/:id` + IP non-spoofable | TICK-054, TICK-062 |
+| **Mock checkout** | Double guard `NODE_ENV + STRIPE_SECRET_KEY`, TTL 30 min sur sessions | TICK-055 |
+| **Webhook Stripe** | Signature `constructEvent` + idempotence + validation Zod des métadonnées | —, TICK-064 |
+| Auth admin | Middleware NextAuth, JWT, bcrypt | — |
+| Variables sensibles | `.env.local` jamais committé (`.gitignore`) | — |
+| **Bandeau cookie CNIL** | Boutons "Refuser" et "Accepter" de même visibilité | TICK-056 |
+| **Rétention données** | `purgeAt = createdAt + 12 mois` ; index TTL MongoDB ; anonymisation PII via DELETE admin | TICK-057, TICK-060 |
+| **Accountability RGPD** | Anonymisations loggées (`commande_anonymisee`) via `lib/logger.ts` | TICK-060 |
+| **Sous-traitants RGPD** | Stripe, Vercel, MongoDB, Resend documentés dans `/mentions-legales` | TICK-058 |
+| **Logs structurés** | `lib/logger.ts` — JSON en prod, lisible en dev ; tous les handlers utilisent le logger | TICK-059, TICK-064 |
 
 ---
 
@@ -292,6 +321,11 @@ EMAIL_FROM=commandes@restaurant.fr
 # Vercel Blob (images)
 # Optionnel en développement : si absent, les uploads sont sauvegardés dans public/uploads/
 BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
+
+# Rate limiting login admin — TICK-052 (Upstash Redis, plan gratuit)
+# Optionnel : si absent, fallback in-memory (développement uniquement)
+UPSTASH_REDIS_REST_URL=https://...upstash.io
+UPSTASH_REDIS_REST_TOKEN=...
 ```
 
 ---
@@ -333,7 +367,10 @@ BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
     "tailwindcss": "^4",
     "zod": "^3.25.76",
     "@vercel/blob": "^0",
-    "@ducanh2912/next-pwa": "^10.2.9"
+    "@ducanh2912/next-pwa": "^10.2.9",
+    "file-type": "^latest",
+    "@upstash/ratelimit": "^latest",
+    "@upstash/redis": "^latest"
   },
   "devDependencies": {
     "typescript": "^5",
@@ -349,7 +386,9 @@ BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
 
 > **Note PWA :** `@ducanh2912/next-pwa` remplace `next-pwa` (incompatible Turbopack). La PWA est implémentée manuellement via `public/sw.js` + composant `SwRegister.tsx`.
 
-> **Tests (Sprint 7) :** Vitest, Testing Library, MSW, mongodb-memory-server seront ajoutés en devDependencies lors du Sprint 7.
+> **Tests (Sprint 7) :** Vitest, Testing Library, MSW, mongodb-memory-server sont en devDependencies.
+
+> **Sécurité (Sprint 8) :** `file-type` valide les uploads par magic bytes. `@upstash/ratelimit` + `@upstash/redis` implémentent le rate limiting login (prod). Les deux packages Upstash nécessitent `UPSTASH_REDIS_REST_URL` et `UPSTASH_REDIS_REST_TOKEN` — en l'absence de ces variables, un fallback in-memory s'active automatiquement (développement uniquement).
 
 ---
 
@@ -453,6 +492,8 @@ __mocks__/
 - **`getServerSession`** : mocké via `vi.mock('next-auth')` pour retourner `null` (non-auth) ou un objet session admin.
 - **Stripe** : mocké via `vi.mock('stripe')` ; `constructEvent` retourne un objet événement synthétique.
 - **`@vercel/blob`** : mocké via `vi.mock('@vercel/blob')` ; `put` retourne `{ url: 'https://blob.vercel-storage.com/test.jpg' }`.
+- **`file-type`** : mocké via `vi.mock('file-type')` (package ESM v19+ incompatible avec les fichiers synthétiques sans magic bytes) ; `fileTypeFromBuffer` retourne `{ mime: 'image/jpeg', ext: 'jpg' }` pour une image valide, `undefined` pour un type non reconnu (→ 400).
+- **`connectDB` + modèles dans les routes post-TICK-050** : les routes qui rechargent les prix depuis MongoDB (`/api/checkout`) nécessitent `vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn() }))` et un mock du modèle Produit. Utiliser **`vi.hoisted()`** pour déclarer la fonction mock avant le hoist de `vi.mock` : `const { mockFind } = vi.hoisted(() => ({ mockFind: vi.fn() }))` ; ne jamais référencer une variable `const` déclarée après `vi.mock` dans sa factory (erreur d'initialisation au hoist).
 - **`localStorage`** : réinitialisé via `localStorage.clear()` dans `afterEach`.
 - **Timers** : `vi.useFakeTimers()` pour tester le polling (`setInterval`) sans attente réelle.
 - **`window.location`** : stubbé via `vi.stubGlobal('location', { href: '' })` dans `beforeEach` dès qu'un test déclenche une redirection ; restauré via `vi.unstubAllGlobals()` dans `afterEach`. Ne pas utiliser `Object.defineProperty(window, 'location', ...)` directement (mutation globale sans cleanup possible).
@@ -499,4 +540,4 @@ function idCourt(id: string): string {
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19)*
+*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19) — Version 1.8 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20 : validation prix serveur, headers HTTP, rate limiting, magic bytes upload, middleware étendu, mock guard, CNIL, rétention RGPD, sous-traitants, logs structurés) — Version 1.9 (Sprint 9 Correctifs post-audit ajoutés le 2026-03-20 : index TTL MongoDB purgeAt, CSP sans unsafe-eval en prod, middleware /api/commandes/:id + IP non-spoofable, rate limiting fail-safe, Zod validation metadata webhook, logger mock-checkout) — Version 1.10 (Conventions de mock complétées le 2026-03-20 : file-type ESM mocké, vi.hoisted() pour factories dépendant de variables externes, connectDB + Produit mockés dans checkout)*

@@ -7,6 +7,13 @@ vi.mock('@vercel/blob', () => ({
   put: vi.fn().mockResolvedValue({ url: 'https://blob.vercel-storage.com/test.jpg' }),
 }));
 
+// TICK-053 — fileTypeFromBuffer est une dépendance ESM (file-type v19+) et ne peut pas
+// analyser les fichiers de test synthétiques (bytes nuls sans magic bytes réels).
+// On mocke le module comme toutes les autres dépendances tierces.
+vi.mock('file-type', () => ({
+  fileTypeFromBuffer: vi.fn(),
+}));
+
 // Mock fs pour éviter les écritures disque (default + named exports)
 vi.mock('fs/promises', () => {
   const mockMkdir = vi.fn().mockResolvedValue(undefined);
@@ -19,6 +26,7 @@ vi.mock('fs/promises', () => {
 });
 
 import { getServerSession } from 'next-auth';
+import { fileTypeFromBuffer } from 'file-type';
 import { POST } from '@/app/api/upload/route';
 
 const makeFile = (name: string, type: string, sizeBytes = 100) => {
@@ -43,18 +51,22 @@ describe('POST /api/upload', () => {
 
   it('sans session → 401', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce(null);
+    // La vérification de session est avant fileTypeFromBuffer — pas de mock nécessaire
     const res = await POST(makeReq(makeFile('img.jpg', 'image/jpeg')));
     expect(res.status).toBe(401);
   });
 
   it('fichier non-image (PDF) → 400', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as ReturnType<typeof getServerSession> extends Promise<infer T> ? T : never);
+    // fileTypeFromBuffer retourne undefined → type non reconnu → 400
+    vi.mocked(fileTypeFromBuffer).mockResolvedValueOnce(undefined);
     const res = await POST(makeReq(makeFile('doc.pdf', 'application/pdf')));
     expect(res.status).toBe(400);
   });
 
   it('fichier > 5 Mo → 413', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as ReturnType<typeof getServerSession> extends Promise<infer T> ? T : never);
+    // La vérification de taille est avant fileTypeFromBuffer — pas de mock nécessaire
     const oversized = makeFile('big.jpg', 'image/jpeg', 6 * 1024 * 1024);
     const res = await POST(makeReq(oversized));
     expect(res.status).toBe(413);
@@ -63,6 +75,8 @@ describe('POST /api/upload', () => {
   it('image JPEG valide avec BLOB_READ_WRITE_TOKEN → retourne URL Vercel Blob', async () => {
     vi.stubEnv('BLOB_READ_WRITE_TOKEN', 'vercel_blob_rw_fake');
     vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as ReturnType<typeof getServerSession> extends Promise<infer T> ? T : never);
+    // fileTypeFromBuffer retourne image/jpeg → passe la validation
+    vi.mocked(fileTypeFromBuffer).mockResolvedValueOnce({ mime: 'image/jpeg', ext: 'jpg' });
     const { put } = await import('@vercel/blob');
     vi.mocked(put).mockResolvedValueOnce({ url: 'https://blob.vercel-storage.com/test.jpg' } as ReturnType<typeof put> extends Promise<infer T> ? T : never);
     const res = await POST(makeReq(makeFile('img.jpg', 'image/jpeg')));
@@ -73,6 +87,8 @@ describe('POST /api/upload', () => {
 
   it('image JPEG sans BLOB_READ_WRITE_TOKEN → fallback local, retourne /uploads/...', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as ReturnType<typeof getServerSession> extends Promise<infer T> ? T : never);
+    // fileTypeFromBuffer retourne image/jpeg → passe la validation → fallback local
+    vi.mocked(fileTypeFromBuffer).mockResolvedValueOnce({ mime: 'image/jpeg', ext: 'jpg' });
     const res = await POST(makeReq(makeFile('img.jpg', 'image/jpeg')));
     expect(res.status).toBe(200);
     const json = await res.json();

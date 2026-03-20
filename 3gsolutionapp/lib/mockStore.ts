@@ -1,7 +1,10 @@
-// Stockage en mémoire des sessions mock (développement uniquement)
-// Remis à zéro à chaque redémarrage du serveur, ce qui est intentionnel.
+// TICK-055 — SEC-07 : Stockage mock sécurisé (développement/staging uniquement)
+// - TTL de 30 minutes sur chaque session (nettoyage automatique à la lecture)
+// - La route API vérifie NODE_ENV !== 'production' en plus de STRIPE_SECRET_KEY
 
-export interface MockSession {
+const MOCK_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+export interface MockSessionData {
   client: {
     nom: string;
     telephone: string;
@@ -21,13 +24,50 @@ export interface MockSession {
   }[];
 }
 
-// Global pour survivre au hot-reload Next.js
-const globalWithMock = global as typeof globalThis & {
-  mockSessions?: Map<string, MockSession>;
-};
-
-if (!globalWithMock.mockSessions) {
-  globalWithMock.mockSessions = new Map();
+interface MockSessionEntry {
+  data: MockSessionData;
+  expiresAt: number; // Date.now() + TTL
 }
 
-export const mockSessions = globalWithMock.mockSessions;
+// Global pour survivre au hot-reload Next.js en développement
+const globalWithMock = global as typeof globalThis & {
+  _mockSessions?: Map<string, MockSessionEntry>;
+};
+
+if (!globalWithMock._mockSessions) {
+  globalWithMock._mockSessions = new Map();
+}
+
+const store = globalWithMock._mockSessions;
+
+/** Nettoie les sessions expirées (appelé à chaque lecture/écriture) */
+function purgeExpired(): void {
+  const now = Date.now();
+  for (const [key, entry] of store.entries()) {
+    if (now >= entry.expiresAt) {
+      store.delete(key);
+    }
+  }
+}
+
+export const mockSessions = {
+  set(id: string, data: MockSessionData): void {
+    purgeExpired();
+    store.set(id, { data, expiresAt: Date.now() + MOCK_TTL_MS });
+  },
+
+  get(id: string): MockSessionData | undefined {
+    purgeExpired();
+    const entry = store.get(id);
+    if (!entry) return undefined;
+    if (Date.now() >= entry.expiresAt) {
+      store.delete(id);
+      return undefined;
+    }
+    return entry.data;
+  },
+
+  delete(id: string): void {
+    store.delete(id);
+  },
+};

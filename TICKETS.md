@@ -15,7 +15,9 @@
 | 5 | Personnalisation de la vitrine | TICK-031 → 033 | 2,0 j |
 | 6 | Images produits, Upload bannière, Cache RGPD | TICK-034 → 040 | 5,5 j | ✅ Implémenté |
 | 7 | Tests unitaires & intégration | TICK-041 → 049 | 7,0 j |
-| **Total** | | **49 tickets** | **~35,5 j** |
+| 8 | Sécurité & RGPD (audit) | TICK-050 → 059 | 6,5 j | ✅ Implémenté |
+| 9 | Sécurité & RGPD — corrections post-audit | TICK-060 → 064 | 2,5 j |
+| **Total** | | **64 tickets** | **~44,5 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -1225,6 +1227,525 @@ Tester les composants de l'espace admin. La session NextAuth est mockée avec un
 
 ---
 
+## Sprint 8 — Sécurité & RGPD (6,5 j)
+
+> Issu de l'audit sécurité & RGPD réalisé le 2026-03-20. TICK-050 est bloquant avant toute mise en production.
+
+---
+
+### TICK-050 — Validation des prix produits côté serveur lors du checkout
+**Épic :** Sécurité applicative
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,0 j
+**Dépendances :** TICK-003, TICK-017
+
+**Description :**
+L'API `/api/checkout` accepte les prix depuis le corps de la requête sans les vérifier en base de données. Un client peut manipuler les prix dans le body POST et payer n'importe quel montant (ex : 0,01 € pour un produit à 8,50 €). C'est la vulnérabilité la plus critique du projet.
+
+**Référence audit :** SEC-01 — OWASP A04:2021 Insecure Design
+
+**Critères d'acceptance :**
+- [ ] Lors du POST `/api/checkout`, récupérer chaque `produitId` depuis MongoDB (`Produit.find(...)`)
+- [ ] Utiliser `produitDB.prix` comme référence de prix — ignorer la valeur `prix` fournie par le client
+- [ ] Valider que chaque option envoyée existe dans `produitDB.options[]` et utiliser `optionDB.prix`
+- [ ] Retourner 400 si un `produitId` est invalide ou le produit inactif/introuvable
+- [ ] Recalculer le total côté serveur avant envoi à Stripe
+- [ ] Adapter le mode mock en conséquence (même logique, sans appel Stripe)
+- [ ] Test : un body avec `prix: 1` doit créer une session Stripe au prix réel de la BDD
+- [ ] Test : un `produitId` inexistant → 400
+
+---
+
+### TICK-051 — Ajout des headers de sécurité HTTP
+**Épic :** Sécurité applicative
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-001
+
+**Description :**
+Aucun header de sécurité HTTP n'est configuré. L'application est exposée sans Content-Security-Policy, X-Frame-Options, X-Content-Type-Options, ni Referrer-Policy.
+
+**Référence audit :** SEC-02 — OWASP A05:2021 Security Misconfiguration
+
+**Critères d'acceptance :**
+- [ ] Configurer `headers()` dans `next.config.ts` s'appliquant à toutes les routes `/(.*)`
+- [ ] `X-Frame-Options: DENY` — protection clickjacking
+- [ ] `X-Content-Type-Options: nosniff` — protection MIME sniffing
+- [ ] `Referrer-Policy: strict-origin-when-cross-origin`
+- [ ] `Permissions-Policy: camera=(), microphone=(), geolocation=()`
+- [ ] `Content-Security-Policy` minimal (autoriser `unsafe-inline` temporairement pour Tailwind si nécessaire)
+- [ ] Vérifier le score avec [securityheaders.com](https://securityheaders.com) après déploiement — score A minimum
+- [ ] Aucune régression sur le fonctionnement des pages
+
+---
+
+### TICK-052 — Rate limiting sur l'endpoint de login admin
+**Épic :** Sécurité applicative
+**Priorité :** 🟠 Haute
+**Sizing :** 1,0 j
+**Dépendances :** TICK-005
+
+**Description :**
+L'endpoint NextAuth credentials `/api/auth/callback/credentials` peut être soumis à une attaque par force brute sans aucune protection. Un attaquant peut tenter des milliers de mots de passe sans délai ni blocage.
+
+**Référence audit :** SEC-03 — OWASP A07:2021 Identification and Authentication Failures
+
+**Critères d'acceptance :**
+- [ ] Maximum 10 tentatives par IP sur une fenêtre glissante de 15 minutes
+- [ ] Réponse 429 avec header `Retry-After` en cas de dépassement
+- [ ] Utiliser `@upstash/ratelimit` avec Redis Upstash (plan gratuit) en production
+- [ ] Fallback `Map` in-memory acceptable en développement (documenté)
+- [ ] Logger les tentatives bloquées avec l'IP (`x-forwarded-for`)
+- [ ] Test : 11 tentatives consécutives → la 11ème retourne 429
+
+---
+
+### TICK-053 — Validation MIME par magic bytes pour l'upload d'images
+**Épic :** Sécurité applicative
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-034
+
+**Description :**
+La validation MIME actuelle dans `/api/upload` repose sur `file.type`, un champ fourni par le navigateur (en-tête Content-Type de la partie multipart). Il est trivial de déposer un fichier malveillant avec `Content-Type: image/jpeg`.
+
+**Référence audit :** SEC-04 — OWASP A03:2021 Injection, CWE-434
+
+**Critères d'acceptance :**
+- [ ] Installer la librairie `file-type` (pure ESM, compatible Edge/Node)
+- [ ] Lire le buffer du fichier et détecter le type réel via les magic bytes (`fileTypeFromBuffer`)
+- [ ] Rejeter tout fichier dont le type détecté ne correspond pas à la liste blanche (`image/jpeg`, `image/png`, `image/webp`, `image/gif`)
+- [ ] Sanitiser le nom de fichier avant envoi à Vercel Blob : utiliser le `randomUUID()` déjà présent en mode local — appliquer la même logique en mode production (`put(randomUUID() + '.' + ext, file, ...)`)
+- [ ] Test : un fichier `.php` renommé `.jpg` → rejeté (400)
+- [ ] Test : un vrai JPEG → accepté
+
+---
+
+### TICK-054 — Étendre le middleware aux routes API admin manquantes
+**Épic :** Sécurité applicative
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-005
+
+**Description :**
+Plusieurs routes admin reposent uniquement sur `getServerSession` dans le handler, sans filet de sécurité au niveau middleware : `/api/produits` (POST/PUT/PATCH/DELETE), `/api/upload`, `/api/site-config` (PUT). Si un bug introduit un bypass de `getServerSession` lors d'un refactor, ces routes seront ouvertes sans protection de niveau middleware.
+
+**Référence audit :** SEC-06 — OWASP A01:2021 Broken Access Control
+
+**Critères d'acceptance :**
+- [ ] Ajouter dans le `matcher` de `middleware.ts` : `/api/produits` (POST/PUT/PATCH/DELETE), `/api/upload`, `/api/site-config` (méthodes mutantes)
+- [ ] `GET /api/produits` reste public (non inclus dans le matcher ou exclu par méthode HTTP)
+- [ ] `GET /api/site-config` reste public
+- [ ] Vérifier que les tests existants passent toujours (TICK-044, TICK-047)
+- [ ] Documenter dans un commentaire les routes publiques intentionnelles
+
+---
+
+### TICK-055 — Sécuriser le mode mock checkout (staging/dev only)
+**Épic :** Sécurité applicative
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-017
+
+**Description :**
+La route `/api/mock-checkout` et la page `/mock-checkout` ne doivent jamais être actives en production. La protection actuelle repose uniquement sur l'absence de `STRIPE_SECRET_KEY`, ce qui est fragile. De plus, `mockSessions` est un Map global sans TTL pouvant s'accumuler indéfiniment.
+
+**Référence audit :** SEC-07
+
+**Critères d'acceptance :**
+- [ ] Ajouter un double guard `NODE_ENV !== 'production'` sur la route `/api/mock-checkout` (en plus du check `STRIPE_SECRET_KEY`)
+- [ ] Implémenter un TTL de 30 minutes sur les entrées `mockSessions` : stocker `{ data, expiresAt }` et nettoyer les sessions expirées à chaque lecture
+- [ ] Documenter la variable `STRIPE_SECRET_KEY` comme le gate principal dans `.env.local.example`
+- [ ] Test : en mode production simulé (`NODE_ENV=production`) → la route retourne 403
+
+---
+
+### TICK-056 — Mise en conformité du bandeau cookie (CNIL)
+**Épic :** Conformité RGPD
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-021
+
+**Description :**
+Le bandeau cookie actuel (`CookieBanner.tsx`) propose uniquement un bouton "Continuer". L'absence d'un bouton "Refuser" n'est pas conforme aux lignes directrices de la CNIL (délibération 2020-091) : le refus doit être aussi facile que l'acceptation.
+
+**Référence audit :** RGPD-01 — RGPD Art. 7, Guidelines CNIL 2022
+
+**Critères d'acceptance :**
+- [ ] Ajouter un bouton "Refuser" (ou "Continuer sans accepter") de même visibilité visuelle que "Continuer" (même taille, même contraste)
+- [ ] Stocker `'refused'` dans `localStorage['cookie_consent']` en cas de refus (le bandeau ne réapparaît plus)
+- [ ] Préciser dans le texte du bandeau que le cookie de session admin est strictement nécessaire (donc exempté de consentement)
+- [ ] Mettre à jour la page `/mentions-legales` : section cookies cohérente avec le comportement du bandeau
+- [ ] Test : clic "Refuser" → bandeau disparaît, `localStorage.getItem('cookie_consent') === 'refused'`
+
+---
+
+### TICK-057 — Politique de rétention et droit à l'effacement des données commandes
+**Épic :** Conformité RGPD
+**Priorité :** 🟡 Moyenne
+**Sizing :** 1,0 j
+**Dépendances :** TICK-004, TICK-008
+
+**Description :**
+Les données personnelles des commandes (nom, téléphone, email) sont stockées sans durée de conservation définie ni mécanisme de suppression. La RGPD impose une durée limitée et l'implémentation du droit à l'effacement (Art. 17).
+
+**Référence audit :** RGPD-02 — RGPD Art. 5(1)(e) et Art. 17
+
+**Critères d'acceptance :**
+- [ ] Définir une durée de rétention de 12 mois (obligation comptable légale)
+- [ ] Ajouter le champ `purgeAt: Date` sur le modèle `Commande` (calculé à `createdAt + 12 mois`)
+- [ ] Implémenter `DELETE /api/commandes/[id]` (admin) : suppression physique ou anonymisation des PII (`client.nom`, `client.telephone`, `client.email`)
+- [ ] Ajouter le bouton "Supprimer" dans `CommandeRow` admin (avec confirmation), réservé aux commandes `"prete"` uniquement
+- [ ] Documenter la durée de rétention dans `/mentions-legales` (section "Données personnelles")
+- [ ] Test : DELETE `/api/commandes/[id]` sans session → 401 ; avec session → 200, données supprimées
+
+---
+
+### TICK-058 — Documenter les transferts de données vers les sous-traitants (mentions légales)
+**Épic :** Conformité RGPD
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-021
+
+**Description :**
+Les données personnelles (nom, téléphone, email) sont transmises à Stripe (USA) via les métadonnées de la session Checkout. Vercel, MongoDB Atlas et Resend sont également des sous-traitants. Ces transferts doivent être documentés dans les mentions légales.
+
+**Référence audit :** RGPD-03 — RGPD Art. 28 et Art. 44
+
+**Critères d'acceptance :**
+- [ ] Ajouter une section "Sous-traitants" dans `/mentions-legales` listant : Stripe (paiement, USA — Data Privacy Framework), Vercel (hébergement, USA — DPA disponible), MongoDB Atlas (base de données, USA — DPA disponible), Resend (email, USA)
+- [ ] Lien vers les DPA de chaque sous-traitant (pages publiques de leurs sites)
+- [ ] Mentionner que Stripe est signataire du Data Privacy Framework (transfert légalement encadré)
+- [ ] Évaluer la possibilité de retirer `client_email` des métadonnées Stripe si non indispensable au webhook (minimisation des données)
+
+---
+
+### TICK-059 — Logs de sécurité structurés
+**Épic :** Sécurité applicative
+**Priorité :** 🟢 Basse
+**Sizing :** 1,0 j
+**Dépendances :** TICK-001
+
+**Description :**
+Les erreurs sont actuellement loguées via `console.error` sans structure. En cas d'incident de sécurité, le forensic est impossible (pas de trace ID, pas d'IP, pas de niveau de sévérité).
+
+**Référence audit :** SEC-09 — OWASP A09:2021 Security Logging and Monitoring Failures
+
+**Critères d'acceptance :**
+- [ ] Créer `lib/logger.ts` : wrapper léger avec niveaux (`info`, `warn`, `error`) et timestamp ISO
+- [ ] Logguer tous les événements 401/403 avec l'IP (`x-forwarded-for` ou `req.ip`) et la route concernée
+- [ ] Logguer les erreurs webhook Stripe avec `stripeSessionId` (sans données personnelles)
+- [ ] Logguer les tentatives d'upload refusées (type MIME invalide, taille dépassée) avec IP
+- [ ] En production : intégrer avec Vercel Log Drain ou un service externe (Axiom, Logtail — plans gratuits disponibles)
+- [ ] Remplacer progressivement les `console.error` des routes API par le nouveau logger
+
+---
+
+## Sprint 9 — Corrections post-audit Sprint 8 (2,5 j)
+
+> Issu du second audit réalisé le 2026-03-20 après implémentation du Sprint 8. Ces tickets corrigent des lacunes découvertes dans le code implémenté.
+
+---
+
+### TICK-060 — Ajouter l'index TTL MongoDB sur `purgeAt` et logger les anonymisations
+**Épic :** Conformité RGPD
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-057
+
+**Contexte :**
+TICK-057 a ajouté le champ `purgeAt` sur le modèle `Commande` et la page `/mentions-legales` promet que « les informations personnelles sont automatiquement anonymisées » après 12 mois. Mais **l'index TTL MongoDB est absent** du schéma Mongoose — MongoDB ne supprimera donc jamais rien automatiquement. C'est une non-conformité RGPD active.
+
+De plus, les anonymisations manuelles via `DELETE /api/commandes/[id]` ne sont pas loggées, ce qui rend impossible tout audit RGPD.
+
+**Référence audit :** NEW-01, NEW-06 — RGPD Art. 5(1)(e), Art. 5(2)
+
+**Correction exacte — Fichier `3gsolutionapp/models/Commande.ts`**
+
+Après la définition du `CommandeSchema` (actuellement ligne ~87), ajouter avant l'export :
+
+```typescript
+// TICK-060 — RGPD Art. 5(1)(e) : index TTL MongoDB pour suppression automatique
+// expireAfterSeconds: 0 → MongoDB supprime le document dès que Date.now() >= purgeAt
+CommandeSchema.index({ purgeAt: 1 }, { expireAfterSeconds: 0 });
+```
+
+**Correction exacte — Fichier `3gsolutionapp/app/api/commandes/[id]/route.ts`**
+
+Ajouter l'import du logger en haut du fichier :
+```typescript
+import { logger } from '@/lib/logger';
+```
+
+Remplacer le `console.error` final par `logger.error` :
+```typescript
+// Avant
+console.error('Erreur suppression commande:', error);
+// Après
+logger.error('anonymisation_failed', { commandeId: id }, error);
+```
+
+Ajouter un log de succès juste avant le `return NextResponse.json({ ok: true })` :
+```typescript
+logger.info('commande_anonymisee', { commandeId: id });
+return NextResponse.json({ ok: true });
+```
+
+**Critères d'acceptance :**
+- [ ] `CommandeSchema.index({ purgeAt: 1 }, { expireAfterSeconds: 0 })` présent dans `models/Commande.ts`
+- [ ] Vérifier dans MongoDB Atlas que l'index TTL `purgeAt_1` apparaît bien sur la collection `commandes` après déploiement (`db.commandes.getIndexes()`)
+- [ ] `logger` importé dans `app/api/commandes/[id]/route.ts`
+- [ ] Anonymisation réussie → log `commande_anonymisee` avec `commandeId`
+- [ ] Erreur lors de l'anonymisation → log `anonymisation_failed` avec `commandeId` et message d'erreur
+- [ ] Aucun `console.error` résiduel dans ce fichier
+
+---
+
+### TICK-061 — Supprimer `unsafe-eval` de la CSP en production
+**Épic :** Sécurité applicative
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-051
+
+**Contexte :**
+TICK-051 a configuré les headers HTTP mais la CSP contient `'unsafe-eval'` dans `script-src`. Cette directive autorise `eval()`, `Function(string)` et `setTimeout(string)` — les vecteurs d'exploitation XSS les plus courants. Une CSP avec `unsafe-eval` est quasiment inutile contre les attaques par injection de scripts.
+
+Le commentaire dit « requis Next.js dev/prod » mais ce n'est vrai qu'en développement Turbopack (HMR). En production, le build Next.js génère des bundles statiques qui n'ont pas besoin d'`eval()`.
+
+**Référence audit :** NEW-02 — OWASP A05:2021
+
+**Correction exacte — Fichier `3gsolutionapp/next.config.ts`**
+
+Remplacer la ligne `script-src` actuelle :
+```typescript
+// Avant
+"script-src 'self' 'unsafe-inline' 'unsafe-eval'", // unsafe-eval requis Next.js dev/prod
+
+// Après
+process.env.NODE_ENV === 'development'
+  ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"  // Turbopack HMR en dev
+  : "script-src 'self' 'unsafe-inline'",               // Production : pas d'eval()
+```
+
+Pour ce faire, la valeur CSP doit être construite dynamiquement. Transformer le tableau de strings en fonction :
+
+```typescript
+async headers() {
+  const isDev = process.env.NODE_ENV === 'development';
+  const csp = [
+    "default-src 'self'",
+    isDev
+      ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+      : "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https://*.public.blob.vercel-storage.com",
+    "font-src 'self'",
+    "connect-src 'self' https://api.stripe.com",
+    "frame-src https://js.stripe.com https://hooks.stripe.com",
+    "worker-src 'self' blob:",
+  ].join('; ');
+
+  return [{
+    source: '/(.*)',
+    headers: [
+      { key: 'X-Frame-Options', value: 'DENY' },
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+      { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+      { key: 'Content-Security-Policy', value: csp },
+    ],
+  }];
+}
+```
+
+**Critères d'acceptance :**
+- [ ] En `NODE_ENV=development` : la CSP contient `unsafe-eval` (Turbopack fonctionne)
+- [ ] En `NODE_ENV=production` : la CSP ne contient **pas** `unsafe-eval`
+- [ ] Vérifier que le build de production (`next build`) ne génère pas d'erreurs liées à `eval()` dans la console navigateur
+- [ ] Vérifier que les pages client, admin et le Service Worker PWA fonctionnent correctement en production
+- [ ] Scorer A ou A+ sur [securityheaders.com](https://securityheaders.com) après déploiement
+
+---
+
+### TICK-062 — Middleware : couvrir `DELETE /api/commandes/[id]` et durcir la détection d'IP
+**Épic :** Sécurité applicative
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-054, TICK-052
+
+**Contexte :**
+Deux lacunes dans `middleware.ts` :
+
+1. **Route DELETE absente du matcher** : `DELETE /api/commandes/[id]` (route d'anonymisation RGPD, TICK-057) n'est pas dans le matcher. Le handler vérifie `getServerSession`, mais la défense en profondeur établie par TICK-054 n'est pas appliquée ici.
+
+2. **IP spoofable pour le rate limiting** : le header `x-forwarded-for` est lu sans vérification. Un attaquant peut envoyer `X-Forwarded-For: 1.2.3.4, 5.6.7.8` avec une IP différente à chaque requête pour contourner le rate limiting. Sur Vercel Edge, `request.ip` donne la vraie IP (non spoofable).
+
+**Référence audit :** NEW-03 (OWASP A01:2021), NEW-04 (contournement rate limit)
+
+**Correction exacte — Fichier `3gsolutionapp/middleware.ts`**
+
+**Fix 1 — Ajouter la route DELETE au matcher :**
+```typescript
+// Dans l'objet config.matcher, ajouter :
+'/api/commandes/:id',   // DELETE anonymisation RGPD (TICK-060)
+```
+
+Le matcher complet devient :
+```typescript
+matcher: [
+  '/admin/commandes/:path*',
+  '/admin/menu/:path*',
+  '/admin/personnalisation/:path*',
+  '/api/commandes',
+  '/api/commandes/:id/statut',
+  '/api/commandes/:id',        // ← TICK-062 : DELETE anonymisation
+  '/api/upload',
+  '/api/site-config',
+  '/api/auth/callback/credentials',
+],
+```
+
+**Fix 2 — Utiliser `request.ip` en priorité pour le rate limiting :**
+```typescript
+// Avant
+const ip =
+  request.headers.get('x-forwarded-for')?.split(',')[0].trim() ??
+  request.headers.get('x-real-ip') ??
+  '127.0.0.1';
+
+// Après
+const ip =
+  (request as NextRequest & { ip?: string }).ip ??          // Vercel Edge (non spoofable)
+  request.headers.get('x-forwarded-for')?.split(',')[0].trim() ??
+  request.headers.get('x-real-ip') ??
+  '127.0.0.1';
+```
+
+**Critères d'acceptance :**
+- [ ] `/api/commandes/:id` présent dans `config.matcher`
+- [ ] `DELETE /api/commandes/invalid-id` sans token JWT → 401 (renvoyé par le middleware, pas le handler)
+- [ ] `request.ip` utilisé en priorité dans la logique de détection d'IP du rate limiting
+- [ ] Les tests existants TICK-045 passent toujours (la route GET `/api/commandes/suivi` reste publique)
+
+---
+
+### TICK-063 — Rate limiting : remplacer le fail-open par un fallback in-memory en cas de panne Upstash
+**Épic :** Sécurité applicative
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-052
+
+**Contexte :**
+Dans `lib/ratelimit.ts`, si Upstash Redis est indisponible en production, le catch silencieux retourne `{ success: true }` — le rate limiting s'ouvre complètement. Un attaquant qui provoquerait une saturation Redis (ou qui attendrait une fenêtre de maintenance Upstash) pourrait déclencher une attaque brute force sans limitation.
+
+**Référence audit :** NEW-05 — OWASP A07:2021
+
+**Correction exacte — Fichier `3gsolutionapp/lib/ratelimit.ts`**
+
+Remplacer le `catch` du bloc Upstash :
+
+```typescript
+// Avant
+} catch (err) {
+  // Dégradation gracieuse : si Upstash est indisponible, on laisse passer
+  console.error('[ratelimit] Upstash indisponible, fallback permissif:', err);
+  return { success: true, remaining: MAX_REQUESTS, reset: 0 };
+}
+
+// Après
+} catch (err) {
+  // Dégradation vers le fallback in-memory plutôt que fail-open
+  // Préférable à "laisser passer" : la protection reste active même si Redis tombe
+  console.error('[ratelimit] Upstash indisponible, fallback in-memory activé:', err);
+  return inMemoryRateLimit(ip);
+}
+```
+
+**Critères d'acceptance :**
+- [ ] En cas d'exception Upstash, `inMemoryRateLimit(ip)` est appelé (pas `{ success: true }`)
+- [ ] Le log d'avertissement indique explicitement « fallback in-memory » (pas « fallback permissif »)
+- [ ] Test : simuler une panne Upstash (variable d'env invalide) → le rate limiting in-memory s'active et bloque après 10 tentatives
+
+---
+
+### TICK-064 — Corriger les `console.*` résiduels et valider les métadonnées webhook avec Zod
+**Épic :** Qualité & sécurité
+**Priorité :** 🟢 Basse
+**Sizing :** 0,5 j
+**Dépendances :** TICK-059
+
+**Contexte :**
+Deux problèmes mineurs hors du logger structuré mis en place par TICK-059 :
+
+1. **`console.error` résiduel dans `app/api/mock-checkout/route.ts`** : le handler mock utilise encore `console.error` au lieu de `logger.error`. En production, ces logs ne seront pas en JSON structuré.
+
+2. **Métadonnées webhook non validées** : dans `app/api/webhooks/stripe/route.ts`, `JSON.parse(metadata.produits ?? '[]')` parse les données sans validation Zod. Si les métadonnées sont corrompues (édition manuelle dans le dashboard Stripe, truncature à 500 chars par l'API Stripe), le webhook plante silencieusement et la commande n'est jamais créée.
+
+**Référence audit :** NEW-07, NEW-08
+
+**Correction 1 — Fichier `3gsolutionapp/app/api/mock-checkout/route.ts`**
+
+Ajouter l'import du logger :
+```typescript
+import { logger } from '@/lib/logger';
+```
+
+Remplacer le `console.error` :
+```typescript
+// Avant
+console.error('Mock checkout error:', error);
+
+// Après
+logger.error('mock_checkout_failed', { sessionId }, error);
+```
+
+**Correction 2 — Fichier `3gsolutionapp/app/api/webhooks/stripe/route.ts`**
+
+Ajouter un schéma Zod pour valider les produits extraits des métadonnées Stripe. Ajouter en haut du fichier (après les imports existants) :
+
+```typescript
+import { z } from 'zod';
+
+const ProduitMetadataSchema = z.array(z.object({
+  produitId: z.string(),
+  nom: z.string(),
+  prix: z.number().int().min(0),
+  quantite: z.number().int().min(1),
+  options: z.array(z.object({
+    nom: z.string(),
+    prix: z.number().int().min(0),
+  })).default([]),
+}));
+```
+
+Remplacer le `JSON.parse` brut :
+```typescript
+// Avant
+const produits: ProduitPayload[] = JSON.parse(metadata.produits ?? '[]');
+
+// Après
+const parseResult = ProduitMetadataSchema.safeParse(
+  JSON.parse(metadata.produits ?? '[]')
+);
+if (!parseResult.success) {
+  logger.error('webhook_invalid_produits_metadata', {
+    stripeSessionId: session.id,
+  });
+  // On répond 200 pour ne pas déclencher les retries Stripe sur données corrompues
+  return NextResponse.json({ received: true });
+}
+const produits = parseResult.data;
+```
+
+**Critères d'acceptance :**
+- [ ] `app/api/mock-checkout/route.ts` : aucun `console.error`, utilise `logger.error('mock_checkout_failed', ...)`
+- [ ] `app/api/webhooks/stripe/route.ts` : `ProduitMetadataSchema` défini avec Zod
+- [ ] Métadonnées valides → commande créée normalement
+- [ ] Métadonnées corrompues (`produits: "invalid_json"`) → log `webhook_invalid_produits_metadata` + réponse 200 (pas de retry Stripe)
+- [ ] Les tests existants TICK-046 (`webhook-stripe.test.ts`) passent toujours
+
+---
+
 ## Tickets non-planifiés (post-MVP)
 
 | ID | Description | Complexité |
@@ -1273,8 +1794,21 @@ Semaine 5 (Jours 20-25)
 ├── J23 : TICK-045 (Tests API commandes) + TICK-046 (Tests checkout + webhook)
 ├── J24 : TICK-047 (Tests site-config + upload) + TICK-048 (Tests composants client — partie 1)
 └── J25 : TICK-048 (Tests composants client — partie 2) + TICK-049 (Tests composants admin)
+
+Semaine 6 — Sécurité & RGPD (Jours 26-31)
+├── J26 : TICK-050 (Validation prix serveur) ← 🔴 Bloquant avant mise en prod
+├── J27 : TICK-051 (Headers HTTP) + TICK-056 (Bandeau cookie CNIL)
+├── J28 : TICK-052 (Rate limiting login) + TICK-054 (Middleware étendu)
+├── J29 : TICK-053 (MIME magic bytes) + TICK-055 (Mock checkout sécurisé)
+├── J30 : TICK-057 (Rétention données RGPD) + TICK-058 (Mentions légales sous-traitants)
+└── J31 : TICK-059 (Logs sécurité structurés)
+
+Semaine 7 — Corrections post-audit (Jours 32-34)
+├── J32 : TICK-060 (Index TTL MongoDB + logs anonymisation) ← 🔴 Bloquant avant mise en prod
+├── J33 : TICK-061 (Supprimer unsafe-eval CSP) + TICK-062 (Middleware DELETE + IP fix)
+└── J34 : TICK-063 (Rate limit fail-open) + TICK-064 (console.* + Zod webhook)
 ```
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.4 (Sprint 7 Tests ajouté le 2026-03-18)*
+*Document généré le 2026-03-17 — Version 1.4 (Sprint 7 Tests ajouté le 2026-03-18) — Version 1.5 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20, issu de l'audit sécurité complet) — Version 1.6 (Sprint 9 Corrections post-audit ajouté le 2026-03-20, issu du second audit après implémentation Sprint 8)*

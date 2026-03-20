@@ -25,6 +25,8 @@ export interface ICommande extends Document {
   produits: IProduitSnapshot[];
   commentaire?: string;
   total: number; // en centimes
+  // TICK-057 — RGPD Art. 5(1)(e) : date de purge automatique (createdAt + 12 mois)
+  purgeAt: Date;
   createdAt: Date;
 }
 
@@ -72,9 +74,24 @@ const CommandeSchema = new Schema<ICommande>(
     produits: { type: [ProduitSnapshotSchema], required: true },
     commentaire: { type: String },
     total: { type: Number, required: true, min: 0 },
+    // TICK-057 — RGPD Art. 5(1)(e) : durée de conservation 12 mois (obligation comptable)
+    // Calculée automatiquement si absente (migration des commandes existantes)
+    purgeAt: {
+      type: Date,
+      // TTL index : MongoDB supprime automatiquement le document après cette date
+      // Note : la suppression TTL supprime le document entier.
+      // Si seule l'anonymisation est souhaitée, utiliser le DELETE admin à la place.
+    },
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );
+
+// TICK-060 — RGPD Art. 5(1)(e) : index TTL MongoDB pour suppression automatique des documents expirés
+// expireAfterSeconds: 0 → MongoDB supprime le document dès que Date.now() >= purgeAt
+// Le daemon TTL s'exécute toutes les 60 s — délai acceptable pour un usage RGPD
+// IMPORTANT : l'index doit être créé sur MongoDB Atlas après le premier déploiement.
+// Vérification : db.commandes.getIndexes() doit afficher purgeAt_1 avec expireAfterSeconds: 0
+CommandeSchema.index({ purgeAt: 1 }, { expireAfterSeconds: 0 });
 
 const Commande: Model<ICommande> =
   (mongoose.models.Commande as Model<ICommande>) ||

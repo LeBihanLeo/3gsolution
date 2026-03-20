@@ -1,3 +1,4 @@
+// TICK-057 — RGPD Art. 17 : bouton d'anonymisation des PII (commandes "prête" uniquement)
 'use client';
 
 import { useState } from 'react';
@@ -23,6 +24,7 @@ export interface CommandeData {
 interface CommandeRowProps {
   commande: CommandeData;
   onMarquerPrete: (id: string) => Promise<void>;
+  onSupprimer?: (id: string) => Promise<void>;
 }
 
 function formatPrix(centimes: number): string {
@@ -45,8 +47,9 @@ const STATUT_STYLE: Record<CommandeData['statut'], string> = {
   prete: 'bg-green-100 text-green-700',
 };
 
-export default function CommandeRow({ commande, onMarquerPrete }: CommandeRowProps) {
+export default function CommandeRow({ commande, onMarquerPrete, onSupprimer }: CommandeRowProps) {
   const [loading, setLoading] = useState(false);
+  const [loadingSuppr, setLoadingSuppr] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   const heure = new Date(commande.createdAt).toLocaleTimeString('fr-FR', {
@@ -58,6 +61,17 @@ export default function CommandeRow({ commande, onMarquerPrete }: CommandeRowPro
     setLoading(true);
     await onMarquerPrete(commande._id);
     setLoading(false);
+  };
+
+  const handleSupprimer = async () => {
+    if (!onSupprimer) return;
+    const confirmed = window.confirm(
+      `Anonymiser les données personnelles de la commande #${idCourt(commande._id)} ?\n\nLe nom, téléphone et email du client seront effacés. Cette action est irréversible.`
+    );
+    if (!confirmed) return;
+    setLoadingSuppr(true);
+    await onSupprimer(commande._id);
+    setLoadingSuppr(false);
   };
 
   const retrait =
@@ -94,6 +108,17 @@ export default function CommandeRow({ commande, onMarquerPrete }: CommandeRowPro
               className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
             >
               {loading ? '…' : 'Marquer prête'}
+            </button>
+          )}
+          {/* TICK-057 — RGPD Art. 17 : anonymisation des PII */}
+          {commande.statut === 'prete' && onSupprimer && (
+            <button
+              onClick={handleSupprimer}
+              disabled={loadingSuppr}
+              title="Anonymiser les données personnelles (RGPD)"
+              className="bg-red-700 hover:bg-red-800 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+            >
+              {loadingSuppr ? '…' : 'Supprimer'}
             </button>
           )}
         </div>
