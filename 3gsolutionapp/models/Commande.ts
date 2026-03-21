@@ -13,6 +13,7 @@ export interface IProduitSnapshot {
 export interface ICommande extends Document {
   stripeSessionId: string;
   statut: StatutCommande;
+  clientId?: mongoose.Types.ObjectId; // référence Client (optionnel — commandes anonymes)
   client: {
     nom: string;
     telephone: string;
@@ -53,6 +54,8 @@ const ProduitSnapshotSchema = new Schema<IProduitSnapshot>(
 const CommandeSchema = new Schema<ICommande>(
   {
     stripeSessionId: { type: String, required: true, unique: true },
+    // Lien vers le compte client (absent pour commandes anonymes)
+    clientId: { type: Schema.Types.ObjectId, ref: 'Client', index: true },
     statut: {
       type: String,
       enum: ['en_attente_paiement', 'payee', 'prete'] as StatutCommande[],

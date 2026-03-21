@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type Stripe from 'stripe';
 import { z } from 'zod';
+import mongoose from 'mongoose';
 import { getStripe } from '@/lib/stripe';
 import { connectDB } from '@/lib/mongodb';
 import Commande from '@/models/Commande';
@@ -115,6 +116,10 @@ export async function POST(request: NextRequest) {
       },
       produits,
       ...(metadata.commentaire ? { commentaire: metadata.commentaire } : {}),
+      // Lien compte client si la commande a été passée en étant connecté
+      ...(metadata.client_id
+        ? { clientId: new mongoose.Types.ObjectId(metadata.client_id) }
+        : {}),
       total,
       purgeAt,
     });

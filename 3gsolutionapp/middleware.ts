@@ -6,9 +6,16 @@ import { checkLoginRateLimit } from '@/lib/ratelimit';
 
 export default withAuth(
   async function middleware(request: NextRequest) {
-    // ── Rate limiting sur l'endpoint de login NextAuth ────────────────────────
+    // ── Rate limiting sur les endpoints de login NextAuth ─────────────────────
     // TICK-052 : 10 tentatives max par IP sur 15 minutes glissantes
-    if (request.nextUrl.pathname === '/api/auth/callback/credentials') {
+    // Couvre admin-credentials et client-credentials
+    const path = request.nextUrl.pathname;
+    const isCredentialCallback =
+      path === '/api/auth/callback/credentials' ||           // backward compat
+      path === '/api/auth/callback/admin-credentials' ||
+      path === '/api/auth/callback/client-credentials';
+
+    if (isCredentialCallback) {
       // TICK-062 — NEW-04 : utiliser request.ip en priorité (Vercel Edge, non spoofable)
       // x-forwarded-for peut être manipulé par le client pour contourner le rate limiting
       const ip =
@@ -36,13 +43,23 @@ export default withAuth(
   },
   {
     callbacks: {
-      // Pour les routes dans le matcher (hors rate-limiting) : token requis
-      // La route /api/auth/callback/credentials est dans le matcher uniquement
-      // pour le rate limiting — NextAuth gère lui-même son authentification.
+      // Séparation stricte des rôles :
+      // • Routes admin  → token.role === 'admin' uniquement
+      // • Routes client → token.role === 'client' ou 'admin'
+      // • Endpoints NextAuth → toujours accessibles (gestion interne)
       authorized: ({ token, req }) => {
-        // L'endpoint de login NextAuth doit être accessible sans token
-        if (req.nextUrl.pathname.startsWith('/api/auth/')) return true;
-        return !!token;
+        const path = req.nextUrl.pathname;
+
+        // Endpoints NextAuth internes — toujours accessibles
+        if (path.startsWith('/api/auth/')) return true;
+
+        // Routes espace client
+        if (path.startsWith('/mon-compte')) {
+          return token?.role === 'client' || token?.role === 'admin';
+        }
+
+        // Routes admin — rôle strict
+        return token?.role === 'admin';
       },
     },
   }
@@ -51,9 +68,9 @@ export default withAuth(
 // Routes protégées par le middleware :
 // • Routes admin UI (redirect /admin/login si non authentifié)
 // • API commandes (401 si non authentifié)
-// • API admin : produits (POST/PUT/PATCH/DELETE), upload, site-config (PUT)
-//   → TICK-054 : défense en profondeur, les handlers vérifient aussi getServerSession
-// • /api/auth/callback/credentials → rate limiting uniquement (pas de guard token)
+// • API admin : upload, site-config — TICK-054 : défense en profondeur
+// • /api/auth/callback/* → rate limiting uniquement (pas de guard token)
+// • /mon-compte → token client requis
 //
 // Routes publiques intentionnelles (non incluses) :
 // • GET /api/produits
@@ -61,6 +78,7 @@ export default withAuth(
 // • GET /api/commandes/suivi
 // • POST /api/checkout
 // • POST /api/webhooks/stripe
+// • POST /api/client/register, /api/client/mot-de-passe-oublie, /api/client/reinitialiser-mdp
 export const config = {
   matcher: [
     // Interface admin
@@ -72,10 +90,13 @@ export const config = {
     '/api/commandes/:id/statut',
     '/api/commandes/:id',        // TICK-062 — DELETE anonymisation RGPD (défense en profondeur)
     // API admin — TICK-054 : défense en profondeur
-    // /api/produits (GET) est public — retiré du matcher (handler vérifie getServerSession pour POST/PUT/DELETE)
     '/api/upload',
     '/api/site-config',
     // Rate limiting login — TICK-052
     '/api/auth/callback/credentials',
+    '/api/auth/callback/admin-credentials',
+    '/api/auth/callback/client-credentials',
+    // Espace client protégé
+    '/mon-compte/:path*',
   ],
 };

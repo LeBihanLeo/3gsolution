@@ -37,6 +37,8 @@ const CheckoutSchema = z.object({
   }),
   commentaire: z.string().max(500).optional(),
   produits: z.array(ProduitCheckoutSchema).min(1, 'Le panier est vide').max(50),
+  // clientId transmis si l'utilisateur est connecté — lié à la commande par le webhook
+  clientId: z.string().optional(),
 });
 
 // ─── Handler ─────────────────────────────────────────────────────────────────
@@ -50,7 +52,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { client, retrait, commentaire, produits: produitsClient } = parsed.data;
+    const { client, retrait, commentaire, produits: produitsClient, clientId } = parsed.data;
     const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
 
     // ── Récupération et validation des prix depuis la BDD ─────────────────────
@@ -146,6 +148,8 @@ export async function POST(request: NextRequest) {
         retrait_creneau: retrait.creneau ?? '',
         commentaire: commentaire ?? '',
         produits: JSON.stringify(produitsVerifies), // snapshot prix BDD
+        // Identifiant du compte client (vide pour commandes anonymes)
+        client_id: clientId ?? '',
       },
     });
 

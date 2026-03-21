@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(find \"d:\\\\Projet\\\\Code\\\\3gsolution/3gsolutionapp/app/\\(client\\)\" -type f \\\\\\( -name \"*.tsx\" -o -name \"*.ts\" \\\\\\))",
+      "Bash(ls /d/Projet/Code/3gsolution/3gsolutionapp/app/\\\\\\(client\\\\\\)/)",
+      "Bash(cat /d/Projet/Code/3gsolution/3gsolutionapp/app/api/auth/[...nextauth]/route.ts)",
+      "Bash(ls /d/Projet/Code/3gsolution/3gsolutionapp/app/api/auth/[...nextauth]/)",
+      "Bash(ls /d/Projet/Code/3gsolution/3gsolutionapp/app/\\\\\\(client\\\\\\)/mentions-legales/)",
+      "Bash(cat /d/Projet/Code/3gsolution/3gsolutionapp/app/\\\\\\(client\\\\\\)/mentions-legales/page.tsx)"
     ]
   }
 }

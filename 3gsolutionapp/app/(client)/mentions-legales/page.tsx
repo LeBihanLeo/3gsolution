@@ -171,7 +171,7 @@ export default function MentionsLegalesPage() {
           </div>
           <div className="text-sm text-gray-600 border-l-2 border-gray-200 pl-3">
             <p className="font-medium">Resend Inc. — Emails transactionnels</p>
-            <p>Données transmises : email et nom du client pour l&apos;envoi de la confirmation de commande.</p>
+            <p>Données transmises : email et nom du client pour l&apos;envoi de la confirmation de commande et des liens de réinitialisation de mot de passe.</p>
             <a
               href="https://resend.com/legal/privacy-policy"
               target="_blank"
@@ -181,7 +181,38 @@ export default function MentionsLegalesPage() {
               Politique de confidentialité Resend
             </a>
           </div>
+          <div className="text-sm text-gray-600 border-l-2 border-gray-200 pl-3">
+            <p className="font-medium">Google LLC — Authentification (connexion avec Google)</p>
+            <p>Si vous choisissez de vous connecter via Google, votre email et identifiant Google sont transmis à nos serveurs lors de la connexion. Aucune donnée Google n&apos;est partagée à des tiers. Ce service est optionnel.</p>
+            <a
+              href="https://policies.google.com/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline"
+            >
+              Politique de confidentialité Google
+            </a>
+          </div>
         </div>
+      </section>
+
+      {/* Compte client */}
+      <section className="mb-6">
+        <h2 className="text-lg font-semibold text-gray-800 mb-2">Compte client</h2>
+        <p className="text-sm text-gray-600 mb-2">
+          La création d&apos;un compte client est <strong>facultative</strong>. Elle vous permet
+          de consulter l&apos;historique de vos commandes et de bénéficier de futures offres.
+        </p>
+        <ul className="text-sm text-gray-600 list-disc pl-5 space-y-1 mb-2">
+          <li>Données collectées : adresse email (obligatoire), nom (optionnel).</li>
+          <li>Mot de passe stocké sous forme de hachage bcrypt — jamais en clair.</li>
+          <li>Tokens de réinitialisation de mot de passe : hachés SHA-256, valables <strong>1 heure</strong>, à usage unique.</li>
+          <li>Durée de conservation : <strong>36 mois</strong> après la dernière connexion (fenêtre glissante). Le compte est supprimé automatiquement après cette période d&apos;inactivité.</li>
+        </ul>
+        <p className="text-sm text-gray-600">
+          Vous pouvez supprimer votre compte à tout moment depuis votre espace &laquo; Mon compte &raquo;.
+          Cette action anonymise vos commandes passées et supprime vos données personnelles (RGPD Art. 17).
+        </p>
       </section>
 
       <Link href="/" className="text-sm text-blue-600 hover:underline">

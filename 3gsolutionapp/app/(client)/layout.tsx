@@ -5,6 +5,8 @@ import { CartProvider } from '@/lib/cartContext';
 import CookieBanner from '@/components/client/CookieBanner';
 import { connectDB } from '@/lib/mongodb';
 import SiteConfig from '@/models/SiteConfig';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 
 interface SiteConfigData {
   nomRestaurant: string;
@@ -35,7 +37,11 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function ClientLayout({ children }: { children: ReactNode }) {
-  const config = await getSiteConfig();
+  const [config, session] = await Promise.all([
+    getSiteConfig(),
+    getServerSession(authOptions),
+  ]);
+  const isClient = session?.user?.role === 'client';
 
   return (
     <CartProvider>
@@ -74,9 +80,18 @@ export default async function ClientLayout({ children }: { children: ReactNode }
           <header className="bg-white shadow-sm sticky top-0 z-40">
             <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-2">
               <span className="text-2xl">🍔</span>
-              <Link href="/" className="font-bold text-gray-900 text-lg hover:text-blue-600 transition-colors">
+              <Link href="/" className="font-bold text-gray-900 text-lg hover:text-blue-600 transition-colors flex-1">
                 {config.nomRestaurant}
               </Link>
+              {isClient ? (
+                <Link href="/mon-compte" className="text-sm text-blue-600 hover:underline font-medium">
+                  Mon compte
+                </Link>
+              ) : (
+                <Link href="/connexion" className="text-sm text-gray-500 hover:underline">
+                  Se connecter
+                </Link>
+              )}
             </div>
           </header>
         )}

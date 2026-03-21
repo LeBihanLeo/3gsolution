@@ -12,6 +12,11 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: '*.public.blob.vercel-storage.com',
       },
+      {
+        // Photos de profil Google (comptes OAuth)
+        protocol: 'https',
+        hostname: 'lh3.googleusercontent.com',
+      },
     ],
   },
   async headers() {
@@ -26,10 +31,10 @@ const nextConfig: NextConfig = {
         ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" // Turbopack HMR en dev
         : "script-src 'self' 'unsafe-inline'",              // Production : eval() interdit
       "style-src 'self' 'unsafe-inline'",                   // Tailwind inline styles
-      "img-src 'self' data: blob: https://*.public.blob.vercel-storage.com",
+      "img-src 'self' data: blob: https://*.public.blob.vercel-storage.com https://lh3.googleusercontent.com",
       "font-src 'self'",
-      "connect-src 'self' https://api.stripe.com",
-      "frame-src https://js.stripe.com https://hooks.stripe.com",
+      "connect-src 'self' https://api.stripe.com https://accounts.google.com",
+      "frame-src https://js.stripe.com https://hooks.stripe.com https://accounts.google.com",
       "worker-src 'self' blob:",                            // Service worker PWA
     ].join('; ');
 

@@ -99,3 +99,58 @@ export async function sendConfirmationEmail(commande: ICommande): Promise<void> 
     html,
   });
 }
+
+export async function sendPasswordResetEmail(to: string, rawToken: string): Promise<void> {
+  const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
+  const resetUrl = `${baseUrl}/reinitialiser-mdp?token=${rawToken}`;
+
+  const html = `
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <div style="max-width:600px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)">
+
+    <div style="background:#2563eb;padding:28px 32px">
+      <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700">Réinitialisation du mot de passe</h1>
+      <p style="margin:6px 0 0;color:#bfdbfe;font-size:14px">3G Solution</p>
+    </div>
+
+    <div style="padding:28px 32px">
+      <p style="margin:0 0 16px;color:#374151;font-size:15px">
+        Vous avez demandé à réinitialiser votre mot de passe.
+      </p>
+      <p style="margin:0 0 24px;color:#6b7280;font-size:14px">
+        Cliquez sur le bouton ci-dessous pour choisir un nouveau mot de passe.
+        Ce lien est valable <strong>1 heure</strong>.
+      </p>
+
+      <div style="text-align:center;margin:28px 0">
+        <a href="${resetUrl}"
+           style="background:#2563eb;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:8px;display:inline-block">
+          Réinitialiser mon mot de passe
+        </a>
+      </div>
+
+      <hr style="border:none;border-top:1px solid #f3f4f6;margin:24px 0">
+
+      <p style="margin:0 0 8px;color:#9ca3af;font-size:12px">
+        Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :
+      </p>
+      <p style="margin:0 0 16px;color:#6b7280;font-size:12px;word-break:break-all">${resetUrl}</p>
+
+      <p style="margin:0;color:#9ca3af;font-size:12px">
+        Si vous n'avez pas demandé cette réinitialisation, ignorez cet email — votre mot de passe reste inchangé.
+      </p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  await getResend().emails.send({
+    from: process.env.EMAIL_FROM ?? 'commandes@restaurant.fr',
+    to,
+    subject: 'Réinitialisation de votre mot de passe — 3G Solution',
+    html,
+  });
+}

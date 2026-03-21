@@ -11,6 +11,7 @@
 | Paiement        | Stripe (Checkout)         | Sécurisé, aucune CB stockée                |
 | Email           | Resend (ou Nodemailer)    | Simple, fiable, gratuit en faible volume   |
 | Auth admin      | NextAuth.js (credentials) | Simple, pas d'OAuth tiers requis           |
+| Auth client     | NextAuth.js (credentials + Google OAuth2) | Même instance, providers séparés par `id`, rôle dans JWT |
 | Hébergement     | Vercel                    | Déploiement Next.js natif, HTTPS auto      |
 | PWA             | next-pwa                  | Manifest + service worker minimal          |
 | Stockage images | Vercel Blob               | CDN global, URLs permanentes, gratuit MVP  |
@@ -27,6 +28,11 @@
 │   │   ├── panier/page.tsx        # Panier
 │   │   ├── commande/page.tsx      # Formulaire commande (nom, tel, créneau)
 │   │   ├── confirmation/page.tsx  # Page post-paiement
+│   │   ├── connexion/page.tsx     # Login client (email/mdp + Google)
+│   │   ├── inscription/page.tsx   # Inscription client
+│   │   ├── mon-compte/page.tsx    # Profil + historique commandes
+│   │   ├── mot-de-passe-oublie/page.tsx   # Demande de reset
+│   │   ├── reinitialiser-mdp/page.tsx     # Formulaire nouveau mot de passe
 │   │   └── layout.tsx
 │   ├── (admin)/
 │   │   ├── login/page.tsx
@@ -48,13 +54,20 @@
 │       │   └── route.ts           # POST upload image (Vercel Blob ou fallback local)
 │       ├── site-config/
 │       │   └── route.ts           # GET public / PUT admin (personnalisation)
+│       ├── client/
+│       │   ├── register/route.ts  # POST inscription client
+│       │   ├── me/route.ts        # GET profil / PATCH mise à jour / DELETE RGPD Art. 17
+│       │   ├── commandes/route.ts # GET historique commandes du client connecté
+│       │   ├── mot-de-passe-oublie/route.ts  # POST demande reset (anti-énumération)
+│       │   └── reinitialiser-mdp/route.ts    # POST consommation token (atomique)
 │       └── webhooks/
 │           └── stripe/route.ts    # Validation paiement Stripe
 ├── components/
 │   ├── client/
 │   │   ├── MenuCard.tsx
 │   │   ├── Panier.tsx
-│   │   └── FormulaireCommande.tsx
+│   │   ├── FormulaireCommande.tsx
+│   │   └── MonCompteClient.tsx    # UI profil + historique + suppression compte (client component)
 │   └── admin/
 │       ├── CommandeRow.tsx
 │       ├── ProduitForm.tsx
@@ -63,15 +76,19 @@
 ├── lib/
 │   ├── mongodb.ts                 # Connexion Mongoose (singleton)
 │   ├── stripe.ts                  # Client Stripe
-│   ├── email.ts                   # Envoi email confirmation
-│   ├── auth.ts                    # Config NextAuth
+│   ├── email.ts                   # Envoi email confirmation + reset mot de passe
+│   ├── auth.ts                    # Config NextAuth (admin-credentials, client-credentials, Google)
 │   ├── blob.ts                    # Helper Vercel Blob (upload)
-│   ├── ratelimit.ts               # TICK-052 — Rate limiting login (Upstash/in-memory)
+│   ├── ratelimit.ts               # TICK-052 — Rate limiting générique (Upstash/in-memory) + presets par endpoint
 │   └── logger.ts                  # TICK-059 — Logs de sécurité structurés (JSON prod)
 ├── models/
 │   ├── Produit.ts
-│   ├── Commande.ts
-│   └── SiteConfig.ts          # Config vitrine (singleton)
+│   ├── Commande.ts                # Champ clientId? optionnel (lien compte client)
+│   ├── Client.ts                  # Compte client (credentials + Google, TTL RGPD 36 mois)
+│   ├── PasswordResetToken.ts      # Tokens reset SHA-256, TTL 1h, usage unique
+│   └── SiteConfig.ts             # Config vitrine (singleton)
+├── types/
+│   └── next-auth.d.ts             # Augmentation TypeScript session.user.role / token.role
 ├── public/
 │   ├── manifest.json              # PWA manifest
 │   ├── icons/
@@ -119,6 +136,48 @@
 
 ---
 
+### Client
+
+```typescript
+{
+  _id: ObjectId,
+  email: string,                   // unique, lowercase — index unique
+  passwordHash?: string,           // absent pour comptes OAuth-only (bcrypt cost 12)
+  googleId?: string,               // identifiant Google sub — sparse unique index
+  provider: "credentials" | "google",
+  nom?: string,
+  actif: boolean,                  // false = soft-delete (compte supprimé par l'utilisateur)
+  consentementMarketing: boolean,  // opt-in programme de fidélité — false par défaut
+  consentementDate: Date,          // timestamp preuve RGPD (Art. 7)
+  lastLoginAt: Date,
+  purgeAt: Date,                   // RGPD Art. 5(1)(e) — gliding window = lastLoginAt + 36 mois
+  createdAt: Date
+}
+```
+
+> Index TTL sur `purgeAt` (`expireAfterSeconds: 0`) — suppression automatique après 36 mois d'inactivité.
+> `purgeAt` est mis à jour à chaque connexion (fenêtre glissante).
+> À la suppression volontaire : soft-delete (`actif: false`, email anonymisé) + anonymisation des commandes liées.
+
+### PasswordResetToken
+
+```typescript
+{
+  _id: ObjectId,
+  clientId: ObjectId,       // ref: 'Client'
+  tokenHash: string,        // SHA-256 du token brut envoyé par email — jamais stocké en clair
+  expiresAt: Date,          // createdAt + 1 heure — index TTL MongoDB
+  used: boolean,            // passé à true atomiquement à la consommation (anti-replay)
+  createdAt: Date
+}
+```
+
+> Index TTL sur `expiresAt` — cleanup automatique après 1 heure.
+> Consommation atomique via `findOneAndUpdate({ tokenHash, used: false, expiresAt: { $gt: now } }, { $set: { used: true } })`.
+> Le token brut n'est transmis que par email, jamais stocké — un dump de la base ne permet pas de rejouer les tokens.
+
+---
+
 ### Commande
 
 ```typescript
@@ -147,6 +206,7 @@
   commentaire?: string,
   total: number,               // en centimes
   purgeAt: Date,               // TICK-057 — RGPD Art. 5(1)(e) : createdAt + 12 mois
+  clientId?: ObjectId,         // ref: 'Client' (optionnel — absent si commande anonyme)
   createdAt: Date
 }
 ```
@@ -192,6 +252,13 @@ pas avant, pour éviter les commandes fantômes.
 | GET     | /api/site-config             | Lire la config vitrine                      | Public |
 | PUT     | /api/site-config             | Mettre à jour la config vitrine             | Admin  |
 | POST    | /api/upload                  | Upload image (magic bytes + UUID filename)  | Admin  |
+| POST    | /api/client/register         | Créer un compte client                      | Public |
+| GET     | /api/client/me               | Lire le profil client                       | Client |
+| PATCH   | /api/client/me               | Modifier nom / consentementMarketing        | Client |
+| DELETE  | /api/client/me               | Supprimer le compte (RGPD Art. 17)          | Client |
+| GET     | /api/client/commandes        | Historique des commandes du client          | Client |
+| POST    | /api/client/mot-de-passe-oublie | Demande de reset (anti-énumération)      | Public |
+| POST    | /api/client/reinitialiser-mdp   | Réinitialisation via token SHA-256        | Public |
 
 ---
 
@@ -225,18 +292,22 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 
 | Routes | Protection |
 |--------|-----------|
-| `/admin/commandes/*`, `/admin/menu/*`, `/admin/personnalisation/*` | Token JWT requis |
-| `/api/commandes`, `/api/commandes/:id/statut` | Token JWT requis |
-| `/api/upload`, `/api/site-config`, `/api/produits`, `/api/produits/:id` | Token JWT requis (défense en profondeur) |
-| `/api/auth/callback/credentials` | Rate limiting 10 req / 15 min par IP |
+| `/admin/commandes/*`, `/admin/menu/*`, `/admin/personnalisation/*` | `token.role === 'admin'` |
+| `/api/commandes`, `/api/commandes/:id/statut`, `/api/commandes/:id` | `token.role === 'admin'` |
+| `/api/upload`, `/api/site-config` | `token.role === 'admin'` (défense en profondeur) |
+| `/mon-compte/:path*` | `token.role === 'client'` ou `'admin'` |
+| `/api/auth/callback/admin-credentials` | Rate limiting 10 req / 15 min par IP |
+| `/api/auth/callback/client-credentials` | Rate limiting 10 req / 15 min par IP |
 
-**Routes publiques intentionnelles :** `GET /api/produits`, `GET /api/site-config`, `GET /api/commandes/suivi`, `POST /api/checkout`, `POST /api/webhooks/stripe`
+**Routes publiques intentionnelles :** `GET /api/produits`, `GET /api/site-config`, `GET /api/commandes/suivi`, `POST /api/checkout`, `POST /api/webhooks/stripe`, `POST /api/client/register`, `POST /api/client/mot-de-passe-oublie`, `POST /api/client/reinitialiser-mdp`
 
 ```
 Variables d'env :
 ADMIN_EMAIL
-ADMIN_PASSWORD_HASH   # bcrypt hash
+ADMIN_PASSWORD_HASH        # bcrypt hash
 NEXTAUTH_SECRET
+GOOGLE_CLIENT_ID           # Google Cloud Console
+GOOGLE_CLIENT_SECRET       # Google Cloud Console
 # Rate limiting (TICK-052) — plan gratuit Upstash Redis
 UPSTASH_REDIS_REST_URL
 UPSTASH_REDIS_REST_TOKEN
@@ -274,25 +345,28 @@ Envoyé depuis le webhook Stripe (source de vérité = paiement confirmé).
 
 ---
 
-## Sécurité & RGPD (Sprint 8 — audit 2026-03-20 / Sprint 9 — correctifs 2026-03-20)
+## Sécurité & RGPD (Sprint 8 — audit 2026-03-20 / Sprint 9 — correctifs 2026-03-20 / Sprint 10 — Espace client 2026-03-21)
 
 | Point | Implémentation | Ticket |
 |-------|---------------|--------|
 | HTTPS | Vercel (automatique, certificat Let's Encrypt) | — |
 | Données bancaires | Jamais stockées (tout via Stripe) | — |
 | **Validation des prix** | Prix rechargés depuis MongoDB — valeurs client ignorées | TICK-050 |
-| **Headers HTTP** | CSP dynamique (sans `unsafe-eval` en prod), X-Frame-Options, nosniff, Referrer-Policy | TICK-051, TICK-061 |
-| **Rate limiting login** | 10 req / 15 min / IP — Upstash prod, in-memory dev, fail-safe sur panne Redis | TICK-052, TICK-063 |
+| **Headers HTTP** | CSP dynamique (sans `unsafe-eval` en prod), X-Frame-Options, nosniff, Referrer-Policy + Google OAuth | TICK-051, TICK-061, TICK-067 |
+| **Rate limiting** | Générique `checkRateLimit(ip, config)` — presets par endpoint, fail-safe in-memory | TICK-052, TICK-063, TICK-066 |
 | **Validation MIME upload** | Magic bytes via `file-type` — nom de fichier remplacé par UUID | TICK-053 |
-| **Middleware étendu** | Toutes routes admin couvertes + `/api/commandes/:id` + IP non-spoofable | TICK-054, TICK-062 |
+| **Middleware — séparation rôles** | `token.role === 'admin'` strict pour routes admin ; `'client'` pour `/mon-compte` | TICK-054, TICK-062, TICK-067 |
 | **Mock checkout** | Double guard `NODE_ENV + STRIPE_SECRET_KEY`, TTL 30 min sur sessions | TICK-055 |
-| **Webhook Stripe** | Signature `constructEvent` + idempotence + validation Zod des métadonnées | —, TICK-064 |
-| Auth admin | Middleware NextAuth, JWT, bcrypt | — |
+| **Webhook Stripe** | Signature `constructEvent` + idempotence + validation Zod des métadonnées + `clientId` | —, TICK-064, TICK-070 |
+| Auth admin | Middleware NextAuth, JWT, bcrypt, provider `admin-credentials` | — |
+| **Auth client** | Provider `client-credentials` + Google OAuth2, rôle séparé dans JWT | TICK-065, TICK-066 |
 | Variables sensibles | `.env.local` jamais committé (`.gitignore`) | — |
 | **Bandeau cookie CNIL** | Boutons "Refuser" et "Accepter" de même visibilité | TICK-056 |
-| **Rétention données** | `purgeAt = createdAt + 12 mois` ; index TTL MongoDB ; anonymisation PII via DELETE admin | TICK-057, TICK-060 |
-| **Accountability RGPD** | Anonymisations loggées (`commande_anonymisee`) via `lib/logger.ts` | TICK-060 |
-| **Sous-traitants RGPD** | Stripe, Vercel, MongoDB, Resend documentés dans `/mentions-legales` | TICK-058 |
+| **Rétention commandes** | `purgeAt = createdAt + 12 mois` ; index TTL MongoDB ; anonymisation PII via DELETE admin | TICK-057, TICK-060 |
+| **Rétention comptes clients** | `purgeAt = lastLoginAt + 36 mois` (fenêtre glissante) ; index TTL MongoDB sur `Client` | TICK-065 |
+| **Reset mot de passe** | Token SHA-256, TTL 1h, usage unique atomique, anti-énumération email | TICK-068 |
+| **Accountability RGPD** | Anonymisations et suppressions loggées via `lib/logger.ts` | TICK-060, TICK-065 |
+| **Sous-traitants RGPD** | Stripe, Vercel, MongoDB, Resend, **Google** documentés dans `/mentions-legales` | TICK-058, TICK-069 |
 | **Logs structurés** | `lib/logger.ts` — JSON en prod, lisible en dev ; tous les handlers utilisent le logger | TICK-059, TICK-064 |
 
 ---
@@ -322,10 +396,16 @@ EMAIL_FROM=commandes@restaurant.fr
 # Optionnel en développement : si absent, les uploads sont sauvegardés dans public/uploads/
 BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
 
-# Rate limiting login admin — TICK-052 (Upstash Redis, plan gratuit)
+# Rate limiting — TICK-052 (Upstash Redis, plan gratuit)
 # Optionnel : si absent, fallback in-memory (développement uniquement)
 UPSTASH_REDIS_REST_URL=https://...upstash.io
 UPSTASH_REDIS_REST_TOKEN=...
+
+# Google OAuth2 (Sprint 10 — Espace client)
+# Obtenir via Google Cloud Console → Identifiants → OAuth 2.0
+# Redirect URIs à configurer : https://domain.com/api/auth/callback/google
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
 ```
 
 ---
@@ -344,7 +424,8 @@ UPSTASH_REDIS_REST_TOKEN=...
 | Auth admin          | Faible     | NextAuth config    |
 | Email               | Faible     | 1 fonction         |
 | Personnalisation    | Faible     | 1 page admin, 2 routes |
-| **Total**           |            | ~9 pages, ~12 API  |
+| **Espace client**   | Moyenne    | 5 pages, 6 routes API |
+| **Total**           |            | ~14 pages, ~18 API |
 
 ---
 
@@ -540,4 +621,4 @@ function idCourt(id: string): string {
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19) — Version 1.8 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20 : validation prix serveur, headers HTTP, rate limiting, magic bytes upload, middleware étendu, mock guard, CNIL, rétention RGPD, sous-traitants, logs structurés) — Version 1.9 (Sprint 9 Correctifs post-audit ajoutés le 2026-03-20 : index TTL MongoDB purgeAt, CSP sans unsafe-eval en prod, middleware /api/commandes/:id + IP non-spoofable, rate limiting fail-safe, Zod validation metadata webhook, logger mock-checkout) — Version 1.10 (Conventions de mock complétées le 2026-03-20 : file-type ESM mocké, vi.hoisted() pour factories dépendant de variables externes, connectDB + Produit mockés dans checkout)*
+*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19) — Version 1.8 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20 : validation prix serveur, headers HTTP, rate limiting, magic bytes upload, middleware étendu, mock guard, CNIL, rétention RGPD, sous-traitants, logs structurés) — Version 1.9 (Sprint 9 Correctifs post-audit ajoutés le 2026-03-20 : index TTL MongoDB purgeAt, CSP sans unsafe-eval en prod, middleware /api/commandes/:id + IP non-spoofable, rate limiting fail-safe, Zod validation metadata webhook, logger mock-checkout) — Version 1.10 (Conventions de mock complétées le 2026-03-20 : file-type ESM mocké, vi.hoisted() pour factories dépendant de variables externes, connectDB + Produit mockés dans checkout) — Version 1.11 (Sprint 10 Espace client ajouté le 2026-03-21 : modèles Client + PasswordResetToken, auth multi-provider avec rôles JWT, Google OAuth2, middleware séparation stricte admin/client, rate limiting générique, reset mot de passe SHA-256, RGPD 36 mois fenêtre glissante, CSP Google)*

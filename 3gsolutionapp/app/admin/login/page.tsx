@@ -18,7 +18,7 @@ export default function LoginPage() {
     const email = (form.elements.namedItem('email') as HTMLInputElement).value;
     const password = (form.elements.namedItem('password') as HTMLInputElement).value;
 
-    const result = await signIn('credentials', {
+    const result = await signIn('admin-credentials', {
       email,
       password,
       redirect: false,

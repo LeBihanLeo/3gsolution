@@ -1,6 +1,6 @@
 # Backlog de développement — Plateforme de commande en ligne
 > Généré le 2026-03-17 · Basé sur ARCHITECTURE.md · Sizing en jours/dev
-> Mis à jour le 2026-03-19 · Sprint 6 implémenté
+> Mis à jour le 2026-03-21 · Sprint 10 Espace client implémenté (TICK-065 → 071)
 
 ---
 
@@ -17,7 +17,8 @@
 | 7 | Tests unitaires & intégration | TICK-041 → 049 | 7,0 j |
 | 8 | Sécurité & RGPD (audit) | TICK-050 → 059 | 6,5 j | ✅ Implémenté |
 | 9 | Sécurité & RGPD — corrections post-audit | TICK-060 → 064 | 2,5 j |
-| **Total** | | **64 tickets** | **~44,5 j** |
+| 10 | Espace client — Auth, Historique, Fidélité | TICK-065 → 071 | 6,0 j | ✅ Implémenté |
+| **Total** | | **71 tickets** | **~50,5 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -1743,6 +1744,175 @@ const produits = parseResult.data;
 - [ ] Métadonnées valides → commande créée normalement
 - [ ] Métadonnées corrompues (`produits: "invalid_json"`) → log `webhook_invalid_produits_metadata` + réponse 200 (pas de retry Stripe)
 - [ ] Les tests existants TICK-046 (`webhook-stripe.test.ts`) passent toujours
+
+---
+
+## Sprint 10 — Espace client : Auth, Historique & Fidélité (6,0 j) ✅
+
+> Implémenté le 2026-03-21. Ajoute un espace client optionnel avec authentification multi-provider, historique de commandes, et les bases du programme de fidélité.
+
+---
+
+### TICK-065 — Modèles Client et PasswordResetToken ✅
+**Épic :** Espace client
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-002
+
+**Description :**
+Créer les deux nouveaux modèles Mongoose nécessaires à l'espace client. Le modèle `Client` stocke les comptes avec TTL RGPD glissant de 36 mois. Le modèle `PasswordResetToken` gère les tokens de réinitialisation de façon sécurisée.
+
+**Critères d'acceptance :**
+- [x] `models/Client.ts` : champs email (unique), passwordHash (optionnel), googleId (sparse unique), provider, nom, actif, consentementMarketing, consentementDate, lastLoginAt, purgeAt, createdAt
+- [x] Index TTL sur `Client.purgeAt` (`expireAfterSeconds: 0`) — suppression automatique après 36 mois d'inactivité
+- [x] `purgeAt` glissant : mis à jour à chaque connexion (`lastLoginAt + 36 mois`)
+- [x] `models/PasswordResetToken.ts` : champs clientId, tokenHash (SHA-256), expiresAt, used, createdAt
+- [x] Index TTL sur `PasswordResetToken.expiresAt` — cleanup automatique après 1h
+- [x] `models/Commande.ts` : ajout champ `clientId?: ObjectId` optionnel (migration non-destructive)
+- [x] `types/next-auth.d.ts` : augmentation TypeScript pour `session.user.role` et `token.role`
+
+---
+
+### TICK-066 — NextAuth étendu : providers client + séparation des rôles ✅
+**Épic :** Espace client
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,0 j
+**Dépendances :** TICK-065, TICK-005, TICK-052
+
+**Description :**
+Étendre `lib/auth.ts` avec un provider `client-credentials` et le provider Google OAuth2. Ajouter le champ `role` dans le JWT. Durcir le middleware pour séparer strictement les rôles admin et client — sans quoi tout client connecté peut accéder aux pages admin.
+
+**Critères d'acceptance :**
+- [x] `lib/auth.ts` : provider `admin-credentials` (id explicite — breaking change atomique avec `app/admin/login/page.tsx`)
+- [x] `lib/auth.ts` : provider `client-credentials` — authorize() vérifie `Client.findOne({ email, actif: true })`, compare bcrypt, met à jour `lastLoginAt` + `purgeAt` glissant
+- [x] `lib/auth.ts` : `GoogleProvider` — upsert `Client` par email dans le callback `jwt` (uniquement si `account !== undefined`)
+- [x] Callback `jwt` : stamp `token.role = 'admin' | 'client'`
+- [x] Callback `session` : expose `session.user.role` et `session.user.id`
+- [x] `middleware.ts` : `authorized` retourne `token.role === 'admin'` pour routes admin (plus `!!token`)
+- [x] `middleware.ts` : `authorized` retourne `token.role === 'client' || 'admin'` pour `/mon-compte`
+- [x] `middleware.ts` : matchers étendus (`/api/auth/callback/admin-credentials`, `/api/auth/callback/client-credentials`, `/mon-compte/:path*`)
+- [x] `lib/ratelimit.ts` : refactorisé en `checkRateLimit(ip, config)` générique avec presets par endpoint
+- [x] `app/admin/login/page.tsx` : `signIn('admin-credentials', ...)` (mise à jour atomique)
+- [x] Test : token client → accès `/admin/commandes` bloqué (401)
+- [x] Test : token admin → accès `/admin/commandes` autorisé
+
+---
+
+### TICK-067 — Routes API client : register, profil, historique ✅
+**Épic :** Espace client
+**Priorité :** 🟠 Haute
+**Sizing :** 1,0 j
+**Dépendances :** TICK-065, TICK-066
+
+**Description :**
+Créer les routes API pour la gestion du compte client. Le `DELETE /api/client/me` implémente le droit à l'effacement RGPD Art. 17 avec anonymisation des commandes liées.
+
+**Fichiers cibles :**
+- `app/api/client/register/route.ts`
+- `app/api/client/me/route.ts`
+- `app/api/client/commandes/route.ts`
+
+**Critères d'acceptance :**
+- [x] `POST /api/client/register` : validation Zod (email, password min 8, consentement = true requis), rate limiting 5 req/h/IP, bcrypt cost 12, 409 si email existant, 201 si succès
+- [x] `GET /api/client/me` : token client requis, retourne profil sans passwordHash ni googleId
+- [x] `PATCH /api/client/me` : token client requis, seuls nom et consentementMarketing modifiables
+- [x] `DELETE /api/client/me` (RGPD Art. 17) : anonymise les commandes liées (`[Supprimé]`), soft-delete Client (actif: false, email anonymisé pour libérer contrainte unique), log `client_deleted_gdpr`
+- [x] `GET /api/client/commandes` : token client requis, retourne commandes triées par date décroissante, sans stripeSessionId ni purgeAt
+
+---
+
+### TICK-068 — Mot de passe oublié — flux complet ✅
+**Épic :** Espace client
+**Priorité :** 🟠 Haute
+**Sizing :** 1,0 j
+**Dépendances :** TICK-065, TICK-067
+
+**Description :**
+Implémenter le flux complet de réinitialisation de mot de passe avec token SHA-256, TTL 1h, usage unique atomique, et protection anti-énumération d'emails.
+
+**Fichiers cibles :**
+- `app/api/client/mot-de-passe-oublie/route.ts`
+- `app/api/client/reinitialiser-mdp/route.ts`
+- `lib/email.ts` (ajout `sendPasswordResetEmail`)
+
+**Critères d'acceptance :**
+- [x] `POST /api/client/mot-de-passe-oublie` : retourne toujours `200 { ok: true }` (anti-énumération), rate limiting 3 req/h/IP
+- [x] Si compte credentials actif trouvé : génère `crypto.randomBytes(32)`, stocke SHA-256 en base, envoie lien par email (Resend)
+- [x] Token JWT `expiresAt = now + 1h`, TTL MongoDB sur `expiresAt`
+- [x] `POST /api/client/reinitialiser-mdp` : vérifie SHA-256, consommation atomique `findOneAndUpdate({ used: false, expiresAt: { $gt: now } })`, bcrypt hash cost 12, met à jour `lastLoginAt` + `purgeAt` glissant
+- [x] Token invalide / expiré / déjà utilisé → 400
+- [x] `sendPasswordResetEmail` : HTML branded, lien avec rawToken, mention expiry 1h, note sécurité
+
+---
+
+### TICK-069 — Pages client : connexion, inscription, mon-compte ✅
+**Épic :** Espace client
+**Priorité :** 🟠 Haute
+**Sizing :** 1,5 j
+**Dépendances :** TICK-066, TICK-067
+
+**Description :**
+Créer les pages de l'espace client. La page `/mon-compte` est un server component avec double fetch parallèle. `MonCompteClient` est le client component interactif.
+
+**Fichiers cibles :**
+- `app/(client)/connexion/page.tsx`
+- `app/(client)/inscription/page.tsx`
+- `app/(client)/mon-compte/page.tsx`
+- `components/client/MonCompteClient.tsx`
+- `app/(client)/layout.tsx` (nav links)
+
+**Critères d'acceptance :**
+- [x] `/connexion` : formulaire email/mdp (`signIn('client-credentials', { redirect: false })`), bouton Google (`signIn('google', { callbackUrl: '/mon-compte' })`), lien mot de passe oublié, lien inscription
+- [x] `/inscription` : champs nom, email, password, confirm, checkbox consentement obligatoire (non cochée par défaut), checkbox marketing optionnel, POST `/api/client/register`, redirect `/connexion?registered=1`
+- [x] `/mon-compte` : server component, redirect `/connexion` si non authentifié, `Promise.all` pour profil + commandes, passe données sérialisées à `MonCompteClient`
+- [x] `MonCompteClient` : édition nom inline, toggle consentementMarketing, historique commandes (badge statut, date, total, produits), suppression compte avec confirmation modal + `signOut`
+- [x] Layout : nav `Se connecter` / `Mon compte` selon `session.user.role`
+- [x] Banners de succès : `?registered=1` et `?reset=1` sur `/connexion`
+
+---
+
+### TICK-070 — Pages client : mot de passe oublié & réinitialisation ✅
+**Épic :** Espace client
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-068
+
+**Description :**
+Créer les pages du flux de réinitialisation de mot de passe.
+
+**Fichiers cibles :**
+- `app/(client)/mot-de-passe-oublie/page.tsx`
+- `app/(client)/reinitialiser-mdp/page.tsx`
+
+**Critères d'acceptance :**
+- [x] `/mot-de-passe-oublie` : formulaire email, message générique post-submit (pas de confirmation d'existence du compte)
+- [x] `/reinitialiser-mdp` : lit `?token=` depuis URL (Suspense pour `useSearchParams`), deux champs mot de passe, POST `/api/client/reinitialiser-mdp`, redirect `/connexion?reset=1` si succès
+- [x] Token absent dans l'URL → message d'erreur + lien vers `/mot-de-passe-oublie`
+- [x] Erreur token expiré → message + lien vers `/mot-de-passe-oublie`
+
+---
+
+### TICK-071 — Lien commande ↔ compte client (checkout + webhook) ✅
+**Épic :** Espace client
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-065, TICK-017, TICK-018
+
+**Description :**
+Transmettre le `clientId` du client connecté via les métadonnées Stripe pour que le webhook puisse lier la commande au compte. Mettre à jour la CSP pour Google OAuth.
+
+**Fichiers cibles :**
+- `app/api/checkout/route.ts`
+- `app/api/webhooks/stripe/route.ts`
+- `next.config.ts`
+- `app/(client)/mentions-legales/page.tsx`
+
+**Critères d'acceptance :**
+- [x] `POST /api/checkout` : schéma Zod étendu avec `clientId?: z.string().optional()`, transmis dans `metadata.client_id`
+- [x] Webhook `checkout.session.completed` : si `metadata.client_id` non vide, `commande.clientId = new mongoose.Types.ObjectId(metadata.client_id)`
+- [x] `next.config.ts` CSP : `connect-src` + `frame-src` ajoutés avec `accounts.google.com`, `img-src` avec `lh3.googleusercontent.com`
+- [x] `next.config.ts` : `images.remotePatterns` ajouté avec `lh3.googleusercontent.com`
+- [x] `/mentions-legales` : ajout section "Compte client" (données, 36 mois, SHA-256 tokens), Google LLC comme sous-traitant
 
 ---
 
