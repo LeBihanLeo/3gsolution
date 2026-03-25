@@ -49,7 +49,21 @@ export default function MenuCard({ produitId, nom, description, prix, options, i
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden hover:shadow-md transition-shadow duration-200">
       <div className="p-4">
         <div className="flex items-start gap-4">
-          {/* Infos à gauche */}
+          {/* Image à gauche */}
+          {imageUrl && (
+            <div className="relative w-24 h-24 shrink-0 rounded-xl overflow-hidden">
+              <Image
+                src={imageUrl}
+                alt={nom}
+                fill
+                className="object-cover"
+                loading="lazy"
+                sizes="96px"
+              />
+            </div>
+          )}
+
+          {/* Infos à droite */}
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-gray-900 leading-tight">{nom}</h3>
             <p className="text-sm text-gray-500 mt-1 leading-relaxed line-clamp-2">{description}</p>
@@ -76,20 +90,6 @@ export default function MenuCard({ produitId, nom, description, prix, options, i
               </button>
             </div>
           </div>
-
-          {/* Image à droite */}
-          {imageUrl && (
-            <div className="relative w-24 h-24 shrink-0 rounded-xl overflow-hidden">
-              <Image
-                src={imageUrl}
-                alt={nom}
-                fill
-                className="object-cover"
-                loading="lazy"
-                sizes="96px"
-              />
-            </div>
-          )}
         </div>
 
         {options.length > 0 && (
