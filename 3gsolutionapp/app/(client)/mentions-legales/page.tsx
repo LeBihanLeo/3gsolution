@@ -29,7 +29,7 @@ export default function MentionsLegalesPage() {
             href="https://vercel.com/legal/privacy-policy"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-600 hover:underline"
+            className="text-orange-600 hover:text-orange-700 transition-colors underline"
           >
             vercel.com
           </a>
@@ -77,7 +77,7 @@ export default function MentionsLegalesPage() {
         <p className="text-sm text-gray-600">
           <strong>Droit à l&apos;effacement :</strong> vous pouvez supprimer votre compte à tout moment
           depuis la section &laquo; Zone danger &raquo; de votre{' '}
-          <Link href="/profil" className="text-blue-600 hover:underline">profil</Link>.
+          <Link href="/profil" className="text-orange-600 hover:text-orange-700 transition-colors underline">profil</Link>.
           Cette action est irréversible et entraîne la suppression immédiate de vos données.
         </p>
       </section>
@@ -94,7 +94,7 @@ export default function MentionsLegalesPage() {
             href="https://myaccount.google.com/permissions"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-600 hover:underline"
+            className="text-orange-600 hover:text-orange-700 transition-colors underline"
           >
             myaccount.google.com/permissions
           </a>
@@ -145,10 +145,10 @@ export default function MentionsLegalesPage() {
           <li>Droit d&apos;accès à vos données personnelles</li>
           <li>Droit de rectification</li>
           <li>Droit à l&apos;effacement (&laquo; droit à l&apos;oubli &raquo;) — exercez-le depuis votre{' '}
-            <Link href="/profil" className="text-blue-600 hover:underline">profil</Link> (suppression de compte)</li>
+            <Link href="/profil" className="text-orange-600 hover:text-orange-700 transition-colors underline">profil</Link> (suppression de compte)</li>
           <li>Droit à la limitation du traitement</li>
           <li>Droit à la portabilité — téléchargez vos données depuis votre{' '}
-            <Link href="/profil" className="text-blue-600 hover:underline">profil</Link> (bouton &laquo; Télécharger mes données &raquo;)</li>
+            <Link href="/profil" className="text-orange-600 hover:text-orange-700 transition-colors underline">profil</Link> (bouton &laquo; Télécharger mes données &raquo;)</li>
         </ul>
         <p className="text-sm text-gray-600 mt-2">
           Pour exercer ces droits, contactez-nous à l&apos;adresse :{' '}
@@ -210,7 +210,7 @@ export default function MentionsLegalesPage() {
               href="https://stripe.com/fr/legal/stripe-data-privacy-framework"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
+              className="text-orange-600 hover:text-orange-700 transition-colors underline"
             >
               Politique de confidentialité Stripe
             </a>
@@ -222,7 +222,7 @@ export default function MentionsLegalesPage() {
               href="https://vercel.com/legal/dpa"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
+              className="text-orange-600 hover:text-orange-700 transition-colors underline"
             >
               DPA Vercel
             </a>
@@ -234,7 +234,7 @@ export default function MentionsLegalesPage() {
               href="https://www.mongodb.com/legal/dpa"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
+              className="text-orange-600 hover:text-orange-700 transition-colors underline"
             >
               DPA MongoDB
             </a>
@@ -246,7 +246,7 @@ export default function MentionsLegalesPage() {
               href="https://resend.com/legal/privacy-policy"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
+              className="text-orange-600 hover:text-orange-700 transition-colors underline"
             >
               Politique de confidentialité Resend
             </a>
@@ -261,7 +261,7 @@ export default function MentionsLegalesPage() {
               href="https://policies.google.com/privacy"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
+              className="text-orange-600 hover:text-orange-700 transition-colors underline"
             >
               Politique de confidentialité Google
             </a>
@@ -269,7 +269,7 @@ export default function MentionsLegalesPage() {
         </div>
       </section>
 
-      <Link href="/" className="text-sm text-blue-600 hover:underline">
+      <Link href="/" className="text-sm text-orange-600 hover:text-orange-700 transition-colors">
         ← Retour au menu
       </Link>
     </div>

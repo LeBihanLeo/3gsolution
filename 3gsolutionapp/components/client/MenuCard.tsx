@@ -15,7 +15,7 @@ interface MenuCardProps {
   description: string;
   prix: number; // centimes
   options: Option[];
-  imageUrl?: string; // TICK-038
+  imageUrl?: string;
 }
 
 function formatPrix(centimes: number): string {
@@ -46,76 +46,78 @@ export default function MenuCard({ produitId, nom, description, prix, options, i
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden hover:shadow-md transition-shadow duration-200">
       <div className="p-4">
-        <div className="flex items-start gap-3">
-          {/* Image carrée à gauche — TICK-038 */}
+        <div className="flex items-start gap-4">
+          {/* Infos à gauche */}
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-gray-900 leading-tight">{nom}</h3>
+            <p className="text-sm text-gray-500 mt-1 leading-relaxed line-clamp-2">{description}</p>
+
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <div>
+                <span className="text-base font-bold text-gray-900">{formatPrix(prix)}</span>
+                {selectedOptions.length > 0 && (
+                  <span className="ml-2 text-sm text-orange-600 font-medium">
+                    → {formatPrix(totalItem)}
+                  </span>
+                )}
+              </div>
+
+              <button
+                onClick={handleAdd}
+                className={`shrink-0 text-sm font-semibold px-4 py-1.5 rounded-xl transition-all duration-200 ${
+                  added
+                    ? 'bg-green-500 text-white'
+                    : 'bg-orange-600 text-white hover:bg-orange-700 active:bg-orange-800'
+                }`}
+              >
+                {added ? '✓ Ajouté' : '+ Ajouter'}
+              </button>
+            </div>
+          </div>
+
+          {/* Image à droite */}
           {imageUrl && (
-            <div className="relative w-20 h-20 shrink-0 rounded-lg overflow-hidden border border-gray-100">
+            <div className="relative w-24 h-24 shrink-0 rounded-xl overflow-hidden">
               <Image
                 src={imageUrl}
                 alt={nom}
                 fill
                 className="object-cover"
                 loading="lazy"
-                sizes="80px"
+                sizes="96px"
               />
             </div>
           )}
-
-          {/* Infos */}
-          <div className="flex-1 min-w-0">
-            <div className="flex justify-between items-start gap-2">
-              <h3 className="font-semibold text-gray-900">{nom}</h3>
-              <span className="font-bold text-gray-900 whitespace-nowrap shrink-0">{formatPrix(prix)}</span>
-            </div>
-            <p className="text-sm text-gray-500 mt-0.5 leading-snug">{description}</p>
-          </div>
         </div>
 
         {options.length > 0 && (
           <button
             onClick={() => setShowOptions(!showOptions)}
-            className="mt-2 text-xs text-blue-600 hover:underline"
+            className="mt-3 text-xs font-medium text-orange-600 hover:text-orange-700 flex items-center gap-1 transition-colors"
           >
-            {showOptions ? '▲ Masquer les options' : '▼ Voir les options'}
+            <span>{showOptions ? '▲' : '▼'}</span>
+            <span>{showOptions ? 'Masquer les options' : 'Personnaliser'}</span>
           </button>
         )}
 
         {showOptions && (
-          <div className="mt-2 space-y-1.5 border-t pt-2">
+          <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
             {options.map((opt) => (
-              <label key={opt.nom} className="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <label key={opt.nom} className="flex items-center gap-3 text-sm cursor-pointer select-none group">
                 <input
                   type="checkbox"
                   checked={!!selectedOptions.find((o) => o.nom === opt.nom)}
                   onChange={() => toggleOption(opt)}
-                  className="rounded accent-blue-600"
+                  className="rounded accent-orange-600 w-4 h-4"
                 />
-                <span className="flex-1 text-gray-900">{opt.nom}</span>
-                <span className="text-gray-700">+{formatPrix(opt.prix)}</span>
+                <span className="flex-1 text-gray-800 group-hover:text-gray-900">{opt.nom}</span>
+                <span className="text-orange-600 font-medium">+{formatPrix(opt.prix)}</span>
               </label>
             ))}
           </div>
         )}
-
-        <div className="mt-3 flex items-center justify-between gap-2">
-          {selectedOptions.length > 0 && (
-            <span className="text-sm text-gray-600 font-medium">
-              Total : {formatPrix(totalItem)}
-            </span>
-          )}
-          <button
-            onClick={handleAdd}
-            className={`ml-auto text-white text-sm font-medium px-4 py-1.5 rounded-lg transition-all ${
-              added
-                ? 'bg-green-500'
-                : 'bg-blue-600 hover:bg-blue-700'
-            }`}
-          >
-            {added ? '✓ Ajouté' : 'Ajouter'}
-          </button>
-        </div>
       </div>
     </div>
   );

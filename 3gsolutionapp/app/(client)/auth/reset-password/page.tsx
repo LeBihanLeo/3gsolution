@@ -18,6 +18,8 @@ function passwordStrength(pwd: string): { label: string; color: string; width: s
   return { label: 'Fort', color: 'bg-green-500', width: 'w-full' };
 }
 
+const inputClass = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all';
+
 export default function ResetPasswordPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -63,59 +65,62 @@ export default function ResetPasswordPage() {
 
   if (!token) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-        <div className="text-center">
-          <p className="text-red-600 mb-4">Lien invalide ou manquant.</p>
-          <Link href="/auth/forgot-password" className="text-blue-600 hover:underline text-sm">
-            Demander un nouveau lien
-          </Link>
-        </div>
+      <div className="py-6 text-center">
+        <p className="text-red-600 text-sm mb-4">Lien invalide ou manquant.</p>
+        <Link href="/auth/forgot-password" className="text-orange-600 text-sm font-medium hover:text-orange-700 transition-colors">
+          Demander un nouveau lien →
+        </Link>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-sm p-8">
-        {/* TICK-088 — Navigation retour */}
-        <div className="mb-4">
+    <div className="py-6">
+      <div className="w-full max-w-sm mx-auto bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+        <div className="mb-5">
           <BackLink href="/auth/forgot-password" label="Retour" />
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Nouveau mot de passe</h1>
+
+        <div className="mb-6">
+          <h1 className="text-xl font-bold text-gray-900">Nouveau mot de passe</h1>
+          <p className="text-sm text-gray-500 mt-1">Choisissez un mot de passe sécurisé.</p>
+        </div>
 
         {generalError && (
-          <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">{generalError}</div>
+          <div className="mb-4 p-3 bg-red-50 border border-red-100 text-red-700 rounded-xl text-sm">{generalError}</div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Nouveau mot de passe</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Nouveau mot de passe</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="••••••••"
+              className={inputClass}
             />
             {strength && (
               <div className="mt-2">
-                <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                   <div className={`h-full ${strength.color} ${strength.width} transition-all`} />
                 </div>
-                <p className="text-xs text-gray-500 mt-1">Force : {strength.label}</p>
+                <p className="text-xs text-gray-400 mt-1">Force : {strength.label}</p>
               </div>
             )}
             {errors.password?.map((e) => <p key={e} className="text-red-600 text-xs mt-1">{e}</p>)}
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Confirmer le mot de passe</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Confirmer le mot de passe</label>
             <input
               type="password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
               required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="••••••••"
+              className={inputClass}
             />
             {errors.confirm?.map((e) => <p key={e} className="text-red-600 text-xs mt-1">{e}</p>)}
           </div>
@@ -123,7 +128,7 @@ export default function ResetPasswordPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            className="w-full bg-orange-600 text-white rounded-xl py-2.5 font-semibold hover:bg-orange-700 active:bg-orange-800 disabled:opacity-50 transition-colors text-sm"
           >
             {loading ? 'Enregistrement…' : 'Enregistrer le mot de passe'}
           </button>

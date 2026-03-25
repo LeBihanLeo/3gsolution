@@ -13,7 +13,7 @@ export default function CommandePage() {
     return (
       <div className="text-center py-16">
         <p className="text-gray-500 text-lg mb-4">Votre panier est vide.</p>
-        <Link href="/" className="text-blue-600 hover:underline text-sm">
+        <Link href="/" className="text-orange-600 hover:text-orange-700 text-sm transition-colors">
           ← Retour au menu
         </Link>
       </div>

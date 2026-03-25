@@ -17,12 +17,18 @@ export default function Panier() {
 
   if (items.length === 0) {
     return (
-      <div className="text-center py-16">
-        <p className="text-gray-400 text-4xl mb-4">🛒</p>
-        <p className="text-gray-600 text-lg mb-6">Votre panier est vide.</p>
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
+            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+          </svg>
+        </div>
+        <p className="text-gray-900 font-semibold text-lg mb-1">Panier vide</p>
+        <p className="text-gray-500 text-sm mb-6">Ajoutez des articles depuis le menu.</p>
         <Link
           href="/"
-          className="text-blue-600 hover:underline text-sm"
+          className="text-sm font-medium text-orange-600 hover:text-orange-700 transition-colors"
         >
           ← Retour au menu
         </Link>
@@ -32,25 +38,28 @@ export default function Panier() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Votre panier</h1>
+      <div className="flex items-center justify-between mb-5">
+        <h1 className="text-xl font-bold text-gray-900">
+          Votre panier
+          <span className="ml-2 text-sm font-medium text-gray-400">({items.length} article{items.length > 1 ? 's' : ''})</span>
+        </h1>
         <button
           onClick={clearCart}
-          className="text-sm text-red-400 hover:text-red-600 hover:underline"
+          className="text-xs text-gray-400 hover:text-red-500 transition-colors"
         >
-          Vider le panier
+          Tout vider
         </button>
       </div>
 
-      <div className="space-y-3 mb-6">
+      <div className="space-y-3 mb-5">
         {items.map((item, idx) => (
           <div
             key={idx}
-            className="bg-white rounded-xl border border-gray-100 shadow-sm p-4"
+            className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4"
           >
             <div className="flex items-start gap-3">
               {item.imageUrl && (
-                <div className="relative w-14 h-14 shrink-0 rounded-lg overflow-hidden border border-gray-100">
+                <div className="relative w-14 h-14 shrink-0 rounded-xl overflow-hidden">
                   <Image
                     src={item.imageUrl}
                     alt={item.nom}
@@ -62,42 +71,38 @@ export default function Panier() {
               )}
               <div className="flex-1 min-w-0">
                 <div className="flex justify-between items-start gap-2">
-                  <p className="font-semibold text-gray-900">{item.nom}</p>
-                  <p className="font-bold text-gray-900 whitespace-nowrap">
+                  <p className="font-semibold text-gray-900 leading-tight">{item.nom}</p>
+                  <p className="font-bold text-gray-900 whitespace-nowrap text-sm">
                     {formatPrix(itemTotal(item))}
                   </p>
                 </div>
                 {item.options.length > 0 && (
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="text-xs text-orange-600 mt-0.5">
                     + {item.options.map((o) => o.nom).join(', ')}
                   </p>
                 )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 mt-3">
+            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-50">
               <button
-                onClick={() =>
-                  updateQuantity(item.produitId, item.options, item.quantite - 1)
-                }
-                className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center text-lg leading-none text-gray-900 hover:bg-gray-100 transition-colors"
+                onClick={() => updateQuantity(item.produitId, item.options, item.quantite - 1)}
+                className="w-8 h-8 rounded-xl border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors text-lg leading-none"
                 aria-label="Diminuer"
               >
                 −
               </button>
-              <span className="font-medium w-6 text-center text-gray-900">{item.quantite}</span>
+              <span className="font-semibold w-6 text-center text-gray-900 text-sm">{item.quantite}</span>
               <button
-                onClick={() =>
-                  updateQuantity(item.produitId, item.options, item.quantite + 1)
-                }
-                className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center text-lg leading-none text-gray-900 hover:bg-gray-100 transition-colors"
+                onClick={() => updateQuantity(item.produitId, item.options, item.quantite + 1)}
+                className="w-8 h-8 rounded-xl border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors text-lg leading-none"
                 aria-label="Augmenter"
               >
                 +
               </button>
               <button
                 onClick={() => removeItem(item.produitId, item.options)}
-                className="ml-auto text-xs text-red-400 hover:underline"
+                className="ml-auto text-xs text-gray-400 hover:text-red-500 transition-colors"
               >
                 Supprimer
               </button>
@@ -106,23 +111,23 @@ export default function Panier() {
         ))}
       </div>
 
-      {/* Total */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
+      {/* Récap total */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 mb-5">
         <div className="flex justify-between items-center">
-          <span className="text-gray-600 font-medium">Total</span>
-          <span className="text-xl font-bold text-gray-900">{formatPrix(totalPrice)}</span>
+          <span className="text-gray-600 text-sm font-medium">Total estimé</span>
+          <span className="text-2xl font-bold text-gray-900">{formatPrix(totalPrice)}</span>
         </div>
       </div>
 
       <Link
         href="/commande"
-        className="block w-full bg-blue-600 hover:bg-blue-700 text-white text-center font-semibold py-3 rounded-xl transition-colors"
+        className="block w-full bg-orange-600 hover:bg-orange-700 active:bg-orange-800 text-white text-center font-semibold py-3.5 rounded-2xl transition-colors"
       >
         Commander →
       </Link>
 
       <div className="text-center mt-4">
-        <Link href="/" className="text-sm text-gray-500 hover:underline">
+        <Link href="/" className="text-sm text-gray-400 hover:text-orange-600 transition-colors">
           ← Continuer mes achats
         </Link>
       </div>

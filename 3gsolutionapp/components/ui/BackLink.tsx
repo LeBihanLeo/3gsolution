@@ -1,4 +1,3 @@
-// TICK-084 — Composant BackLink (flèche retour avec texte)
 import Link from 'next/link';
 
 interface BackLinkProps {
@@ -11,9 +10,14 @@ export function BackLink({ href, label }: BackLinkProps) {
     <Link
       href={href}
       aria-label={`Retour — ${label}`}
-      className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 hover:underline transition-colors"
+      className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-orange-600 transition-colors group"
     >
-      <span aria-hidden="true">←</span>
+      <span
+        aria-hidden="true"
+        className="text-base transition-transform group-hover:-translate-x-0.5"
+      >
+        ←
+      </span>
       <span>{label}</span>
     </Link>
   );

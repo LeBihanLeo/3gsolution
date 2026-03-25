@@ -40,7 +40,7 @@ export default async function ClientLayout({ children }: { children: ReactNode }
 
   return (
     <CartProvider>
-      <div className="min-h-screen flex flex-col bg-gray-50">
+      <div className="min-h-screen flex flex-col bg-stone-50">
 
         {config.banniereUrl ? (
           /* ── Hero bannière ── */
@@ -51,39 +51,46 @@ export default async function ClientLayout({ children }: { children: ReactNode }
                 backgroundImage: `url(${config.banniereUrl})`,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
-                minHeight: '220px',
+                minHeight: '200px',
               }}
             >
-              <div className="flex items-center gap-5 w-full px-8 max-w-2xl mx-auto">
-                <div className="flex-1 h-px bg-white" />
+              {/* Gradient overlay for readability */}
+              <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/20 to-black/40" />
+              <div className="relative flex items-center gap-5 w-full px-8 max-w-2xl mx-auto">
+                <div className="flex-1 h-px bg-white/60" />
                 <Link
                   href="/"
-                  className="text-white text-3xl whitespace-nowrap shrink-0 uppercase tracking-widest"
+                  className="text-white text-2xl whitespace-nowrap shrink-0 uppercase tracking-widest drop-shadow-lg"
                   style={{
-                    fontFamily: 'var(--font-montserrat)',
+                    fontFamily: 'var(--font-display)',
                     fontWeight: 700,
-                    textShadow:
-                      '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
                   }}
                 >
                   {config.nomRestaurant}
                 </Link>
-                <div className="flex-1 h-px bg-white" />
+                <div className="flex-1 h-px bg-white/60" />
               </div>
             </div>
-            {/* TICK-085 — Bouton profil/connexion sous la bannière, haut droite */}
-            <div className="bg-white border-b border-gray-100 shadow-sm">
+            <div className="bg-white border-b border-gray-100">
               <div className="max-w-2xl mx-auto px-4 py-2 flex justify-end">
                 <HeaderAuth />
               </div>
             </div>
           </header>
         ) : (
-          /* ── Header fallback (pas de bannière) ── */
-          <header className="bg-white shadow-sm sticky top-0 z-40">
-            <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-2">
-              <span className="text-2xl">🍔</span>
-              <Link href="/" className="font-bold text-gray-900 text-lg hover:text-blue-600 transition-colors flex-1">
+          /* ── Header fallback ── */
+          <header className="bg-white border-b border-gray-100 sticky top-0 z-40">
+            <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-orange-600 flex items-center justify-center shrink-0">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 11l19-9-9 19-2-8-8-2z" />
+                </svg>
+              </div>
+              <Link
+                href="/"
+                className="font-semibold text-gray-900 text-base hover:text-orange-600 transition-colors flex-1"
+                style={{ fontFamily: 'var(--font-display)' }}
+              >
                 {config.nomRestaurant}
               </Link>
               <HeaderAuth />
@@ -95,10 +102,12 @@ export default async function ClientLayout({ children }: { children: ReactNode }
           {children}
         </main>
 
-        <footer className="bg-white border-t text-center text-xs text-gray-400 py-3">
-          <Link href="/mentions-legales" className="hover:underline">
+        <footer className="bg-white border-t border-gray-100 text-center text-xs text-gray-400 py-4">
+          <Link href="/mentions-legales" className="hover:text-orange-600 transition-colors">
             Mentions légales
           </Link>
+          <span className="mx-2 text-gray-200">·</span>
+          <span>© {new Date().getFullYear()} {config.nomRestaurant}</span>
         </footer>
       </div>
       <CookieBanner />

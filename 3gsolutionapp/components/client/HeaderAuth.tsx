@@ -1,7 +1,4 @@
 'use client';
-// TICK-074 — Lien profil/connexion dans le header client
-// TICK-085 — Bouton "Mon profil" visible, texte, variant Button
-// TICK-090 — Masquer le bouton "Mon profil" sur /profil, /panier, /commande
 import { useSession } from 'next-auth/react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Button } from '@/components/ui';
@@ -19,7 +16,7 @@ export default function HeaderAuth() {
     if (HIDE_PROFIL_BTN.includes(pathname)) return null;
     return (
       <Button
-        variant="primary"
+        variant="secondary"
         size="sm"
         onClick={() => router.push('/profil')}
         aria-label="Mon profil"

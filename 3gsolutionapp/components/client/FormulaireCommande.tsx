@@ -66,7 +66,7 @@ function itemTotal(item: CartItem): number {
 }
 
 const inputCls =
-  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500';
+  'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500';
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -275,7 +275,7 @@ export default function FormulaireCommande() {
                 value="immediat"
                 checked={typeRetrait === 'immediat'}
                 onChange={() => setTypeRetrait('immediat')}
-                className="accent-blue-600"
+                className="accent-orange-600"
               />
               Dès que possible
             </label>
@@ -286,7 +286,7 @@ export default function FormulaireCommande() {
                 value="creneau"
                 checked={typeRetrait === 'creneau'}
                 onChange={() => setTypeRetrait('creneau')}
-                className="accent-blue-600"
+                className="accent-orange-600"
               />
               Créneau programmé
             </label>
@@ -334,7 +334,7 @@ export default function FormulaireCommande() {
               checked={memoriser}
               onChange={(e) => setMemoriser(e.target.checked)}
               aria-describedby="memoriser-info"
-              className="mt-0.5 accent-blue-600 shrink-0"
+              className="mt-0.5 accent-orange-600 shrink-0"
             />
             <span className="text-sm text-gray-700">
               Mémoriser mes informations sur cet appareil pour mes prochaines commandes
@@ -363,7 +363,7 @@ export default function FormulaireCommande() {
         <button
           type="submit"
           disabled={loading || items.length === 0}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition-colors"
+          className="w-full bg-orange-600 hover:bg-orange-700 active:bg-orange-800 disabled:opacity-50 text-white font-semibold py-3 rounded-2xl transition-colors"
         >
           {loading ? 'Redirection vers le paiement…' : 'Payer →'}
         </button>

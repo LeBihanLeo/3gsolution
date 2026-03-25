@@ -128,7 +128,7 @@ function SuiviContent() {
         <p className="text-4xl mb-4">❌</p>
         <p className="text-red-500 text-lg font-medium mb-2">Lien invalide ou expiré</p>
         <p className="text-gray-500 text-sm mb-6">Aucun identifiant de commande trouvé.</p>
-        <Link href="/" className="text-blue-600 hover:underline text-sm">← Retour au menu</Link>
+        <Link href="/" className="text-orange-600 hover:text-orange-700 text-sm transition-colors">← Retour au menu</Link>
       </div>
     );
   }
@@ -138,7 +138,7 @@ function SuiviContent() {
     return (
       <div className="text-center py-16 space-y-4">
         <div className="flex justify-center">
-          <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+          <div className="w-10 h-10 border-4 border-orange-200 border-t-orange-600 rounded-full animate-spin" />
         </div>
         <p className="text-gray-600 font-medium">Votre commande est en cours de validation…</p>
         <p className="text-gray-400 text-sm">Veuillez patienter quelques instants.</p>
@@ -156,7 +156,7 @@ function SuiviContent() {
           Votre commande sera disponible dans quelques instants. Contactez le restaurant si
           le problème persiste.
         </p>
-        <Link href="/" className="text-blue-600 hover:underline text-sm">← Retour au menu</Link>
+        <Link href="/" className="text-orange-600 hover:text-orange-700 text-sm transition-colors">← Retour au menu</Link>
       </div>
     );
   }
@@ -230,7 +230,7 @@ function SuiviContent() {
       )}
 
       <div className="text-center">
-        <Link href="/" className="inline-block text-blue-600 hover:underline text-sm">
+        <Link href="/" className="inline-block text-orange-600 hover:text-orange-700 text-sm transition-colors">
           ← Retour au menu
         </Link>
       </div>
