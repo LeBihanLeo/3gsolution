@@ -61,6 +61,8 @@ export async function POST(request: NextRequest) {
       ...(data.commentaire ? { commentaire: data.commentaire } : {}),
       total,
       purgeAt,
+      // TICK-075 — lier la commande au compte client si connecté
+      ...(data.clientId ? { clientId: data.clientId } : {}),
     });
 
     mockSessions.delete(sessionId);

@@ -1,9 +1,32 @@
 import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import { ICommande } from '@/models/Commande';
 
-// Initialisation lazy pour éviter l'erreur au build si RESEND_API_KEY absent
-function getResend(): Resend {
-  return new Resend(process.env.RESEND_API_KEY ?? 'placeholder');
+// ── Transport abstrait : MailDev (SMTP) en dev, Resend en prod ────────────────
+interface SendPayload {
+  to: string;
+  subject: string;
+  html: string;
+}
+
+async function sendEmail(payload: SendPayload): Promise<void> {
+  const from = process.env.EMAIL_FROM ?? 'commandes@restaurant.fr';
+
+  if (process.env.SMTP_HOST) {
+    // MailDev / SMTP local
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT ?? 1025),
+      secure: false,
+      ignoreTLS: true,
+    });
+    await transporter.sendMail({ from, ...payload });
+    return;
+  }
+
+  // Resend (production)
+  const resend = new Resend(process.env.RESEND_API_KEY ?? 'placeholder');
+  await resend.emails.send({ from, ...payload });
 }
 
 function formatPrix(centimes: number): string {
@@ -12,6 +35,58 @@ function formatPrix(centimes: number): string {
 
 function idCourt(id: string): string {
   return id.slice(-6).toUpperCase();
+}
+
+// ── Email vérification compte client (TICK-067) ───────────────────────────
+export async function sendVerificationEmail(email: string, token: string): Promise<void> {
+  const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
+  const link = `${baseUrl}/auth/verify-email?token=${token}`;
+
+  await sendEmail({
+    to: email,
+    subject: 'Vérifiez votre adresse email — 3G Solution',
+    html: `
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,sans-serif;background:#f9fafb;padding:32px">
+  <div style="max-width:500px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,.1)">
+    <h1 style="color:#111827;font-size:20px;margin:0 0 16px">Confirmez votre email</h1>
+    <p style="color:#6b7280;margin:0 0 24px">Cliquez sur le lien ci-dessous pour activer votre compte. Ce lien est valable <strong>24 heures</strong>.</p>
+    <a href="${link}" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">
+      Vérifier mon email
+    </a>
+    <p style="color:#9ca3af;font-size:12px;margin:24px 0 0">Si vous n'avez pas créé de compte, ignorez cet email.</p>
+  </div>
+</body>
+</html>`,
+  });
+}
+
+// ── Email reset mot de passe (TICK-069) ───────────────────────────────────
+export async function sendPasswordResetEmail(email: string, token: string): Promise<void> {
+  const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
+  const link = `${baseUrl}/auth/reset-password?token=${token}`;
+
+  await sendEmail({
+    to: email,
+    subject: 'Réinitialisation de mot de passe — 3G Solution',
+    html: `
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,sans-serif;background:#f9fafb;padding:32px">
+  <div style="max-width:500px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,.1)">
+    <h1 style="color:#111827;font-size:20px;margin:0 0 16px">Réinitialisation de mot de passe</h1>
+    <p style="color:#6b7280;margin:0 0 24px">Cliquez sur le lien ci-dessous pour choisir un nouveau mot de passe. Ce lien est valable <strong>1 heure</strong>.</p>
+    <a href="${link}" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">
+      Réinitialiser mon mot de passe
+    </a>
+    <p style="color:#9ca3af;font-size:12px;margin:24px 0 0">Si vous n'avez pas fait cette demande, ignorez cet email.</p>
+  </div>
+</body>
+</html>`,
+  });
 }
 
 export async function sendConfirmationEmail(commande: ICommande): Promise<void> {
@@ -92,8 +167,7 @@ export async function sendConfirmationEmail(commande: ICommande): Promise<void> 
 </body>
 </html>`;
 
-  await getResend().emails.send({
-    from: process.env.EMAIL_FROM ?? 'commandes@restaurant.fr',
+  await sendEmail({
     to: commande.client.email,
     subject: `Votre commande #${ref} est confirmée — 3G Solution`,
     html,

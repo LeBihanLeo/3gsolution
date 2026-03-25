@@ -1,8 +1,12 @@
 'use client';
+// TICK-082 — Écran de choix connexion/invité avant le menu
 
 import { useEffect, useState } from 'react';
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import MenuCard from '@/components/client/MenuCard';
+import { Button } from '@/components/ui';
 import { useCart } from '@/lib/cartContext';
 
 interface Option {
@@ -17,10 +21,49 @@ interface Produit {
   categorie: string;
   prix: number;
   options: Option[];
-  imageUrl?: string; // TICK-038
+  imageUrl?: string;
 }
 
-export default function MenuPage() {
+// ─── Écran de choix ──────────────────────────────────────────────────────────
+
+function EcranChoix({ onInvite }: { onInvite: () => void }) {
+  const router = useRouter();
+
+  return (
+    <div className="flex flex-col items-center justify-center py-16 px-4 space-y-6">
+      <div className="text-center space-y-2">
+        <h2 className="text-xl font-bold text-gray-900">Bienvenue !</h2>
+        <p className="text-gray-500 text-sm">
+          Connectez-vous pour retrouver vos commandes, ou continuez en tant qu&apos;invité.
+        </p>
+      </div>
+
+      <div className="w-full max-w-xs space-y-3">
+        <Button
+          variant="primary"
+          size="lg"
+          className="w-full"
+          onClick={() => router.push('/auth/login')}
+        >
+          Se connecter
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="lg"
+          className="w-full"
+          onClick={onInvite}
+        >
+          Continuer en tant qu&apos;invité
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Menu ────────────────────────────────────────────────────────────────────
+
+function Menu() {
   const [produits, setProduits] = useState<Produit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -90,7 +133,6 @@ export default function MenuPage() {
           </section>
         ))}
 
-      {/* Bouton panier flottant */}
       {totalItems > 0 && (
         <div className="fixed bottom-6 left-0 right-0 flex justify-center px-4 z-50">
           <Link
@@ -105,5 +147,54 @@ export default function MenuPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Page principale ─────────────────────────────────────────────────────────
+
+export default function MenuPage() {
+  const { data: session, status } = useSession();
+  const [showMenu, setShowMenu] = useState(false);
+
+  useEffect(() => {
+    // Vérifier sessionStorage pour le mode invité persisté
+    if (typeof window !== 'undefined') {
+      if (sessionStorage.getItem('guest_mode') === 'true') {
+        setShowMenu(true);
+      }
+    }
+  }, []);
+
+  // Client connecté → menu direct
+  if (status === 'authenticated' && session?.user?.role === 'client') {
+    return <Menu />;
+  }
+
+  // Chargement de la session
+  if (status === 'loading') {
+    return (
+      <div className="space-y-3">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="bg-gray-200 rounded-xl h-24 animate-pulse" />
+        ))}
+      </div>
+    );
+  }
+
+  // Mode invité déjà choisi (sessionStorage)
+  if (showMenu) {
+    return <Menu />;
+  }
+
+  // Écran de choix
+  return (
+    <EcranChoix
+      onInvite={() => {
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem('guest_mode', 'true');
+        }
+        setShowMenu(true);
+      }}
+    />
   );
 }

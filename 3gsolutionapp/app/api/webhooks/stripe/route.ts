@@ -29,6 +29,9 @@ const ProduitMetadataSchema = z.array(
   })
 );
 
+// TICK-075 — clientId optionnel dans les métadonnées (commandes invité : champ vide)
+const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
+
 // Désactiver le body parsing automatique pour lire le corps brut
 // (requis pour la vérification de signature Stripe)
 export const dynamic = 'force-dynamic';
@@ -101,6 +104,10 @@ export async function POST(request: NextRequest) {
     const purgeAt = new Date();
     purgeAt.setFullYear(purgeAt.getFullYear() + 1);
 
+    // TICK-075 — clientId : valide uniquement si ObjectId MongoDB valide (24 hex chars)
+    const rawClientId = metadata.clientId ?? '';
+    const clientId = OBJECT_ID_REGEX.test(rawClientId) ? rawClientId : undefined;
+
     const commande = await Commande.create({
       stripeSessionId: session.id,
       statut: 'payee',
@@ -117,6 +124,7 @@ export async function POST(request: NextRequest) {
       ...(metadata.commentaire ? { commentaire: metadata.commentaire } : {}),
       total,
       purgeAt,
+      ...(clientId ? { clientId } : {}),
     });
 
     // Envoi email de confirmation (erreur silencieuse pour ne pas bloquer)

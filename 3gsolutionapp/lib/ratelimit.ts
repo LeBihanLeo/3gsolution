@@ -53,6 +53,81 @@ function inMemoryRateLimit(ip: string): RateLimitResult {
   return { success: true, remaining: MAX_REQUESTS - entry.count, reset: entry.resetAt };
 }
 
+// ─── Limiters spécialisés (TICK-078) ─────────────────────────────────────────
+
+const REGISTER_MAX = 5;
+const FORGOT_MAX = 3;
+
+const globalWithRL2 = global as typeof globalThis & {
+  _registerAttempts?: Map<string, InMemoryEntry>;
+  _forgotAttempts?: Map<string, InMemoryEntry>;
+};
+
+if (!globalWithRL2._registerAttempts) globalWithRL2._registerAttempts = new Map();
+if (!globalWithRL2._forgotAttempts) globalWithRL2._forgotAttempts = new Map();
+
+function inMemoryGenericLimit(
+  map: Map<string, InMemoryEntry>,
+  ip: string,
+  maxReq: number
+): RateLimitResult {
+  const now = Math.floor(Date.now() / 1000);
+  const entry = map.get(ip);
+  if (!entry || now >= entry.resetAt) {
+    map.set(ip, { count: 1, resetAt: now + WINDOW_SECONDS });
+    return { success: true, remaining: maxReq - 1, reset: now + WINDOW_SECONDS };
+  }
+  if (entry.count >= maxReq) {
+    return { success: false, remaining: 0, reset: entry.resetAt };
+  }
+  entry.count += 1;
+  return { success: true, remaining: maxReq - entry.count, reset: entry.resetAt };
+}
+
+async function checkUpstashLimit(
+  ip: string,
+  prefix: string,
+  maxReq: number,
+  fallback: () => RateLimitResult
+): Promise<RateLimitResult> {
+  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    try {
+      const { Ratelimit } = await import('@upstash/ratelimit');
+      const { Redis } = await import('@upstash/redis');
+      const ratelimit = new Ratelimit({
+        redis: Redis.fromEnv(),
+        limiter: Ratelimit.slidingWindow(maxReq, `${WINDOW_SECONDS} s`),
+        analytics: false,
+        prefix,
+      });
+      const { success, remaining, reset } = await ratelimit.limit(ip);
+      return { success, remaining, reset };
+    } catch (err) {
+      console.error(`[ratelimit] Upstash indisponible (${prefix}), fallback in-memory:`, err);
+      return fallback();
+    }
+  }
+  return fallback();
+}
+
+export async function checkRegisterRateLimit(ip: string): Promise<RateLimitResult> {
+  return checkUpstashLimit(
+    ip,
+    'rl:register',
+    REGISTER_MAX,
+    () => inMemoryGenericLimit(globalWithRL2._registerAttempts!, ip, REGISTER_MAX)
+  );
+}
+
+export async function checkForgotPasswordRateLimit(ip: string): Promise<RateLimitResult> {
+  return checkUpstashLimit(
+    ip,
+    'rl:forgot',
+    FORGOT_MAX,
+    () => inMemoryGenericLimit(globalWithRL2._forgotAttempts!, ip, FORGOT_MAX)
+  );
+}
+
 // ─── Rate limiter principal ───────────────────────────────────────────────────
 
 export async function checkLoginRateLimit(ip: string): Promise<RateLimitResult> {

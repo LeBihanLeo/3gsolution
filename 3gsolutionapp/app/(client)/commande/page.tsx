@@ -1,8 +1,10 @@
 'use client';
+// TICK-088 — BackLink retour vers le panier
 
 import Link from 'next/link';
 import { useCart } from '@/lib/cartContext';
 import FormulaireCommande from '@/components/client/FormulaireCommande';
+import { BackLink } from '@/components/ui';
 
 export default function CommandePage() {
   const { items } = useCart();
@@ -18,5 +20,12 @@ export default function CommandePage() {
     );
   }
 
-  return <FormulaireCommande />;
+  return (
+    <>
+      <div className="mb-4">
+        <BackLink href="/panier" label="Retour au panier" />
+      </div>
+      <FormulaireCommande />
+    </>
+  );
 }

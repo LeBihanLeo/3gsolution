@@ -1,8 +1,11 @@
 // TICK-050 — SEC-01 : Validation des prix côté serveur (OWASP A04:2021)
 // Les prix des produits et options sont systématiquement récupérés depuis MongoDB.
 // Les valeurs `prix` envoyées par le client sont ignorées.
+// TICK-075 — clientId injecté dans metadata si client connecté
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { getStripe } from '@/lib/stripe';
 import { mockSessions } from '@/lib/mockStore';
 import { connectDB } from '@/lib/mongodb';
@@ -52,6 +55,13 @@ export async function POST(request: NextRequest) {
 
     const { client, retrait, commentaire, produits: produitsClient } = parsed.data;
     const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
+
+    // TICK-075 — Récupération clientId si client connecté (session JWT)
+    const authSession = await getServerSession(authOptions);
+    const clientId =
+      authSession?.user?.role === 'client' && authSession.user.id
+        ? authSession.user.id
+        : undefined;
 
     // ── Récupération et validation des prix depuis la BDD ─────────────────────
     // SEC-01 : on ne fait jamais confiance aux prix envoyés par le client
@@ -110,6 +120,7 @@ export async function POST(request: NextRequest) {
         retrait,
         ...(commentaire ? { commentaire } : {}),
         produits: produitsVerifies, // produits avec prix BDD
+        ...(clientId ? { clientId } : {}),
       });
       return NextResponse.json({ url: `${baseUrl}/mock-checkout?session_id=${mockId}` });
     }
@@ -146,6 +157,8 @@ export async function POST(request: NextRequest) {
         retrait_creneau: retrait.creneau ?? '',
         commentaire: commentaire ?? '',
         produits: JSON.stringify(produitsVerifies), // snapshot prix BDD
+        // TICK-075 — clientId MongoDB si client connecté (vide = commande invité)
+        clientId: clientId ?? '',
       },
     });
 

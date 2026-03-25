@@ -16,6 +16,9 @@ vi.mock('@/lib/mockStore', () => ({
 
 // TICK-050 — Le checkout vérifie les prix en BDD : il faut mocker connectDB + Produit
 vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined) }));
+// TICK-075 — getServerSession mocké (renvoie null = client non connecté par défaut)
+vi.mock('@/lib/auth', () => ({ authOptions: {} }));
+vi.mock('next-auth', () => ({ getServerSession: vi.fn().mockResolvedValue(null) }));
 
 // vi.hoisted() garantit que la variable est initialisée avant le hoist de vi.mock
 const { mockProduitFind } = vi.hoisted(() => ({ mockProduitFind: vi.fn() }));

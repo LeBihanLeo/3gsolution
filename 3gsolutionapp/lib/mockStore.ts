@@ -22,6 +22,8 @@ export interface MockSessionData {
     quantite: number;
     options: { nom: string; prix: number }[];
   }[];
+  // TICK-075 — clientId MongoDB si client connecté (undefined = commande invité)
+  clientId?: string;
 }
 
 interface MockSessionEntry {

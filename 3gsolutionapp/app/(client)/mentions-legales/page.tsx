@@ -1,6 +1,7 @@
 // TICK-056 — Mise à jour section cookies (bouton Refuser ajouté)
 // TICK-057 — Mise à jour durée de rétention (12 mois) + droit à l'effacement
 // TICK-058 — Ajout section sous-traitants (RGPD Art. 28 et Art. 44)
+// TICK-079 — Compte client + Google OAuth + sécurité mot de passe
 import Link from 'next/link';
 
 export default function MentionsLegalesPage() {
@@ -52,6 +53,73 @@ export default function MentionsLegalesPage() {
         </p>
       </section>
 
+      {/* TICK-079 — Compte client */}
+      <section className="mb-6">
+        <h2 className="text-lg font-semibold text-gray-800 mb-2">Compte client</h2>
+        <p className="text-sm text-gray-600 mb-2">
+          Si vous créez un compte, nous collectons et traitons les données suivantes :
+        </p>
+        <ul className="text-sm text-gray-600 list-disc pl-5 space-y-1 mb-2">
+          <li>Adresse email (identifiant de connexion)</li>
+          <li>Nom affiché</li>
+          <li>Historique de vos commandes passées</li>
+          <li>Méthode de connexion : identifiants propres ou connexion Google</li>
+        </ul>
+        <p className="text-sm text-gray-600 mb-1">
+          <strong>Base légale :</strong> exécution du contrat (Art. 6(1)(b) du RGPD) — le traitement
+          est nécessaire à la gestion de votre compte et de vos commandes.
+        </p>
+        <p className="text-sm text-gray-600 mb-1">
+          <strong>Durée de conservation :</strong> vos données de compte sont conservées pendant toute
+          la durée de vie de votre compte. En cas de suppression de compte, toutes vos données
+          personnelles sont définitivement effacées.
+        </p>
+        <p className="text-sm text-gray-600">
+          <strong>Droit à l&apos;effacement :</strong> vous pouvez supprimer votre compte à tout moment
+          depuis la section &laquo; Zone danger &raquo; de votre{' '}
+          <Link href="/profil" className="text-blue-600 hover:underline">profil</Link>.
+          Cette action est irréversible et entraîne la suppression immédiate de vos données.
+        </p>
+      </section>
+
+      {/* TICK-079 — Connexion sociale (Google OAuth) */}
+      <section className="mb-6">
+        <h2 className="text-lg font-semibold text-gray-800 mb-2">Connexion avec Google</h2>
+        <p className="text-sm text-gray-600">
+          Si vous choisissez de vous connecter via Google (OAuth 2.0), Google partage avec notre
+          application votre <strong>adresse email</strong> et votre <strong>nom Google</strong>.
+          Aucune autre donnée Google n&apos;est transmise ni stockée. Vous pouvez révoquer cet
+          accès à tout moment depuis votre compte Google (
+          <a
+            href="https://myaccount.google.com/permissions"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:underline"
+          >
+            myaccount.google.com/permissions
+          </a>
+          ).
+        </p>
+      </section>
+
+      {/* TICK-079 — Sécurité du mot de passe */}
+      <section className="mb-6">
+        <h2 className="text-lg font-semibold text-gray-800 mb-2">Sécurité du mot de passe</h2>
+        <p className="text-sm text-gray-600 mb-2">
+          Si vous créez un compte avec des identifiants propres, votre mot de passe doit respecter
+          les exigences suivantes :
+        </p>
+        <ul className="text-sm text-gray-600 list-disc pl-5 space-y-1">
+          <li>8 caractères minimum</li>
+          <li>Au moins une lettre majuscule</li>
+          <li>Au moins un chiffre</li>
+          <li>Au moins un caractère spécial</li>
+        </ul>
+        <p className="text-sm text-gray-600 mt-2">
+          Votre mot de passe est chiffré via bcrypt avant stockage — il n&apos;est jamais stocké en clair.
+        </p>
+      </section>
+
       {/* TICK-057 — Durée de rétention mise à jour : 12 mois (conformité obligation comptable) */}
       <section className="mb-6">
         <h2 className="text-lg font-semibold text-gray-800 mb-2">Durée de conservation</h2>
@@ -76,9 +144,11 @@ export default function MentionsLegalesPage() {
         <ul className="text-sm text-gray-600 list-disc pl-5 space-y-1 mt-2">
           <li>Droit d&apos;accès à vos données personnelles</li>
           <li>Droit de rectification</li>
-          <li>Droit à l&apos;effacement (&laquo; droit à l&apos;oubli &raquo;)</li>
+          <li>Droit à l&apos;effacement (&laquo; droit à l&apos;oubli &raquo;) — exercez-le depuis votre{' '}
+            <Link href="/profil" className="text-blue-600 hover:underline">profil</Link> (suppression de compte)</li>
           <li>Droit à la limitation du traitement</li>
-          <li>Droit à la portabilité</li>
+          <li>Droit à la portabilité — téléchargez vos données depuis votre{' '}
+            <Link href="/profil" className="text-blue-600 hover:underline">profil</Link> (bouton &laquo; Télécharger mes données &raquo;)</li>
         </ul>
         <p className="text-sm text-gray-600 mt-2">
           Pour exercer ces droits, contactez-nous à l&apos;adresse :{' '}
@@ -179,6 +249,21 @@ export default function MentionsLegalesPage() {
               className="text-blue-600 hover:underline"
             >
               Politique de confidentialité Resend
+            </a>
+          </div>
+          {/* TICK-079 — Google LLC (Google OAuth) */}
+          <div className="text-sm text-gray-600 border-l-2 border-gray-200 pl-3">
+            <p className="font-medium">Google LLC — Connexion sociale (Google OAuth)</p>
+            <p>Données transmises : adresse email et nom Google lors de la connexion via Google.</p>
+            <p>Localisation : États-Unis. Garantie de transfert : Standard Contractual Clauses (SCC)
+              conformément au RGPD Art. 46.</p>
+            <a
+              href="https://policies.google.com/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline"
+            >
+              Politique de confidentialité Google
             </a>
           </div>
         </div>

@@ -25,6 +25,8 @@ export interface ICommande extends Document {
   produits: IProduitSnapshot[];
   commentaire?: string;
   total: number; // en centimes
+  // TICK-075 — Lien vers le compte client (null pour commandes invité)
+  clientId?: mongoose.Types.ObjectId;
   // TICK-057 — RGPD Art. 5(1)(e) : date de purge automatique (createdAt + 12 mois)
   purgeAt: Date;
   createdAt: Date;
@@ -74,6 +76,8 @@ const CommandeSchema = new Schema<ICommande>(
     produits: { type: [ProduitSnapshotSchema], required: true },
     commentaire: { type: String },
     total: { type: Number, required: true, min: 0 },
+    // TICK-075 — Référence client (optionnel — null pour commandes invité)
+    clientId: { type: Schema.Types.ObjectId, ref: 'Client', index: true },
     // TICK-057 — RGPD Art. 5(1)(e) : durée de conservation 12 mois (obligation comptable)
     // Calculée automatiquement si absente (migration des commandes existantes)
     purgeAt: {

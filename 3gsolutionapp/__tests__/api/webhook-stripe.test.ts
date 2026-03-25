@@ -123,4 +123,61 @@ describe('POST /api/webhooks/stripe', () => {
     const res = await POST(makeWebhookReq('{}', 'valid_sig'));
     expect(res.status).toBe(200);
   });
+
+  // TICK-075 — clientId dans les métadonnées
+  it('metadata clientId valide → create appelé avec clientId', async () => {
+    const validObjectId = 'a'.repeat(24); // 24 hex chars
+    const eventAvecClientId = {
+      ...completedEvent,
+      data: {
+        object: {
+          ...mockSession,
+          metadata: { ...mockSession.metadata, clientId: validObjectId },
+        },
+      },
+    };
+    mockConstructEvent.mockReturnValueOnce(eventAvecClientId);
+    mockCommandeModel.findOne.mockResolvedValueOnce(null);
+    mockCommandeModel.create.mockResolvedValueOnce({ _id: 'new1' });
+    await POST(makeWebhookReq('{}', 'valid_sig'));
+    expect(mockCommandeModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: validObjectId })
+    );
+  });
+
+  it('metadata clientId vide → create appelé SANS clientId', async () => {
+    const eventSansClientId = {
+      ...completedEvent,
+      data: {
+        object: {
+          ...mockSession,
+          metadata: { ...mockSession.metadata, clientId: '' },
+        },
+      },
+    };
+    mockConstructEvent.mockReturnValueOnce(eventSansClientId);
+    mockCommandeModel.findOne.mockResolvedValueOnce(null);
+    mockCommandeModel.create.mockResolvedValueOnce({ _id: 'new1' });
+    await POST(makeWebhookReq('{}', 'valid_sig'));
+    const createArg = mockCommandeModel.create.mock.calls[0][0];
+    expect(createArg).not.toHaveProperty('clientId');
+  });
+
+  it('metadata clientId invalide (non ObjectId) → create appelé SANS clientId', async () => {
+    const eventClientIdInvalide = {
+      ...completedEvent,
+      data: {
+        object: {
+          ...mockSession,
+          metadata: { ...mockSession.metadata, clientId: 'not-a-valid-object-id' },
+        },
+      },
+    };
+    mockConstructEvent.mockReturnValueOnce(eventClientIdInvalide);
+    mockCommandeModel.findOne.mockResolvedValueOnce(null);
+    mockCommandeModel.create.mockResolvedValueOnce({ _id: 'new1' });
+    await POST(makeWebhookReq('{}', 'valid_sig'));
+    const createArg = mockCommandeModel.create.mock.calls[0][0];
+    expect(createArg).not.toHaveProperty('clientId');
+  });
 });

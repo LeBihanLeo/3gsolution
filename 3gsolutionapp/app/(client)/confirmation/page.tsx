@@ -1,4 +1,5 @@
 'use client';
+// TICK-086 — Fix : page confirmation publique + polling robuste (max 10 tentatives × 2s)
 
 import { useEffect, useRef, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -22,7 +23,12 @@ function idCourt(id: string): string {
   return id.slice(-6).toUpperCase();
 }
 
-const POLL_INTERVAL_MS = 15_000;
+// Polling rapide (2s) pour les premières tentatives après paiement
+const POLL_INITIAL_MS = 2_000;
+// Polling lent (15s) une fois la commande trouvée
+const POLL_SLOW_MS = 15_000;
+// Nombre de tentatives rapides avant de passer en polling lent ou abandonner
+const MAX_INITIAL_ATTEMPTS = 10;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -44,60 +50,72 @@ function SuiviContent() {
   const { clearCart } = useCart();
 
   const [data, setData] = useState<SuiviReponse | null>(null);
-  const [erreur, setErreur] = useState<string | null>(null);
-  const [chargement, setChargement] = useState(true);
+  // null = chargement, false = en attente webhook, 'erreur' = erreur définitive
+  const [etat, setEtat] = useState<'loading' | 'attente-webhook' | 'erreur' | 'ok'>('loading');
   const [derniereMaj, setDerniereMaj] = useState<Date | null>(null);
-  const [tick, setTick] = useState(0); // force re-render pour "il y a X s"
+  const [tick, setTick] = useState(0);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tentativesRef = useRef(0);
+
+  function stopPolling() {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }
 
   async function fetchSuivi() {
     if (!sessionId) return;
+
+    tentativesRef.current += 1;
+
     try {
       const res = await fetch(`/api/commandes/suivi?session_id=${encodeURIComponent(sessionId)}`);
+
       if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        setErreur(json.error ?? 'Commande introuvable ou paiement non confirmé.');
-        setChargement(false);
+        // Commande pas encore créée (webhook en attente)
+        if (tentativesRef.current < MAX_INITIAL_ATTEMPTS) {
+          setEtat('attente-webhook');
+          return; // continuer le polling
+        }
+        // Dépassé les tentatives → message d'information (pas d'erreur rouge)
+        setEtat('erreur');
+        stopPolling();
         return;
       }
+
       const json: SuiviReponse = await res.json();
       setData(json);
-      setErreur(null);
+      setEtat('ok');
       setDerniereMaj(new Date());
 
-      // Arrêter le polling quand la commande est prête
-      if (json.statut === 'prete' && intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+      // Arrêter le polling rapide, passer en polling lent si pas encore prête
+      stopPolling();
+      if (json.statut !== 'prete') {
+        intervalRef.current = setInterval(fetchSuivi, POLL_SLOW_MS);
       }
     } catch {
-      // Erreur réseau silencieuse : on conserve les données précédentes
-    } finally {
-      setChargement(false);
+      // Erreur réseau silencieuse : conserver l'état précédent
     }
   }
 
   useEffect(() => {
     if (!sessionId) {
-      setChargement(false);
+      setEtat('erreur');
       return;
     }
 
-    // Vider le panier dès l'arrivée sur cette page
     clearCart();
-
-    // Appel initial immédiat
     fetchSuivi();
 
-    // Polling toutes les 15 secondes
-    intervalRef.current = setInterval(fetchSuivi, POLL_INTERVAL_MS);
+    // Polling initial rapide (toutes les 2s) pour attendre le webhook Stripe
+    intervalRef.current = setInterval(fetchSuivi, POLL_INITIAL_MS);
 
-    // Tick toutes les secondes pour rafraîchir "il y a X s"
     const tickInterval = setInterval(() => setTick((t) => t + 1), 1000);
 
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      stopPolling();
       clearInterval(tickInterval);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -110,34 +128,35 @@ function SuiviContent() {
         <p className="text-4xl mb-4">❌</p>
         <p className="text-red-500 text-lg font-medium mb-2">Lien invalide ou expiré</p>
         <p className="text-gray-500 text-sm mb-6">Aucun identifiant de commande trouvé.</p>
-        <Link href="/" className="text-blue-600 hover:underline text-sm">
-          ← Retour au menu
-        </Link>
+        <Link href="/" className="text-blue-600 hover:underline text-sm">← Retour au menu</Link>
       </div>
     );
   }
 
-  // ─── Chargement initial ─────────────────────────────────────────────────
-  if (chargement) {
+  // ─── Attente webhook (premières tentatives) ──────────────────────────────
+  if (etat === 'loading' || etat === 'attente-webhook') {
     return (
-      <div className="text-center py-16 text-gray-400 animate-pulse">
-        Chargement de votre commande…
+      <div className="text-center py-16 space-y-4">
+        <div className="flex justify-center">
+          <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+        </div>
+        <p className="text-gray-600 font-medium">Votre commande est en cours de validation…</p>
+        <p className="text-gray-400 text-sm">Veuillez patienter quelques instants.</p>
       </div>
     );
   }
 
-  // ─── Erreur ─────────────────────────────────────────────────────────────
-  if (erreur) {
+  // ─── Dépassement du délai ────────────────────────────────────────────────
+  if (etat === 'erreur') {
     return (
-      <div className="text-center py-16">
-        <p className="text-4xl mb-4">⚠️</p>
-        <p className="text-red-500 font-medium mb-2">{erreur}</p>
-        <p className="text-gray-400 text-sm mb-6">
-          Si vous venez de payer, votre commande sera disponible dans quelques instants.
+      <div className="text-center py-16 space-y-4">
+        <p className="text-4xl">⏳</p>
+        <p className="text-gray-800 font-medium">Votre paiement a été reçu.</p>
+        <p className="text-gray-500 text-sm">
+          Votre commande sera disponible dans quelques instants. Contactez le restaurant si
+          le problème persiste.
         </p>
-        <Link href="/" className="text-blue-600 hover:underline text-sm">
-          ← Retour au menu
-        </Link>
+        <Link href="/" className="text-blue-600 hover:underline text-sm">← Retour au menu</Link>
       </div>
     );
   }
@@ -148,13 +167,10 @@ function SuiviContent() {
   return (
     <div className="max-w-md mx-auto py-8 space-y-6">
 
-      {/* Bandeau statut */}
       {estPrete ? (
         <div className="rounded-2xl bg-green-50 border border-green-200 p-6 text-center">
           <div className="text-5xl mb-3">✅</div>
-          <h1 className="text-xl font-bold text-green-800 mb-1">
-            Commande prête !
-          </h1>
+          <h1 className="text-xl font-bold text-green-800 mb-1">Commande prête !</h1>
           <p className="text-green-700 text-sm">Venez la récupérer.</p>
           {data?.commandeId && (
             <p className="mt-3 font-mono text-xs text-green-600 bg-green-100 rounded px-3 py-1 inline-block">
@@ -167,9 +183,7 @@ function SuiviContent() {
           <div className="flex justify-center mb-3">
             <span className="inline-block w-10 h-10 rounded-full bg-amber-400 animate-pulse" />
           </div>
-          <h1 className="text-xl font-bold text-amber-800 mb-1">
-            En cours de préparation…
-          </h1>
+          <h1 className="text-xl font-bold text-amber-800 mb-1">En cours de préparation…</h1>
           <p className="text-amber-700 text-sm">
             Nous vous préviendrons dès que votre commande est prête.
           </p>
@@ -181,7 +195,6 @@ function SuiviContent() {
         </div>
       )}
 
-      {/* Créneau de retrait */}
       {data?.retrait && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
           <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Retrait</p>
@@ -193,7 +206,6 @@ function SuiviContent() {
         </div>
       )}
 
-      {/* Récapitulatif produits */}
       {data && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
           <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Récapitulatif</p>
@@ -211,20 +223,14 @@ function SuiviContent() {
         </div>
       )}
 
-      {/* Indicateur mise à jour */}
       {!estPrete && derniereMaj && (
         <p className="text-center text-xs text-gray-400">
-          {/* tick utilisé pour forcer le re-render */}
           {tick >= 0 && `Dernière mise à jour : ${tempsDepuis(derniereMaj)}`}
         </p>
       )}
 
-      {/* Bouton retour */}
       <div className="text-center">
-        <Link
-          href="/"
-          className="inline-block text-blue-600 hover:underline text-sm"
-        >
+        <Link href="/" className="inline-block text-blue-600 hover:underline text-sm">
           ← Retour au menu
         </Link>
       </div>

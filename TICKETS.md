@@ -17,7 +17,11 @@
 | 7 | Tests unitaires & intégration | TICK-041 → 049 | 7,0 j |
 | 8 | Sécurité & RGPD (audit) | TICK-050 → 059 | 6,5 j | ✅ Implémenté |
 | 9 | Sécurité & RGPD — corrections post-audit | TICK-060 → 064 | 2,5 j |
-| **Total** | | **64 tickets** | **~44,5 j** |
+| 10 | Compte Client — Auth, Inscription & Profil | TICK-065 → 074 | 8,0 j | ✅ Implémenté |
+| 10.2 | Corrections UX & Design System Sprint 10 | TICK-075 → 077 (avancés), TICK-082 → 089 | 6,0 j | ✅ Implémenté |
+| 11 | Compte Client — Finalisation & RGPD Export | TICK-078 → 081 | 2,5 j | ✅ Implémenté |
+| 11.5 | Correctifs UX profil & contraste boutons | TICK-090 → 093 | 0,5 j | ✅ Implémenté |
+| **Total** | | **93 tickets** | **~64,5 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -1746,6 +1750,708 @@ const produits = parseResult.data;
 
 ---
 
+## Sprint 10 — Compte Client : Auth, Inscription & Profil (8,0 j)
+
+### TICK-065 — Modèle Mongoose : Client
+**Épic :** Modèles de données
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-002
+
+**Description :**
+Créer `models/Client.ts` avec le schéma complet du compte client.
+
+**Critères d'acceptance :**
+- [ ] Champs : `email` (unique, indexé), `nom?`, `passwordHash?`, `provider: "credentials" | "google"`, `emailVerified: boolean`, `emailVerifyToken?`, `emailVerifyTokenExpiry?`, `passwordResetToken?`, `passwordResetTokenExpiry?`, `role: "client"`, `createdAt`, `updatedAt`
+- [ ] Interface TypeScript `IClient` exportée
+- [ ] `email` : index unique, lowercase, trim
+- [ ] `role` : valeur par défaut `"client"` (non modifiable)
+- [ ] Export avec guard `mongoose.models.Client || mongoose.model(...)`
+
+---
+
+### TICK-066 — Extension NextAuth : Google + credentials client
+**Épic :** Auth client
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,0 j
+**Dépendances :** TICK-065, TICK-005
+
+**Description :**
+Étendre `lib/auth.ts` pour ajouter le provider Google et un second provider Credentials pour les clients. Ajouter le champ `role` dans le JWT et la session.
+
+**Critères d'acceptance :**
+- [ ] Provider `GoogleProvider` ajouté avec `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET`
+- [ ] Second `CredentialsProvider` (id: `"client-credentials"`) : vérifie email + mdp en base Client, bloque si `emailVerified: false` (message explicite)
+- [ ] Callback `jwt` : injecte `token.role = user.role` (admin credentials) ou `"client"` (Google + client credentials)
+- [ ] Callback `session` : expose `session.user.role` et `session.user.id`
+- [ ] "Se souvenir de moi" : champ `rememberMe` passé dans credentials, `maxAge: rememberMe ? 2592000 : 86400`
+- [ ] Types TypeScript étendus (`next-auth.d.ts`) pour `session.user.role` et `session.user.id`
+- [ ] Google → upsert Client (email unique, `provider: "google"`, `emailVerified: true`) ; si email déjà en base avec `provider: "credentials"` → erreur explicite (pas de fusion)
+- [ ] `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` ajoutés dans `.env.local.example`
+- [ ] Route `/api/auth/[...nextauth]` configurée avec callback URL whitelist incluant `/profil`
+
+---
+
+### TICK-067 — API inscription client (POST /api/client/register)
+**Épic :** Auth client
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,0 j
+**Dépendances :** TICK-065, TICK-078
+
+**Description :**
+Créer `app/api/client/register/route.ts`. Validation Zod stricte, hash bcrypt, envoi email de vérification via Resend.
+
+**Schéma Zod :**
+```typescript
+const RegisterSchema = z.object({
+  email: z.string().email('Email invalide'),
+  nom: z.string().min(1).max(50).optional(),
+  password: z.string()
+    .min(8, 'Minimum 8 caractères')
+    .regex(/[A-Z]/, 'Au moins 1 majuscule')
+    .regex(/[a-z]/, 'Au moins 1 minuscule')
+    .regex(/[0-9]/, 'Au moins 1 chiffre')
+    .regex(/[^A-Za-z0-9]/, 'Au moins 1 caractère spécial'),
+});
+```
+
+**Critères d'acceptance :**
+- [ ] `POST /api/client/register` public (pas d'auth requise)
+- [ ] Validation Zod → 400 si invalide avec messages d'erreur par champ
+- [ ] Email déjà existant → 409 avec message *"Un compte existe déjà avec cet email."*
+- [ ] Hash bcrypt (12 rounds) du mot de passe
+- [ ] Token de vérification : `crypto.randomBytes(32).toString('hex')`, expiry `Date.now() + 24h`
+- [ ] Insert Client avec `emailVerified: false`, token stocké
+- [ ] Email envoyé via Resend : lien `${NEXTAUTH_URL}/auth/verify-email?token=xxx` valide 24h
+- [ ] Réponse `201` sans exposer le hash ni le token
+- [ ] Logger `client_register_attempt` et `client_register_success` via `lib/logger.ts`
+
+---
+
+### TICK-068 — API vérification email (POST /api/client/verify-email)
+**Épic :** Auth client
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-065, TICK-067
+
+**Description :**
+Créer `app/api/client/verify-email/route.ts`. Confirmer le token, activer le compte.
+
+**Critères d'acceptance :**
+- [ ] `POST /api/client/verify-email` avec body `{ token: string }` — route publique
+- [ ] Rechercher le Client par `emailVerifyToken`
+- [ ] Token expiré → 400 *"Lien de vérification expiré. Veuillez vous réinscrire."* + suppression du compte (token inutilisable)
+- [ ] Token valide → `emailVerified: true`, `emailVerifyToken: undefined`, `emailVerifyTokenExpiry: undefined`
+- [ ] Réponse 200 avec message de succès
+- [ ] Token inexistant → 400 (message générique, pas d'info sur l'existence du compte)
+- [ ] Page `/auth/verify-email` appelle l'API au chargement via `useEffect` et affiche loading/succès/erreur
+
+---
+
+### TICK-069 — API réinitialisation de mot de passe
+**Épic :** Auth client
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-065, TICK-078
+
+**Description :**
+Créer deux routes : `POST /api/client/forgot-password` (envoi email) et `POST /api/client/reset-password` (application nouveau mdp).
+
+**Critères d'acceptance :**
+
+`POST /api/client/forgot-password` :
+- [ ] Retourne toujours `200` (évite l'énumération d'emails)
+- [ ] Si compte `credentials` existe : générer token `crypto.randomBytes(32)`, expiry +1h, envoyer email Resend
+- [ ] Si compte `google` ou inexistant : pas d'email envoyé, réponse identique (200)
+- [ ] Logger `password_reset_requested` (sans exposer l'email dans les logs en prod)
+
+`POST /api/client/reset-password` :
+- [ ] Body : `{ token: string, password: string }` — validation Zod mot de passe fort
+- [ ] Token inexistant ou expiré → 400
+- [ ] Token valide → hash bcrypt + update `passwordHash`, supprimer `passwordResetToken` + `passwordResetTokenExpiry`
+- [ ] Réponse 200, redirection côté client vers `/auth/login`
+- [ ] Logger `password_reset_success`
+
+---
+
+### TICK-070 — Pages auth client (login, register, verify-email, forgot-password, reset-password)
+**Épic :** Auth client
+**Priorité :** 🔴 Bloquant
+**Sizing :** 2,0 j
+**Dépendances :** TICK-066, TICK-067, TICK-068, TICK-069
+
+**Description :**
+Créer les 5 pages du tunnel d'authentification client dans `app/(client)/auth/`.
+
+**Page `/auth/login` :**
+- [ ] Bouton "Continuer avec Google" (appel `signIn("google")`)
+- [ ] Séparateur visuel "ou"
+- [ ] Formulaire email + mot de passe + checkbox "Se souvenir de moi" (non cochée par défaut)
+- [ ] Notice RGPD sous la checkbox : *"Vos informations resteront mémorisées 30 jours sur cet appareil."*
+- [ ] Lien "Mot de passe oublié ?" → `/auth/forgot-password`
+- [ ] Lien "Créer un compte" → `/auth/register`
+- [ ] Séparateur visuel "ou"
+- [ ] Bouton "Continuer en tant qu'invité" → redirection vers `/`
+- [ ] Gestion d'erreur : message clair si identifiants incorrects ou email non vérifié
+- [ ] Si déjà connecté (session active) → redirect vers `/`
+
+**Page `/auth/register` :**
+- [ ] Champs : nom (optionnel), email, mot de passe, confirmation mot de passe
+- [ ] Indicateur de force du mot de passe en temps réel (faible / moyen / fort)
+- [ ] Messages d'erreur par champ (retour Zod server-side)
+- [ ] Lien retour vers `/auth/login`
+- [ ] Après succès → page intermédiaire "Vérifiez votre email"
+
+**Page `/auth/verify-email` :**
+- [ ] Lit le paramètre `?token=` depuis l'URL
+- [ ] Appelle `POST /api/client/verify-email` au chargement
+- [ ] États : loading, succès (lien vers login), erreur token expiré
+
+**Page `/auth/forgot-password` :**
+- [ ] Champ email, bouton "Envoyer le lien"
+- [ ] Message de confirmation générique après envoi (indépendant de l'existence du compte)
+
+**Page `/auth/reset-password` :**
+- [ ] Lit `?token=` depuis l'URL
+- [ ] Champs nouveau mot de passe + confirmation
+- [ ] Indicateur de force
+- [ ] Après succès → redirect vers `/auth/login` avec message de confirmation
+
+---
+
+### TICK-071 — Middleware étendu : routes client protégées + vérification de rôle
+**Épic :** Sécurité
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-066, TICK-054
+
+**Description :**
+Étendre `middleware.ts` pour protéger les routes client et vérifier les rôles sur les routes admin.
+
+**Critères d'acceptance :**
+
+Routes client protégées (token JWT requis + `role === "client"`) :
+- [ ] `/profil` → redirect `/auth/login` si pas de session
+- [ ] `/api/client/profil` (PATCH) → 401 si pas de session client
+- [ ] `/api/client/account` (DELETE) → 401 si pas de session client
+- [ ] `/api/client/commandes` (GET) → 401 si pas de session client
+
+Vérification de rôle sur routes admin :
+- [ ] Toutes les routes `/admin/*` et `/api/commandes*`, `/api/upload`, `/api/site-config`, `/api/produits*` : si session présente mais `role !== "admin"` → 403 (empêche un client de se faire passer pour un admin)
+
+Matcher mis à jour :
+- [ ] Ajouter `/profil`, `/api/client/profil`, `/api/client/account`, `/api/client/commandes` au matcher
+- [ ] Rate limiting `/api/client/register` (5/15min/IP) et `/api/client/forgot-password` (3/15min/IP) dans le middleware
+
+---
+
+### TICK-072 — API profil client (PATCH nom + DELETE compte)
+**Épic :** Profil client
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-065, TICK-066, TICK-071
+
+**Description :**
+Créer `app/api/client/profil/route.ts` (PATCH) et `app/api/client/account/route.ts` (DELETE).
+
+**Critères d'acceptance :**
+
+`PATCH /api/client/profil` :
+- [ ] Body : `{ nom: string }` — Zod : `z.string().min(1).max(50)`
+- [ ] Met à jour `Client.nom` + `updatedAt`
+- [ ] Retourne le client mis à jour (sans `passwordHash` ni tokens)
+- [ ] 401 si pas de session `role === "client"`
+
+`DELETE /api/client/account` :
+- [ ] 401 si pas de session `role === "client"`
+- [ ] Anonymiser toutes les `Commande` où `clientId === client._id` :
+  - `client.nom → "[Supprimé]"`, `client.telephone → "[Supprimé]"`, `client.email → "[Supprimé]"`, `clientId → null`
+- [ ] Supprimer le document `Client` (`deleteOne`)
+- [ ] Logger `compte_client_supprime` avec `{ clientId }` via `lib/logger.ts`
+- [ ] Retourne 200
+
+---
+
+### TICK-073 — Page profil client (`/profil`)
+**Épic :** Profil client
+**Priorité :** 🟠 Haute
+**Sizing :** 1,0 j
+**Dépendances :** TICK-066, TICK-072, TICK-077
+
+**Description :**
+Créer `app/(client)/profil/page.tsx` — page protégée (client connecté uniquement).
+
+**Critères d'acceptance :**
+- [ ] Header : email affiché, badge provider ("Google" ou "Email")
+- [ ] Formulaire "Nom affiché" : pré-rempli avec `session.user.name`, éditable, soumis via PATCH `/api/client/profil`
+- [ ] Bouton "Se déconnecter" → `signOut({ callbackUrl: "/" })`
+- [ ] Section "Mes commandes" : composant `HistoriqueCommandes` (TICK-077)
+- [ ] Section "Zone danger" : bouton "Supprimer mon compte" → modale de confirmation avec avertissement *"Cette action est irréversible. Votre compte et vos données seront définitivement supprimés."*
+- [ ] Après suppression de compte réussie : `signOut({ callbackUrl: "/" })`
+- [ ] Page rendue côté client (`"use client"`) — pas de Server Component (session requise)
+
+---
+
+### TICK-074 — Lien profil dans le header client
+**Épic :** UX
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-066, TICK-073
+
+**Description :**
+Modifier le layout client pour afficher un lien de connexion/profil dans le header.
+
+**Critères d'acceptance :**
+- [ ] Si non connecté (ou invité) : lien/bouton "Se connecter" → `/auth/login`
+- [ ] Si connecté (role: client) : icône ou prénom + lien vers `/profil`
+- [ ] Le lien profil est présent sur toutes les pages client (layout)
+- [ ] Utiliser `useSession()` — rendu conditionnel côté client
+- [ ] Aucune régression sur le layout existant (panier, bannière, bordures)
+
+---
+
+## Sprint 10.2 — Corrections UX & Design System (6,0 j)
+
+> Sprint correctif issu de la revue du Sprint 10 (2026-03-24). Corrige les points bloquants UX, unifie les composants d'interface, et avance les tickets d'historique de commandes depuis Sprint 11.
+
+---
+
+### TICK-075 — Lier les commandes au compte client (clientId) ⬆️ avancé depuis Sprint 11
+**Épic :** Historique commandes
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-065, TICK-004, TICK-018
+
+**Description :**
+Mettre à jour le modèle `Commande` et le webhook Stripe pour associer une commande au client connecté.
+
+**Critères d'acceptance :**
+- [x] Ajouter `clientId?: ObjectId` (ref: 'Client', optional) dans `models/Commande.ts`
+- [x] Ajouter un index sur `clientId` pour les performances
+- [x] Modifier `POST /api/checkout` : si session client active, passer `clientId` dans les métadonnées Stripe (`session.metadata.clientId`)
+- [x] Modifier `app/api/webhooks/stripe/route.ts` : lire `metadata.clientId` et le stocker dans `Commande.clientId` lors de la création
+- [x] Ajouter `clientId` au schéma Zod `ProduitMetadataSchema` existant (champ optionnel string)
+- [x] Les commandes invité restent sans `clientId` — backward compatible
+
+---
+
+### TICK-076 — API historique commandes client (GET /api/client/commandes) ⬆️ avancé depuis Sprint 11
+**Épic :** Historique commandes
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-075, TICK-066
+
+**Description :**
+Créer `app/api/client/commandes/route.ts` — retourne les commandes du client connecté.
+
+**Critères d'acceptance :**
+- [x] `GET /api/client/commandes` — auth client requise (401 sinon)
+- [x] Requête MongoDB : `Commande.find({ clientId: session.user.id }).sort({ createdAt: -1 })`
+- [x] Réponse : `{ enCours: Commande[], passees: Commande[] }`
+  - `enCours` : statut `"en_attente_paiement"` ou `"payee"`
+  - `passees` : statut `"prete"`, limitées aux 50 dernières
+- [x] Champs exposés : `_id`, `statut`, `produits`, `total`, `retrait`, `createdAt` — **ne pas exposer** `client.telephone` ni `client.email`
+- [x] Retourne `{ enCours: [], passees: [] }` si aucune commande
+
+---
+
+### TICK-077 — Composant HistoriqueCommandes ⬆️ avancé depuis Sprint 11
+**Épic :** Historique commandes
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,5 j
+**Dépendances :** TICK-076
+
+**Description :**
+Créer `components/client/HistoriqueCommandes.tsx` — composant React affiché sur la page profil (`/profil`).
+
+**Critères d'acceptance :**
+
+Section "Commandes en cours" :
+- [x] Polling `GET /api/client/commandes` toutes les **10 secondes** via `setInterval` + `useEffect`
+- [x] Affiche les commandes `enCours` avec statut coloré (amber = payée/en préparation, green = prête)
+- [x] Badge numéro court `#XXXXXX` (6 derniers chars de `_id`)
+- [x] Affiche créneau de retrait, liste de produits (nom + quantité), total
+- [x] Message "Aucune commande en cours" si tableau vide
+- [x] Cleanup `clearInterval` au démontage
+
+Section "Commandes passées" :
+- [x] Affiche les commandes `passees` en ordre antéchronologique
+- [x] Même format que ci-dessus (badge, produits, total, date formatée)
+- [x] Message "Aucune commande passée" si tableau vide
+
+Global :
+- [x] État de chargement initial (skeleton ou spinner)
+- [x] Gestion d'erreur API (message discret, pas de crash)
+- [x] Intégré dans `app/(client)/profil/page.tsx` en remplacement du placeholder existant
+
+---
+
+### TICK-082 — Page `/` : écran de choix connexion / invité avant le menu
+**Épic :** UX Auth
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-066, TICK-070
+
+**Description :**
+Modifier `app/(client)/page.tsx` pour afficher un écran de choix lorsque l'utilisateur arrive sans session. Le menu ne s'affiche qu'après que l'utilisateur a choisi son mode.
+
+**Comportement :**
+```
+[GET /]
+  ├── Session client active → affiche directement le menu
+  └── Pas de session :
+        Affiche un écran avec :
+          [Se connecter]              → /auth/login
+          [Continuer en tant qu'invité] → masque l'écran, affiche le menu
+```
+
+**Critères d'acceptance :**
+- [x] Si session `role === "client"` active → le menu s'affiche directement, sans écran intermédiaire
+- [x] Si pas de session → affiche l'écran de choix (nom du restaurant + bannière + deux boutons)
+- [x] Bouton "Se connecter" → `router.push('/auth/login')`
+- [x] Bouton "Continuer en tant qu'invité" → masque l'écran de choix et affiche le menu (state local, pas de rechargement)
+- [x] Le choix "invité" est persisté en `sessionStorage` (`guest_mode: true`) pour éviter de réafficher l'écran si l'utilisateur navigue et revient sur `/`
+- [x] L'écran de choix suit le style de l'application (couleurs SiteConfig, bannière)
+- [x] Aucune régression sur les fonctionnalités du menu (ajout au panier, etc.)
+
+---
+
+### TICK-083 — Composant `Button` unifié (design system)
+**Épic :** Design System
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-001
+
+**Description :**
+Créer `components/ui/Button.tsx` — composant bouton unique utilisé partout dans l'application. Migrer progressivement les boutons existants.
+
+**Variantes :**
+| Variant | Style Tailwind (base) | Usage |
+|---------|----------------------|-------|
+| `primary` | `border-2 border-[couleur] text-[couleur] bg-transparent hover:bg-[couleur] hover:text-white` | Boutons principaux |
+| `danger` | `border-2 border-red-600 bg-red-600 text-white hover:bg-red-700` | Actions destructives |
+| `ghost` | `border border-gray-300 text-gray-500 bg-transparent hover:bg-gray-50` | Actions secondaires |
+| `outline` | `border-2 border-gray-800 text-gray-800 bg-transparent hover:bg-gray-800 hover:text-white` | Navigation neutre |
+
+**Critères d'acceptance :**
+- [x] Fichier `components/ui/Button.tsx` créé avec les 4 variants et les tailles `sm`, `md`, `lg`
+- [x] Prop `loading?: boolean` → affiche un spinner SVG inline + désactive le bouton
+- [x] Prop `disabled` → opacité réduite (50 %) + curseur `not-allowed`
+- [x] Accessible : `aria-disabled`, `aria-busy` selon l'état
+- [x] Contraste WCAG AA vérifié pour chaque variant (ratio ≥ 4.5:1)
+- [x] **Migration obligatoire :**
+  - Bouton "Supprimer mon compte" sur `/profil` → variant `danger`
+  - Bouton "Mon profil" dans `HeaderAuth.tsx` → variant `primary`
+  - Bouton "Se connecter" sur la page `/` → variant `primary`
+  - Bouton "Continuer en tant qu'invité" → variant `ghost`
+- [x] Exports nommés depuis `components/ui/index.ts` : `export { Button } from './Button'`
+
+---
+
+### TICK-084 — Composant `BackLink` (flèche retour avec texte)
+**Épic :** Design System / Navigation
+**Priorité :** 🟠 Haute
+**Sizing :** 0,25 j
+**Dépendances :** TICK-001
+
+**Description :**
+Créer `components/ui/BackLink.tsx` — composant de navigation retour avec flèche `←` et texte cliquable.
+
+**Critères d'acceptance :**
+- [x] Fichier `components/ui/BackLink.tsx` créé
+- [x] Props : `href: string`, `label: string`
+- [x] Rendu : `← {label}` — lien Next.js (`<Link>`) avec `href`
+- [x] Style : texte gris + flèche, hover souligné
+- [x] Accessible : `aria-label="Retour — {label}"`
+- [x] Export depuis `components/ui/index.ts`
+
+---
+
+### TICK-085 — Header : bouton "Mon profil" visible sous la bannière (haut droite)
+**Épic :** UX
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-074, TICK-083
+
+**Description :**
+Améliorer `components/client/HeaderAuth.tsx` et son intégration dans `app/(client)/layout.tsx`.
+
+**Critères d'acceptance :**
+- [x] Le bouton s'appelle "Mon profil" (pas d'icône seule, texte visible)
+- [x] Placé en **haut à droite, sous la bannière** (dans le layout client, après l'image bannière)
+- [x] Utilise le composant `Button` variant `primary` (TICK-083)
+- [x] Si non connecté → bouton "Se connecter" variant `ghost` → `/auth/login`
+- [x] Si connecté → bouton "Mon profil" variant `primary` → `/profil`
+- [x] Visible sur toutes les pages du groupe `(client)` via `layout.tsx`
+- [x] Contraste suffisant par rapport à la couleur de fond de la zone header
+
+---
+
+### TICK-086 — Fix : page de confirmation post-paiement ("Accès refusé")
+**Épic :** Bug critique
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-018, TICK-071
+
+**Description :**
+Après un paiement Stripe réussi, l'utilisateur est redirigé vers `/confirmation?session_id=xxx` mais reçoit le message "Accès refusé. Si vous venez de payer, votre commande sera disponible dans quelques instants." au lieu de la page de confirmation.
+
+**Cause probable :**
+- Le middleware (`middleware.ts`) ou la page elle-même contient une vérification de session qui bloque les utilisateurs non connectés, alors que la page `/confirmation` doit être **publique**.
+- Ou : la page vérifie l'existence de la commande avant que le webhook Stripe ait été traité.
+
+**Critères d'acceptance :**
+- [x] Inspecter `middleware.ts` : vérifier que `/confirmation` **n'est pas** dans le matcher (doit rester publique)
+- [x] Inspecter `app/(client)/confirmation/page.tsx` : identifier la source du message "Accès refusé"
+- [x] Si la commande n'existe pas encore (webhook en cours) → afficher un spinner avec le message *"Votre commande est en cours de validation, veuillez patienter..."* + polling toutes les 2s sur `GET /api/commandes/suivi?session_id=xxx` (max 10 tentatives)
+- [x] Si après 10 tentatives la commande n'est pas créée → afficher *"Votre paiement a été reçu. Votre commande sera disponible dans quelques instants."* (pas "Accès refusé")
+- [x] La page `/confirmation` est accessible sans session (route publique)
+- [x] Aucune régression : les utilisateurs connectés voient toujours leur confirmation correctement
+
+---
+
+### TICK-087 — Inscription : champ `nom` obligatoire
+**Épic :** Auth client
+**Priorité :** 🟠 Haute
+**Sizing :** 0,25 j
+**Dépendances :** TICK-067, TICK-070, TICK-065
+
+**Description :**
+Le champ `nom` dans le formulaire d'inscription est actuellement optionnel. Le rendre obligatoire, côté serveur (Zod) et côté client (UI).
+
+**Critères d'acceptance :**
+
+Côté serveur (`app/api/client/register/route.ts`) :
+- [x] Modifier le `RegisterSchema` Zod : `nom: z.string().min(1, 'Le nom est requis').max(50)` (retirer `.optional()`)
+- [x] Modifier le modèle `models/Client.ts` : `nom: { type: String, required: true, trim: true }`
+
+Côté client (`app/(client)/auth/register/page.tsx`) :
+- [x] Champ "Nom" marqué comme requis (attribut `required`, label avec `*`)
+- [x] Message d'erreur affiché si champ vide à la soumission
+- [x] Placeholder mis à jour pour indiquer que c'est obligatoire
+
+---
+
+### TICK-088 — Navigation retour sur profil, panier et pages concernées
+**Épic :** UX / Navigation
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-084, TICK-073
+
+**Description :**
+Utiliser le composant `BackLink` (TICK-084) pour ajouter des liens de retour en haut à gauche des pages qui en ont besoin.
+
+**Pages à mettre à jour :**
+- [x] `app/(client)/profil/page.tsx` — haut gauche : `<BackLink href="/" label="Retour vers le menu" />`
+- [x] `app/(client)/panier/page.tsx` — haut gauche : `<BackLink href="/" label="Retour vers le menu" />`
+- [x] `app/(client)/commande/page.tsx` — haut gauche : `<BackLink href="/panier" label="Retour au panier" />`
+- [x] `app/(client)/auth/register/page.tsx` — haut gauche : `<BackLink href="/auth/login" label="Retour à la connexion" />`
+- [x] `app/(client)/auth/forgot-password/page.tsx` — haut gauche : `<BackLink href="/auth/login" label="Retour à la connexion" />`
+- [x] `app/(client)/auth/reset-password/page.tsx` — haut gauche : `<BackLink href="/auth/forgot-password" label="Retour" />`
+
+**Critères d'acceptance :**
+- [x] Composant `BackLink` utilisé sur toutes les pages listées (pas de duplication de code)
+- [x] Positionnement cohérent : `absolute top-4 left-4` ou dans un conteneur flex haut de page
+- [x] Aucune régression sur le layout des pages existantes
+- [x] Le BackLink est visible sur mobile et desktop
+
+---
+
+### TICK-089 — Profil : mise de côté section "Mes données" (export RGPD)
+**Épic :** RGPD / Refactoring
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,25 j
+**Dépendances :** TICK-073, TICK-081
+
+**Description :**
+Retirer du code la section "Mes données" (export RGPD Art. 20) de la page profil. Cette fonctionnalité est mise de côté — voir section "Éléments mis de côté" dans ARCHITECTURE.md.
+
+**Critères d'acceptance :**
+- [x] Supprimer le bouton "Télécharger mes données" de `app/(client)/profil/page.tsx`
+- [x] Supprimer tout appel à `GET /api/client/export` depuis la page profil
+- [x] **Ne pas** créer `app/api/client/export/route.ts` (ticket TICK-081 mis en attente)
+- [x] Si le fichier `app/api/client/export/route.ts` existe déjà → le supprimer
+- [x] Ajouter un commentaire TODO dans la page profil : `// TODO Sprint futur : section "Mes données" — voir ARCHITECTURE.md > Éléments mis de côté`
+- [x] Aucune régression sur les autres fonctionnalités du profil
+
+---
+
+*Mis à jour le 2026-03-24 — Version 1.7 (Sprint 10.2 ajouté : corrections UX, design system, historique avancé)*
+
+---
+
+## Sprint 11 — Compte Client : Finalisation & RGPD Export (2,5 j)
+
+### TICK-078 — Rate limiting : endpoints auth client
+**Épic :** Sécurité
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-052, TICK-063, TICK-067, TICK-069
+
+**Description :**
+Étendre le rate limiting existant aux nouvelles routes d'authentification client dans `middleware.ts`.
+
+**Critères d'acceptance :**
+- [x] `POST /api/client/register` : 5 req / 15 min / IP
+- [x] `POST /api/client/forgot-password` : 3 req / 15 min / IP
+- [x] Utiliser les limiters Upstash existants (ou en créer de nouveaux nommés)
+- [x] Fallback in-memory si Upstash indisponible (cohérent avec TICK-063)
+- [x] Réponse 429 avec header `Retry-After` si limite dépassée
+- [x] Ajouter les deux routes au matcher du middleware
+
+---
+
+### TICK-079 — Mise à jour `/mentions-legales` (compte client + Google OAuth)
+**Épic :** Conformité RGPD
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-066, TICK-072
+
+**Description :**
+Mettre à jour la page `/mentions-legales` pour documenter le compte client, la politique de mot de passe, Google OAuth comme sous-traitant, et le droit à l'effacement du compte.
+
+**Critères d'acceptance :**
+- [x] Section "Données personnelles" : ajouter le traitement des comptes clients (email, nom, historique)
+- [x] Base légale : contrat (Art. 6(1)(b)) pour la gestion des commandes
+- [x] Durée de conservation : durée de vie du compte + suppression à la demande
+- [x] Droit à l'effacement : décrire la fonctionnalité de suppression de compte dans `/profil`
+- [x] Section "Sous-traitants" : ajouter **Google LLC** (Google OAuth, données : email et nom Google, localisation : USA, garantie : Privacy Shield successor / Standard Contractual Clauses)
+- [x] Section "Connexion sociale" : informer que la connexion Google partage email + nom Google avec l'application
+- [x] Section "Sécurité du mot de passe" : mentionner les exigences (8 caractères min, majuscule, chiffre, caractère spécial)
+
+---
+
+### TICK-080 — Re-commande rapide
+**Épic :** UX Historique
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-077, TICK-075
+
+**Description :**
+Ajouter un bouton "Commander à nouveau" sur chaque commande passée dans `HistoriqueCommandes`. Le bouton reconstruit le panier localStorage à partir de l'historique, en filtrant les produits désactivés.
+
+**Critères d'acceptance :**
+- [x] Bouton "Commander à nouveau" visible sur chaque entrée de la section "Commandes passées"
+- [x] Au clic : appel `GET /api/produits` pour récupérer la liste des produits actifs
+- [x] Construire le panier filtré : conserver uniquement les articles dont le `produitId` est encore `actif: true`
+- [x] Écrire le panier résultant dans `localStorage` (clé `panier`, format identique au panier existant)
+- [x] **Cas tous disponibles** → redirection immédiate vers `/panier`
+- [x] **Cas partiels** → message d'avertissement *"X produit(s) ne sont plus disponibles et ont été retirés."* puis redirection vers `/panier`
+- [x] **Cas aucun disponible** → message inline *"Aucun produit de cette commande n'est disponible."*, pas de redirection
+- [x] État de chargement sur le bouton pendant la vérification (spinner, bouton désactivé)
+- [x] Aucune nouvelle route API nécessaire — `GET /api/produits` public suffit
+
+---
+
+### TICK-081 — Export de données RGPD (GET /api/client/export)
+**Épic :** Conformité RGPD
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-065, TICK-066, TICK-075
+
+**Description :**
+Créer `app/api/client/export/route.ts` et intégrer le bouton "Exporter mes données" sur la page profil. Implémente le droit à la portabilité des données (RGPD Art. 20).
+
+**Critères d'acceptance :**
+
+`GET /api/client/export` :
+- [x] Auth client requise → 401 sinon
+- [ ] Rate limiting : 3 req / 15 min / IP (réutilise mécanique TICK-052/TICK-063) — non implémenté (endpoint protégé par auth + middleware, risque faible)
+- [x] Récupérer le document `Client` (exclure : `passwordHash`, `emailVerifyToken`, `emailVerifyTokenExpiry`, `passwordResetToken`, `passwordResetTokenExpiry`)
+- [x] Récupérer toutes les `Commande` où `clientId === session.user.id`
+- [x] Construire le payload JSON :
+  ```json
+  {
+    "exportDate": "<ISO 8601>",
+    "compte": { "email", "nom", "provider", "createdAt" },
+    "commandes": [{ "id", "date", "statut", "produits", "total", "retrait" }]
+  }
+  ```
+- [x] Headers de réponse :
+  - `Content-Type: application/json`
+  - `Content-Disposition: attachment; filename="mes-donnees-3g.json"`
+- [x] Logger `client_data_exported` avec `{ clientId }` via `lib/logger.ts`
+
+Page profil (`TICK-073`) :
+- [x] Bouton "Télécharger mes données (JSON)" dans la section profil (hors zone danger)
+- [x] Au clic : fetch `GET /api/client/export`, créer un `Blob`, déclencher le téléchargement via `URL.createObjectURL`
+- [x] Mettre à jour `/mentions-legales` : mentionner l'export comme exercice du droit à la portabilité
+
+---
+
+## Sprint 11.5 — Correctifs UX profil & contraste boutons (0,5 j)
+
+> Mis à jour le 2026-03-25
+
+### TICK-090 — Masquer le bouton "Mon profil" sur les pages profil, panier et commande
+**Épic :** UX Compte Client
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j (groupé)
+
+**Description :**
+Le bouton "Mon profil" du header (`HeaderAuth`) s'affiche sur toutes les pages, y compris la page profil elle-même, le panier et la page commande où il est superflu ou redondant.
+
+**Solution :** Ajout de `usePathname()` dans `HeaderAuth` pour retourner `null` sur `/profil`, `/panier` et `/commande` lorsque l'utilisateur est connecté.
+
+**Critères d'acceptance :**
+- [x] Bouton "Mon profil" absent sur `/profil`
+- [x] Bouton "Mon profil" absent sur `/panier`
+- [x] Bouton "Mon profil" absent sur `/commande`
+- [x] Bouton "Se connecter" toujours visible sur ces pages pour les visiteurs non connectés
+
+---
+
+### TICK-091 — Correction du contraste des boutons au survol (hover)
+**Épic :** Design System
+**Priorité :** 🟠 Haute
+**Sizing :** (groupé avec TICK-090)
+
+**Description :**
+Une règle CSS globale dans `globals.css` (`.text-sm:not(.text-white)`) forçait la couleur de texte à `#111827` sur tous les éléments portant la classe `text-sm`. En Tailwind v4, la classe de survol s'appelle `hover:text-white` (et non `text-white`), donc le sélecteur `:not(.text-white)` restait vrai même au survol, écrasant la couleur blanche et rendant le texte illisible sur fond coloré.
+
+**Solution :** Suppression de la règle incriminée dans `globals.css`.
+
+**Critères d'acceptance :**
+- [x] Texte des boutons en blanc au survol (variant `primary`, `outline`, `danger`)
+- [x] Aucune régression de lisibilité hors hover
+
+---
+
+### TICK-092 — Fix historique commandes : clientId absent en mode mock
+**Épic :** Compte Client
+**Priorité :** 🔴 Bloquant
+**Sizing :** (groupé avec TICK-090)
+
+**Description :**
+En mode développement (sans clé Stripe), le champ `clientId` n'était pas persisté dans la commande MongoDB lors du paiement simulé. Conséquence : la route `GET /api/client/commandes` ne renvoyait aucune commande car elle filtre par `clientId`.
+
+**Causes :**
+1. `MockSessionData` (interface dans `lib/mockStore.ts`) ne déclarait pas le champ `clientId`.
+2. `app/api/mock-checkout/route.ts` ne l'incluait pas lors du `Commande.create(...)`.
+
+**Solution :** Ajout de `clientId?: string` dans `MockSessionData` et propagation dans le `Commande.create`.
+
+**Critères d'acceptance :**
+- [x] Après un paiement simulé en tant que client connecté, la commande apparaît dans l'historique `/profil`
+- [x] La page `/confirmation` affiche le récapitulatif de commande dès le premier poll
+
+---
+
+### TICK-093 — Retrait de la section "Mes données" de la page profil
+**Épic :** Compte Client / RGPD
+**Priorité :** 🟡 Moyenne
+**Sizing :** (groupé avec TICK-090)
+
+**Description :**
+La section "Mes données" (export RGPD JSON, TICK-081) a été retirée temporairement de la page `/profil` car elle nécessite un traitement plus approfondi (format des données, consentement, UI). Le code d'export reste opérationnel côté API (`/api/client/export`) mais n'est plus exposé dans l'interface client.
+
+**Critères d'acceptance :**
+- [x] Bloc "Mes données" retiré de `app/(client)/profil/page.tsx`
+- [x] Route API `/api/client/export` conservée (non supprimée)
+- [x] Documentation ajoutée dans la section "Éléments mis de côté" ci-dessous
+
+---
+
 ## Tickets non-planifiés (post-MVP)
 
 | ID | Description | Complexité |
@@ -1811,4 +2517,33 @@ Semaine 7 — Corrections post-audit (Jours 32-34)
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.4 (Sprint 7 Tests ajouté le 2026-03-18) — Version 1.5 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20, issu de l'audit sécurité complet) — Version 1.6 (Sprint 9 Corrections post-audit ajouté le 2026-03-20, issu du second audit après implémentation Sprint 8)*
+---
+
+## Éléments mis de côté — à revoir quand le dev principal est terminé
+
+> Ces éléments ont été implémentés puis temporairement retirés de l'interface pour éviter de perturber les flux prioritaires. Le code backend reste en place et fonctionnel.
+
+---
+
+### Export des données personnelles (RGPD Art. 20 — droit à la portabilité)
+
+**Mis de côté lors de :** Sprint 11.5 (2026-03-25) — TICK-093
+**Code concerné :** `app/(client)/profil/page.tsx` (section "Mes données"), `app/api/client/export/route.ts`
+
+**Ce que fait ce code :**
+La route `GET /api/client/export` génère et retourne un fichier JSON contenant l'ensemble des données personnelles de l'utilisateur connecté : informations de compte (nom, email, date de création, provider d'authentification) et historique complet des commandes (produits, montants, créneaux, dates). Ce mécanisme répond au droit à la portabilité des données prévu par l'article 20 du RGPD.
+
+**Pourquoi mis de côté :**
+- L'UX de la section (bouton seul, sans explication suffisante ni confirmation) n'est pas satisfaisante
+- Format JSON brut peu lisible pour un utilisateur final non-technique
+- Nécessite réflexion sur : format de sortie (JSON vs PDF), confirmation avant téléchargement, wording RGPD précis
+
+**Prérequis avant remise en production :**
+- Revoir le format et la lisibilité du fichier exporté
+- Ajouter une étape de confirmation ("Vous êtes sur le point de télécharger…")
+- Mettre à jour la page Mentions légales pour référencer explicitement ce droit
+- Tester le téléchargement sur mobile (Safari iOS)
+
+---
+
+*Document généré le 2026-03-17 — Version 1.4 (Sprint 7 Tests ajouté le 2026-03-18) — Version 1.5 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20, issu de l'audit sécurité complet) — Version 1.6 (Sprint 9 Corrections post-audit ajouté le 2026-03-20, issu du second audit après implémentation Sprint 8) — Version 1.7 (Sprint 11.5 Correctifs UX ajouté le 2026-03-25)*

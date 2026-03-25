@@ -48,3 +48,4 @@ coverage/
 # Optional: public folder generated files
 public/build/
 3gsolutionapp/package-lock.json
+Stripe_agent_doc
