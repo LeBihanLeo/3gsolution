@@ -84,6 +84,7 @@ function Menu() {
   const [produits, setProduits] = useState<Produit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [activeCategory, setActiveCategory] = useState('Tout');
   const { totalItems } = useCart();
 
   useEffect(() => {
@@ -100,12 +101,32 @@ function Menu() {
   }, []);
 
   const categories = Array.from(new Set(produits.map((p) => p.categorie)));
+  const tabs = ['Tout', ...categories];
+
+  const filtered = activeCategory === 'Tout'
+    ? produits
+    : produits.filter((p) => p.categorie === activeCategory);
 
   return (
     <div>
-      <h1 className="text-xl font-bold text-gray-900 mb-6" style={{ fontFamily: 'var(--font-display)' }}>
-        Notre Menu
-      </h1>
+      {/* Tabs catégories */}
+      {!loading && !error && produits.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pb-1 mb-5 scrollbar-hide -mx-4 px-4">
+          {tabs.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveCategory(tab)}
+              className={`shrink-0 px-4 py-1.5 rounded-full text-sm font-medium transition-colors duration-150 ${
+                activeCategory === tab
+                  ? 'bg-orange-500 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading && <MenuSkeleton />}
 
@@ -114,7 +135,7 @@ function Menu() {
           <p className="text-gray-400 text-sm">Impossible de charger le menu.</p>
           <button
             onClick={() => window.location.reload()}
-            className="mt-3 text-sm text-orange-600 hover:underline"
+            className="mt-3 text-sm text-orange-500 hover:underline"
           >
             Réessayer
           </button>
@@ -127,44 +148,34 @@ function Menu() {
         </div>
       )}
 
-      {!loading && !error && categories.map((categorie) => (
-        <section key={categorie} className="mb-8">
-          <div className="flex items-center gap-3 mb-3">
-            <h2 className="text-sm font-semibold text-orange-700 uppercase tracking-wider">
-              {categorie}
-            </h2>
-            <div className="flex-1 h-px bg-orange-100" />
-          </div>
-          <div className="space-y-3">
-            {produits
-              .filter((p) => p.categorie === categorie)
-              .map((p) => (
-                <MenuCard
-                  key={p._id}
-                  produitId={p._id}
-                  nom={p.nom}
-                  description={p.description}
-                  prix={p.prix}
-                  options={p.options}
-                  imageUrl={p.imageUrl}
-                />
-              ))}
-          </div>
-        </section>
-      ))}
+      {!loading && !error && (
+        <div className="space-y-3">
+          {filtered.map((p) => (
+            <MenuCard
+              key={p._id}
+              produitId={p._id}
+              nom={p.nom}
+              description={p.description}
+              prix={p.prix}
+              options={p.options}
+              imageUrl={p.imageUrl}
+            />
+          ))}
+        </div>
+      )}
 
       {totalItems > 0 && (
         <div className="fixed bottom-6 left-0 right-0 flex justify-center px-4 z-50">
           <Link
             href="/panier"
-            className="bg-orange-600 hover:bg-orange-700 text-white font-semibold px-6 py-3.5 rounded-2xl shadow-lg shadow-orange-200 flex items-center gap-3 transition-all duration-200 hover:shadow-xl hover:shadow-orange-200 hover:-translate-y-0.5"
+            className="bg-orange-500 hover:bg-orange-600 text-white font-semibold px-6 py-3.5 rounded-2xl shadow-lg shadow-orange-200 flex items-center gap-3 transition-all duration-200 hover:shadow-xl hover:-translate-y-0.5"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
               <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
             </svg>
             <span>Voir le panier</span>
-            <span className="bg-white text-orange-600 rounded-full text-xs font-bold w-5 h-5 flex items-center justify-center">
+            <span className="bg-white text-orange-500 rounded-full text-xs font-bold w-5 h-5 flex items-center justify-center">
               {totalItems}
             </span>
           </Link>
