@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { CartProvider } from '@/lib/cartContext';
 import CookieBanner from '@/components/client/CookieBanner';
 import HeaderAuth from '@/components/client/HeaderAuth';
+import ProfilButton from '@/components/client/ProfilButton';
 import { connectDB } from '@/lib/mongodb';
 import SiteConfig from '@/models/SiteConfig';
 
@@ -71,11 +72,7 @@ export default async function ClientLayout({ children }: { children: ReactNode }
                 <div className="flex-1 h-px bg-white/60" />
               </div>
             </div>
-            <div className="bg-white border-b border-gray-100">
-              <div className="max-w-2xl mx-auto px-4 py-2 flex justify-end">
-                <HeaderAuth />
-              </div>
-            </div>
+          
           </header>
         ) : (
           /* ── Header fallback ── */
@@ -98,7 +95,9 @@ export default async function ClientLayout({ children }: { children: ReactNode }
           </header>
         )}
 
-        <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6">
+        {/* TICK-116 — relative pour que ProfilButton (absolute top-4 right-4) se positionne ici */}
+        <main className="relative flex-1 max-w-2xl mx-auto w-full px-4 py-6">
+          <ProfilButton />
           {children}
         </main>
 

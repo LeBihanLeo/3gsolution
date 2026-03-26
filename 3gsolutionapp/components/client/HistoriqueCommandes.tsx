@@ -2,13 +2,12 @@
 // TICK-077 — Composant HistoriqueCommandes
 // TICK-080 — Re-commande rapide
 // TICK-094 — Fix comparaison IDs (toString())
-// TICK-097 — Modale de suivi CommandeSuiviModal
 // TICK-098 — Max 3 commandes passées + lien historique complet
 // TICK-099 — Nouveaux statuts en_preparation / recuperee + CommandeStepper
+// TICK-114 — Fix parse { data } de GET /api/produits + variant ghost bouton re-commande
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui';
-import CommandeSuiviModal from './CommandeSuiviModal';
 import { StatutBadge } from './StatutBadge';
 import { CommandeStatusCard } from './CommandeStatusCard';
 
@@ -64,13 +63,11 @@ function CommandeCard({
   variant,
   reorderLoading,
   onReorder,
-  onSuivi,
 }: {
   commande: CommandeHistorique;
   variant: 'en-cours' | 'passee';
   reorderLoading?: boolean;
   onReorder?: () => void;
-  onSuivi?: () => void;
 }) {
 
   const cardCls = variant === 'en-cours'
@@ -126,24 +123,13 @@ function CommandeCard({
         <span className="font-bold text-gray-900 text-sm">{formatPrix(commande.total)}</span>
       </div>
 
-      {/* TICK-097 — Bouton suivi sur commandes en cours */}
-      {variant === 'en-cours' && onSuivi && (
+      {/* TICK-080 — Bouton re-commande sur commandes passées */}
+      {/* TICK-114 — variant ghost : visuellement subordonné aux infos de la commande */}
+      {variant === 'passee' && onReorder && (
         <Button
           variant="ghost"
           size="sm"
-          className="w-full mt-1"
-          onClick={onSuivi}
-        >
-          Voir le suivi
-        </Button>
-      )}
-
-      {/* TICK-080 — Bouton re-commande sur commandes passées */}
-      {variant === 'passee' && onReorder && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full mt-1"
+          className="w-full mt-1 text-sm"
           loading={reorderLoading}
           disabled={reorderLoading}
           onClick={onReorder}
@@ -162,8 +148,6 @@ export default function HistoriqueCommandes() {
   const [error, setError] = useState(false);
   const [reorderLoadingId, setReorderLoadingId] = useState<string | null>(null);
   const [reorderMessage, setReorderMessage] = useState<string | null>(null);
-  // TICK-097 — commande sélectionnée pour la modale de suivi
-  const [suiviCommande, setSuiviCommande] = useState<CommandeHistorique | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function fetchCommandes() {
@@ -205,7 +189,7 @@ export default function HistoriqueCommandes() {
         return;
       }
 
-      const produitsActifs: ProduitActif[] = await res.json();
+      const { data: produitsActifs }: { data: ProduitActif[] } = await res.json();
       // TICK-094 — toString() des deux côtés pour comparaison fiable des ObjectIds sérialisés
       const actifIds = new Set(
         produitsActifs.filter((p) => p.actif).map((p) => p._id.toString())
@@ -292,7 +276,6 @@ export default function HistoriqueCommandes() {
                 key={c._id}
                 commande={c}
                 variant="en-cours"
-                onSuivi={() => setSuiviCommande(c)}
               />
             ))}
           </div>
@@ -339,13 +322,6 @@ export default function HistoriqueCommandes() {
         )}
       </div>
 
-      {/* TICK-097 — Modale de suivi */}
-      {suiviCommande && (
-        <CommandeSuiviModal
-          commande={suiviCommande}
-          onClose={() => setSuiviCommande(null)}
-        />
-      )}
     </div>
   );
 }

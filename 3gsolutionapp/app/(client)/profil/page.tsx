@@ -4,6 +4,7 @@
 // TICK-081 — Export données RGPD
 // TICK-088 — BackLink retour vers le menu
 // TICK-089 — Section "Mes données" retirée (mise de côté — voir ARCHITECTURE.md > Éléments mis de côté)
+// TICK-115 — cursor-default sur bouton Enregistrer désactivé
 import { useState } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
@@ -109,6 +110,7 @@ export default function ProfilPage() {
             size="md"
             loading={nomLoading}
             disabled={nomLoading || !nom.trim()}
+            className="disabled:cursor-default"
           >
             Enregistrer
           </Button>

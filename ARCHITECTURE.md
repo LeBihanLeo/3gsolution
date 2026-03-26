@@ -79,7 +79,7 @@
 │   │   ├── MenuCard.tsx
 │   │   ├── Panier.tsx
 │   │   ├── FormulaireCommande.tsx
-│   │   ├── HeaderAuth.tsx             # Header auth (connexion / profil) — Sprint 10
+│   │   ├── HeaderAuth.tsx             # Header auth (connexion uniquement) — Sprint 10 · bouton "Mon profil" déplacé dans <main> au Sprint 15 (TICK-116)
 │   │   ├── HistoriqueCommandes.tsx    # Historique commandes profil — Sprint 10.2
 │   │   ├── CommandeStepper.tsx        # Stepper 4 étapes statut commande — Sprint 12 TICK-099
 │   │   └── CommandeSuiviModal.tsx     # Modale détail commande en cours — Sprint 12 TICK-097
@@ -853,14 +853,16 @@ callbacks: {
 
 ### Page Profil (`/profil`)
 
-Accessible depuis le header du menu via icône profil (visible si `role === "client"`).
+Accessible via le bouton "Mon profil" positionné en haut à droite de la zone `<main>` du layout client (visible si `role === "client"`).
+
+> **Sprint 15 (TICK-116) :** Le bouton "Mon profil" a été déplacé du `<header>` (`HeaderAuth.tsx`) vers la zone `<main>` du layout client (`app/(client)/layout.tsx`), positionné en `absolute top-4 right-4` avec `relative` sur le conteneur `<main>`.
 
 **Contenu :**
 
 | Section | Détail |
 |---------|--------|
 | Identité | Email affiché (non modifiable) + badge provider (Google / Email) |
-| Nom affiché | Champ éditable, PATCH `/api/client/profil` |
+| Nom affiché | Champ éditable, PATCH `/api/client/profil` · texte `text-gray-900` (WCAG AA) · bouton "Enregistrer" : `cursor-default` si non modifié (TICK-115) |
 | Déconnexion | Bouton "Se déconnecter" → `signOut()` NextAuth |
 | Mes commandes | Composant `HistoriqueCommandes` — commandes en cours + passées |
 | Zone danger | Bouton "Supprimer mon compte" → bordure rouge + texte blanc, modale de confirmation + avertissement RGPD |
@@ -907,6 +909,8 @@ Bouton "Commander à nouveau" affiché sur chaque commande passée dans `Histori
 - Si aucun produit n'est disponible → message *"Aucun produit de cette commande n'est disponible."* sans redirection
 
 > **Note technique :** La vérification d'activité est faite côté client (appel `GET /api/produits` public) — aucune nouvelle route serveur nécessaire. La logique réside entièrement dans le composant `HistoriqueCommandes`.
+
+> **Sprint 15 (TICK-114) :** Correctif appliqué sur le fetch `GET /api/produits` dans `HistoriqueCommandes` — le bug provenait d'une comparaison `produitId` (ObjectId MongoDB sérialisé) vs string. Le bouton "Commander à nouveau" adopte un style discret (`variant="ghost"` ou `variant="outline"`, `text-sm`) pour ne pas dominer visuellement la carte de commande.
 
 ---
 
@@ -1043,4 +1047,4 @@ Cette section recense les fonctionnalités intentionnellement exclues du scope a
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19) — Version 1.8 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20 : validation prix serveur, headers HTTP, rate limiting, magic bytes upload, middleware étendu, mock guard, CNIL, rétention RGPD, sous-traitants, logs structurés) — Version 1.9 (Sprint 9 Correctifs post-audit ajoutés le 2026-03-20 : index TTL MongoDB purgeAt, CSP sans unsafe-eval en prod, middleware /api/commandes/:id + IP non-spoofable, rate limiting fail-safe, Zod validation metadata webhook, logger mock-checkout) — Version 1.10 (Conventions de mock complétées le 2026-03-20 : file-type ESM mocké, vi.hoisted() pour factories dépendant de variables externes, connectDB + Produit mockés dans checkout) — Version 2.0 (Sprint 10–11 Compte Client ajouté le 2026-03-24 : modèle Client, auth étendue NextAuth Google + credentials client, inscription + vérification email, reset mdp, page profil, historique commandes, suppression compte RGPD, rate limiting étendu) — Version 2.1 (Re-commande rapide + Export RGPD Art. 20 ajoutés le 2026-03-24) — Version 2.2 (Sprint 10.2 ajouté le 2026-03-24 : écran choix invité/connexion, design system Button/BackLink, nom client obligatoire, historique commandes avancé, fix confirmation post-paiement, navigation retour, Mes données mis de côté) — Version 2.3 (Sprint 14 ajouté le 2026-03-26 : anonymisation manuelle commandes mise de côté, 7 correctifs UX & Auth admin + client)*
+*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19) — Version 1.8 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20 : validation prix serveur, headers HTTP, rate limiting, magic bytes upload, middleware étendu, mock guard, CNIL, rétention RGPD, sous-traitants, logs structurés) — Version 1.9 (Sprint 9 Correctifs post-audit ajoutés le 2026-03-20 : index TTL MongoDB purgeAt, CSP sans unsafe-eval en prod, middleware /api/commandes/:id + IP non-spoofable, rate limiting fail-safe, Zod validation metadata webhook, logger mock-checkout) — Version 1.10 (Conventions de mock complétées le 2026-03-20 : file-type ESM mocké, vi.hoisted() pour factories dépendant de variables externes, connectDB + Produit mockés dans checkout) — Version 2.0 (Sprint 10–11 Compte Client ajouté le 2026-03-24 : modèle Client, auth étendue NextAuth Google + credentials client, inscription + vérification email, reset mdp, page profil, historique commandes, suppression compte RGPD, rate limiting étendu) — Version 2.1 (Re-commande rapide + Export RGPD Art. 20 ajoutés le 2026-03-24) — Version 2.2 (Sprint 10.2 ajouté le 2026-03-24 : écran choix invité/connexion, design system Button/BackLink, nom client obligatoire, historique commandes avancé, fix confirmation post-paiement, navigation retour, Mes données mis de côté) — Version 2.3 (Sprint 14 ajouté le 2026-03-26 : anonymisation manuelle commandes mise de côté, 7 correctifs UX & Auth admin + client) — Version 2.4 (Sprint 15 ajouté le 2026-03-26 : fix re-commande rapide + bouton discret TICK-114, contraste input + curseur profil TICK-115, bouton "Mon profil" déplacé header→main TICK-116)*

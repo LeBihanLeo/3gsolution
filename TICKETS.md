@@ -1,6 +1,6 @@
 # Backlog de développement — Plateforme de commande en ligne
 > Généré le 2026-03-17 · Basé sur ARCHITECTURE.md · Sizing en jours/dev
-> Mis à jour le 2026-03-26 · Sprint 12 et 13 ajoutés
+> Mis à jour le 2026-03-26 · Sprint 15 ajouté
 
 ---
 
@@ -24,7 +24,8 @@
 | 12 | Corrections UX Client — Historique, Stepper, Suivi | TICK-094 → 099 | 3,75 j |
 | 13 | Dashboard Admin & Gestion Avancée | TICK-100 → 106 | 5,25 j | ✅ Implémenté |
 | 14 | Correctifs UX & Auth — Admin + Client | TICK-107 → 113 | 2,25 j |
-| **Total** | | **113 tickets** | **~75,75 j** |
+| 15 | Correctifs UX Client — Re-commande, Profil, Navigation | TICK-114 → 116 | 1,0 j |
+| **Total** | | **116 tickets** | **~76,75 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -2970,6 +2971,68 @@ La section "Nom affiché" de la page `/profil` présente deux problèmes de cont
 - [ ] Supprimer tout style inline ou classe Tailwind de couleur de texte non conforme sur cet input (`text-orange-*`, `text-gray-300`, etc.)
 - [ ] Tester visuellement : texte lisible dans l'input en état normal, focus et désactivé
 - [ ] Aucune régression sur les autres éléments de la page profil (bouton "Se déconnecter", "Supprimer mon compte", historique commandes)
+
+---
+
+## Sprint 15 — Correctifs UX Client — Re-commande, Profil, Navigation (1,0 j)
+
+### TICK-114 — Historique commandes : fix erreur "Commander à nouveau" + bouton discret
+**Épic :** Client / UX
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-081, TICK-094
+
+**Description :**
+Le bouton "Commander à nouveau" dans `HistoriqueCommandes` déclenche systématiquement l'erreur *"Impossible de vérifier les produits disponibles. Réessayez dans un instant."* — le fetch `GET /api/produits` échoue ou la réponse n'est pas correctement parsée. Par ailleurs, le bouton est visuellement trop imposant dans la carte de commande (style primaire, trop saillant).
+
+**Critères d'acceptance :**
+- [ ] Identifier et corriger la cause de l'erreur dans `HistoriqueCommandes.tsx` : vérifier le fetch `GET /api/produits`, le parsing JSON et la comparaison des `produitId` (ObjectId vs string)
+- [ ] Le toast d'erreur ne s'affiche plus lors d'un appel réussi à l'API
+- [ ] Les règles UX existantes sont respectées : redirection vers `/panier` si au moins un produit disponible, message si aucun produit dispo
+- [ ] **Style bouton :** remplacer le style actuel par un style secondaire/discret — ex. `variant="ghost"` ou `variant="outline"` du composant `Button`, texte petit (`text-sm`), sans fond coloré plein
+- [ ] Le bouton reste lisible et accessible (contraste ≥ 4.5:1) mais visuellement subordonné aux informations de la commande
+- [ ] Aucune régression sur les autres parties de `HistoriqueCommandes` (commandes en cours, polling, statuts)
+
+---
+
+### TICK-115 — Page profil : contraste input "Nom affiché" + curseur bouton Enregistrer
+**Épic :** Client / UX / Accessibilité
+**Priorité :** 🟠 Haute
+**Sizing :** 0,25 j
+**Dépendances :** TICK-113
+
+**Description :**
+Deux anomalies UX sur la section "Nom affiché" de `/profil` :
+1. Le texte dans l'`<input>` est trop clair — contraste insuffisant par rapport au fond (WCAG AA non respecté).
+2. Lorsque le nom n'a pas été modifié (bouton "Enregistrer" désactivé/inactif), le curseur passe en mode `pointer` au survol du bouton, laissant croire qu'il est cliquable.
+
+**Critères d'acceptance :**
+- [ ] L'input "Nom affiché" affiche le texte saisi en `text-gray-900` (ou équivalent ≥ 4.5:1 de contraste sur fond blanc)
+- [ ] Supprimer toute classe Tailwind imposant un texte trop clair (`text-gray-300`, `text-orange-200`, etc.) sur cet input
+- [ ] Lorsque le bouton "Enregistrer" est désactivé (`disabled` ou état inchangé), son `cursor` est `default` (pas `pointer`)
+- [ ] Implémenter via `cursor-default` Tailwind ou `disabled:cursor-default` sur le bouton — ne pas laisser le navigateur hériter d'un `cursor: pointer` du parent
+- [ ] Tester les états : normal (nom modifié → pointer OK), désactivé (nom non modifié → curseur default), focus input
+- [ ] Aucune régression sur les autres éléments du profil
+
+---
+
+### TICK-116 — Déplacer le bouton "Mon profil" du header vers `<main>`
+**Épic :** Client / Navigation / Layout
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,25 j
+**Dépendances :** TICK-074, TICK-082
+
+**Description :**
+Le bouton/lien "Mon profil" est actuellement rendu dans `HeaderAuth.tsx` (composant inclus dans le `<header>` du layout client). Il doit être déplacé dans la zone `<main>` du layout client, positionné en **haut à droite** de la zone de contenu.
+
+**Critères d'acceptance :**
+- [ ] Le bouton "Mon profil" n'apparaît plus dans le `<header>` (composant `HeaderAuth.tsx`)
+- [ ] Il est rendu dans `app/(client)/layout.tsx` (ou composant dédié), à l'intérieur de la zone `<main>`, en position `absolute top-4 right-4` (ou équivalent) relativement au conteneur `<main>`
+- [ ] Le conteneur `<main>` dispose de `relative` pour que le positionnement absolu fonctionne correctement
+- [ ] Le bouton reste visible uniquement si `session?.user?.role === "client"` (même condition qu'avant)
+- [ ] Sur toutes les pages client (menu, panier, commande, confirmation, profil) : le bouton est visible en haut à droite de la zone de contenu
+- [ ] Aucune régression sur les autres éléments du header (nom du restaurant, bannière, etc.)
+- [ ] Vérifier que le bouton ne chevauche pas d'autres éléments de contenu sur mobile
 
 ---
 
