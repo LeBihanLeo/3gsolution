@@ -1,6 +1,7 @@
 'use client';
 
 // TICK-039 — Bannière via DropZone (remplace le champ URL)
+// TICK-100 — Horaires d'ouverture
 import { useEffect, useState } from 'react';
 import PersonnalisationApercu from '@/components/admin/PersonnalisationApercu';
 import DropZone from '@/components/admin/DropZone';
@@ -8,11 +9,15 @@ import DropZone from '@/components/admin/DropZone';
 interface FormData {
   nomRestaurant: string;
   banniereUrl: string;
+  horaireOuverture: string;
+  horaireFermeture: string;
 }
 
 const DEFAULT: FormData = {
   nomRestaurant: 'Mon Restaurant',
   banniereUrl: '',
+  horaireOuverture: '11:30',
+  horaireFermeture: '14:00',
 };
 
 export default function PersonnalisationPage() {
@@ -29,6 +34,8 @@ export default function PersonnalisationPage() {
           setForm({
             nomRestaurant: data.nomRestaurant ?? DEFAULT.nomRestaurant,
             banniereUrl: data.banniereUrl ?? '',
+            horaireOuverture: data.horaireOuverture ?? DEFAULT.horaireOuverture,
+            horaireFermeture: data.horaireFermeture ?? DEFAULT.horaireFermeture,
           });
         }
       })
@@ -44,6 +51,10 @@ export default function PersonnalisationPage() {
   function validate(): string | null {
     if (!form.nomRestaurant.trim()) return 'Le nom du restaurant est requis.';
     if (form.nomRestaurant.length > 80) return 'Le nom ne doit pas dépasser 80 caractères.';
+    if (!form.horaireOuverture || !form.horaireFermeture) return 'Les horaires sont requis.';
+    if (form.horaireFermeture <= form.horaireOuverture) {
+      return "L'heure de fermeture doit être après l'heure d'ouverture.";
+    }
     return null;
   }
 
@@ -116,6 +127,42 @@ export default function PersonnalisationPage() {
           onUploadSuccess={(url) => set('banniereUrl', url)}
           onRemove={() => set('banniereUrl', '')}
         />
+
+        {/* Horaires d'ouverture — TICK-100 */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Horaires d&apos;ouverture</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Ouverture <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="time"
+                value={form.horaireOuverture}
+                onChange={(e) => set('horaireOuverture', e.target.value)}
+                required
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Fermeture <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="time"
+                value={form.horaireFermeture}
+                onChange={(e) => set('horaireFermeture', e.target.value)}
+                required
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+          {form.horaireFermeture && form.horaireOuverture && form.horaireFermeture <= form.horaireOuverture && (
+            <p className="text-xs text-red-500 mt-1">
+              L&apos;heure de fermeture doit être après l&apos;heure d&apos;ouverture.
+            </p>
+          )}
+        </div>
 
         {/* Message feedback */}
         {message && (

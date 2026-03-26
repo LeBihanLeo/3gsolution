@@ -99,7 +99,7 @@ export default function ProfilPage() {
             onChange={(e) => setNom(e.target.value)}
             placeholder={session.user.name ?? 'Votre nom'}
             maxLength={50}
-            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
+            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
           />
           {nomError && <p className="text-red-600 text-sm">{nomError}</p>}
           {nomSuccess && <p className="text-green-600 text-sm">{nomSuccess}</p>}

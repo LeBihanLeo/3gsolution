@@ -5,13 +5,20 @@ import { connectDB } from '@/lib/mongodb';
 import { authOptions } from '@/lib/auth';
 import Commande from '@/models/Commande';
 
+// TICK-099 — Transitions valides admin
+const TRANSITIONS: Record<string, string> = {
+  payee: 'en_preparation',
+  en_preparation: 'prete',
+  prete: 'recuperee',
+};
+
 const StatutSchema = z.object({
-  statut: z.literal('prete'),
+  statut: z.enum(['en_preparation', 'prete', 'recuperee']),
 });
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-// PATCH /api/commandes/[id]/statut — admin : passer une commande à "prête"
+// PATCH /api/commandes/[id]/statut — admin : faire avancer le statut d'une commande
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const session = await getServerSession(authOptions);
   if (!session) {
@@ -25,21 +32,30 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Seul le statut "prete" est accepté via cette route' },
+        { error: 'Statut invalide. Valeurs acceptées : en_preparation, prete, recuperee' },
         { status: 400 }
       );
     }
 
+    const { statut: newStatut } = parsed.data;
+
     await connectDB();
-    const commande = await Commande.findByIdAndUpdate(
-      id,
-      { statut: 'prete' },
-      { new: true }
-    );
+    const commande = await Commande.findById(id);
 
     if (!commande) {
       return NextResponse.json({ error: 'Commande introuvable' }, { status: 404 });
     }
+
+    const expectedNewStatut = TRANSITIONS[commande.statut];
+    if (expectedNewStatut !== newStatut) {
+      return NextResponse.json(
+        { error: `Transition invalide : ${commande.statut} → ${newStatut}` },
+        { status: 422 }
+      );
+    }
+
+    commande.statut = newStatut;
+    await commande.save();
 
     return NextResponse.json({ data: commande });
   } catch {

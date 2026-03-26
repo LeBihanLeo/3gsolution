@@ -73,13 +73,13 @@ describe('Panier', () => {
     localStorage.clear();
   });
 
-  it('panier vide → message "Votre panier est vide" et lien retour menu', () => {
+  it('panier vide → message "Panier vide" et lien retour menu', () => {
     renderPanier();
-    expect(screen.getByText(/votre panier est vide/i)).toBeInTheDocument();
+    expect(screen.getByText(/panier vide/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /retour au menu/i })).toBeInTheDocument();
   });
 
-  it('panier non vide → nom, total et bouton "Vider" affichés', async () => {
+  it('panier non vide → nom, total et bouton "Tout vider" affichés', async () => {
     localStorage.setItem('panier', JSON.stringify([ITEM_SIMPLE]));
     renderPanier();
     await waitFor(() => {
@@ -87,7 +87,7 @@ describe('Panier', () => {
     });
     // 850 * 2 = 1700 centimes = 17,00 € (affiché dans la ligne item ET dans le total)
     expect(screen.getAllByText('17,00 €').length).toBeGreaterThan(0);
-    expect(screen.getByText(/vider le panier/i)).toBeInTheDocument();
+    expect(screen.getByText(/tout vider/i)).toBeInTheDocument();
   });
 
   it('item avec imageUrl → image affichée avec alt = nom', async () => {
@@ -100,7 +100,7 @@ describe('Panier', () => {
     });
   });
 
-  it('item sans imageUrl → pas d\'image', async () => {
+  it("item sans imageUrl → pas d'image", async () => {
     localStorage.setItem('panier', JSON.stringify([ITEM_SIMPLE]));
     renderPanier();
     await waitFor(() => {
@@ -117,15 +117,15 @@ describe('Panier', () => {
     });
   });
 
-  it('bouton "Vider le panier" → panier réinitialisé', async () => {
+  it('bouton "Tout vider" → panier réinitialisé', async () => {
     localStorage.setItem('panier', JSON.stringify([ITEM_SIMPLE]));
     renderPanier();
     await waitFor(() => {
       expect(screen.getByText('Burger Classic')).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByText(/vider le panier/i));
+    fireEvent.click(screen.getByText(/tout vider/i));
     await waitFor(() => {
-      expect(screen.getByText(/votre panier est vide/i)).toBeInTheDocument();
+      expect(screen.getByText(/panier vide/i)).toBeInTheDocument();
     });
     expect(JSON.parse(localStorage.getItem('panier')!)).toEqual([]);
   });
@@ -138,7 +138,7 @@ describe('Panier', () => {
     });
     fireEvent.click(screen.getByLabelText('Augmenter'));
     await waitFor(() => {
-      // quantite 2 → 17,00 € (affiché dans la ligne item ET dans le total)
+      // quantite 2 → 17,00 €
       expect(screen.getAllByText('17,00 €').length).toBeGreaterThan(0);
     });
   });
@@ -151,7 +151,7 @@ describe('Panier', () => {
     });
     fireEvent.click(screen.getByLabelText('Diminuer'));
     await waitFor(() => {
-      expect(screen.getByText(/votre panier est vide/i)).toBeInTheDocument();
+      expect(screen.getByText(/panier vide/i)).toBeInTheDocument();
     });
   });
 
@@ -163,7 +163,7 @@ describe('Panier', () => {
     });
     fireEvent.click(screen.getByText(/supprimer/i));
     await waitFor(() => {
-      expect(screen.getByText(/votre panier est vide/i)).toBeInTheDocument();
+      expect(screen.getByText(/panier vide/i)).toBeInTheDocument();
     });
   });
 

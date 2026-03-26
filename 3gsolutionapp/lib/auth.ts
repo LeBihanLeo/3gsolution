@@ -85,6 +85,7 @@ export const authOptions: NextAuthOptions = {
 
   pages: {
     signIn: '/admin/login',
+    error: '/auth/login', // TICK-111 — erreur OAuth redirige vers login client (pas admin)
   },
 
   callbacks: {

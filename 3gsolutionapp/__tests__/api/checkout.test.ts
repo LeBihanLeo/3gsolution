@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // Mock Stripe
@@ -21,9 +21,16 @@ vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 vi.mock('next-auth', () => ({ getServerSession: vi.fn().mockResolvedValue(null) }));
 
 // vi.hoisted() garantit que la variable est initialisée avant le hoist de vi.mock
-const { mockProduitFind } = vi.hoisted(() => ({ mockProduitFind: vi.fn() }));
+const { mockProduitFind, mockSiteConfigFindOne } = vi.hoisted(() => ({
+  mockProduitFind: vi.fn(),
+  mockSiteConfigFindOne: vi.fn(),
+}));
 vi.mock('@/models/Produit', () => ({
   default: { find: mockProduitFind },
+}));
+// TICK-105 — SiteConfig mock pour vérifier fermeeAujourdhui
+vi.mock('@/models/SiteConfig', () => ({
+  default: { findOne: mockSiteConfigFindOne },
 }));
 
 import { POST } from '@/app/api/checkout/route';
@@ -57,6 +64,8 @@ describe('POST /api/checkout', () => {
     vi.clearAllMocks();
     vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_fake');
     vi.stubEnv('NEXTAUTH_URL', 'http://localhost:3000');
+    // Par défaut : boutique ouverte
+    mockSiteConfigFindOne.mockReturnValue({ lean: vi.fn().mockResolvedValue({ fermeeAujourdhui: false }) });
     // Par défaut : la BDD retourne le produit valide
     mockProduitFind.mockReturnValue({ lean: vi.fn().mockResolvedValue([mockProduitDB]) });
   });
@@ -71,6 +80,15 @@ describe('POST /api/checkout', () => {
   it('client.nom manquant → 400', async () => {
     const res = await POST(makeReq({ ...validBody, client: { telephone: '0612345678' } }));
     expect(res.status).toBe(400);
+  });
+
+  // TICK-105 — Boutique fermée → 503
+  it('boutique fermée (fermeeAujourdhui: true) → 503', async () => {
+    mockSiteConfigFindOne.mockReturnValueOnce({ lean: vi.fn().mockResolvedValue({ fermeeAujourdhui: true }) });
+    const res = await POST(makeReq(validBody));
+    expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error).toMatch(/fermée/i);
   });
 
   it('body valide → stripe.checkout.sessions.create appelé avec les bons line_items', async () => {

@@ -28,15 +28,18 @@ export async function GET() {
   try {
     await connectDB();
 
+    // TICK-099 — enCours : tous les statuts non terminaux
+    // TICK-098 — limit 200 pour la page historique complète
     const commandes = await Commande.find({ clientId }, PROJECTION)
       .sort({ createdAt: -1 })
-      .limit(50)
+      .limit(200)
       .lean();
 
-    const enCours = commandes.filter(
-      (c) => c.statut === 'en_attente_paiement' || c.statut === 'payee'
+    const enCours = commandes.filter((c) =>
+      ['en_attente_paiement', 'payee', 'en_preparation', 'prete'].includes(c.statut)
     );
-    const passees = commandes.filter((c) => c.statut === 'prete').slice(0, 50);
+    // TICK-099 — passees : uniquement "recuperee" (cycle de vie terminé)
+    const passees = commandes.filter((c) => c.statut === 'recuperee');
 
     return NextResponse.json({ enCours, passees });
   } catch (err) {

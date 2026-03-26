@@ -21,8 +21,9 @@ vi.mock('next/image', () => ({
 
 // Mock useCart
 const mockAddItem = vi.fn();
+const mockUpdateQuantity = vi.fn();
 vi.mock('@/lib/cartContext', () => ({
-  useCart: () => ({ addItem: mockAddItem }),
+  useCart: () => ({ items: [], addItem: mockAddItem, updateQuantity: mockUpdateQuantity }),
 }));
 
 import MenuCard from '@/components/client/MenuCard';
@@ -52,38 +53,46 @@ describe('MenuCard', () => {
     expect(img).toHaveAttribute('src', 'https://example.com/burger.jpg');
   });
 
-  it('imageUrl absent → pas d\'élément img', () => {
+  it("imageUrl absent → pas d'élément img", () => {
     render(<MenuCard {...defaultProps} />);
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
   });
 
-  it('clic "Ajouter" → addItem appelé avec le bon produit', () => {
+  it('clic "+" → addItem appelé avec le bon produit', () => {
     render(<MenuCard {...defaultProps} />);
-    fireEvent.click(screen.getByRole('button', { name: /ajouter/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ajouter burger classic au panier/i }));
     expect(mockAddItem).toHaveBeenCalledOnce();
     expect(mockAddItem).toHaveBeenCalledWith(
       expect.objectContaining({ produitId: 'p1', nom: 'Burger Classic', prix: 850 })
     );
   });
 
-  it('produit avec options → bouton "Voir les options" affiché', () => {
+  // TICK-096 — bouton + uniforme sur produits avec options
+  it('TICK-096 — produit avec options → bouton "+" avec aria-label', () => {
     render(
       <MenuCard
         {...defaultProps}
         options={[{ nom: 'Supplément fromage', prix: 50 }]}
       />
     );
-    expect(screen.getByText(/voir les options/i)).toBeInTheDocument();
+    const btn = screen.getByRole('button', { name: /ajouter burger classic au panier/i });
+    expect(btn).toBeInTheDocument();
+    expect(btn).toHaveTextContent('+');
   });
 
-  it('options visibles après clic sur "Voir les options"', () => {
+  it('TICK-096 — bouton + sans options → aria-label correct', () => {
+    render(<MenuCard {...defaultProps} />);
+    expect(screen.getByRole('button', { name: 'Ajouter Burger Classic au panier' })).toBeInTheDocument();
+  });
+
+  it('options visibles après clic sur "Personnaliser"', () => {
     render(
       <MenuCard
         {...defaultProps}
         options={[{ nom: 'Supplément fromage', prix: 50 }]}
       />
     );
-    fireEvent.click(screen.getByText(/voir les options/i));
+    fireEvent.click(screen.getByText(/personnaliser/i));
     expect(screen.getByText('Supplément fromage')).toBeInTheDocument();
   });
 });

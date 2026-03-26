@@ -1,6 +1,6 @@
 # Backlog de développement — Plateforme de commande en ligne
 > Généré le 2026-03-17 · Basé sur ARCHITECTURE.md · Sizing en jours/dev
-> Mis à jour le 2026-03-19 · Sprint 6 implémenté
+> Mis à jour le 2026-03-26 · Sprint 12 et 13 ajoutés
 
 ---
 
@@ -21,7 +21,10 @@
 | 10.2 | Corrections UX & Design System Sprint 10 | TICK-075 → 077 (avancés), TICK-082 → 089 | 6,0 j | ✅ Implémenté |
 | 11 | Compte Client — Finalisation & RGPD Export | TICK-078 → 081 | 2,5 j | ✅ Implémenté |
 | 11.5 | Correctifs UX profil & contraste boutons | TICK-090 → 093 | 0,5 j | ✅ Implémenté |
-| **Total** | | **93 tickets** | **~64,5 j** |
+| 12 | Corrections UX Client — Historique, Stepper, Suivi | TICK-094 → 099 | 3,75 j |
+| 13 | Dashboard Admin & Gestion Avancée | TICK-100 → 106 | 5,25 j | ✅ Implémenté |
+| 14 | Correctifs UX & Auth — Admin + Client | TICK-107 → 113 | 2,25 j |
+| **Total** | | **113 tickets** | **~75,75 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -2449,6 +2452,524 @@ La section "Mes données" (export RGPD JSON, TICK-081) a été retirée temporai
 - [x] Bloc "Mes données" retiré de `app/(client)/profil/page.tsx`
 - [x] Route API `/api/client/export` conservée (non supprimée)
 - [x] Documentation ajoutée dans la section "Éléments mis de côté" ci-dessous
+
+---
+
+## Sprint 12 — Corrections UX Client : Historique, Stepper & Suivi (3,75 j)
+
+> Ajouté le 2026-03-26. Correctifs et améliorations UX côté client : bug "commander à nouveau", historique paginé avec timeline, modal de suivi, stepper de statuts et refonte des icônes.
+
+---
+
+### TICK-094 — Fix : "Commander à nouveau" — erreur "Impossible de vérifier les produits disponibles"
+**Épic :** Bug critique / Historique commandes
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,25 j
+**Dépendances :** TICK-080, TICK-076
+
+**Description :**
+Le bouton "Commander à nouveau" (TICK-080) dans l'historique des commandes lève systématiquement l'erreur "Impossible de vérifier les produits disponibles." La cause probable est une comparaison incorrecte entre `produitId` (ObjectId sérialisé en string MongoDB) et `_id` des produits retournés par `GET /api/produits`.
+
+**Critères d'acceptance :**
+- [ ] Inspecter `components/client/HistoriqueCommandes.tsx` : identifier où est levée l'erreur (bloc `catch`, comparaison ids, format des données)
+- [ ] S'assurer que la comparaison de `produitId` utilise `.toString()` des deux côtés : `p.produitId.toString() === produit._id.toString()`
+- [ ] Si `GET /api/produits` échoue (non-200) → afficher *"Impossible de vérifier les produits disponibles. Réessayez dans un instant."* avec bouton "Réessayer"
+- [ ] Si `GET /api/produits` retourne un tableau vide → afficher *"Aucun produit de cette commande n'est disponible."* (comportement TICK-080 — cas aucun disponible)
+- [ ] État de chargement sur le bouton maintenu jusqu'à la redirection ou le message
+- [ ] Aucune régression sur les cas nominaux (produits disponibles / partiellement disponibles)
+
+---
+
+### TICK-095 — Btn "Mon profil" — ajout d'une icône utilisateur
+**Épic :** UX / Design System
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,25 j
+**Dépendances :** TICK-085, TICK-083
+
+**Description :**
+Le bouton "Mon profil" dans `HeaderAuth.tsx` n'a pas d'icône. Ajouter une icône utilisateur (silhouette) à gauche du libellé pour renforcer l'affordance visuelle.
+
+**Critères d'acceptance :**
+- [ ] Icône inline SVG (pas de dépendance externe) représentant un utilisateur/silhouette — placée à gauche du texte "Mon profil"
+- [ ] Taille : `w-4 h-4` (16 px), alignée verticalement avec le texte (`flex items-center gap-1.5`)
+- [ ] L'icône suit la couleur du texte du bouton (hérite de `currentColor`)
+- [ ] Aucune régression sur le variant `primary` du composant `Button`
+- [ ] Visible et lisible sur mobile (bouton compact)
+
+---
+
+### TICK-096 — MenuCard — bouton "+" uniforme sur toutes les cartes
+**Épic :** UX / Menu client
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,25 j
+**Dépendances :** TICK-010, TICK-038
+
+**Description :**
+Certaines cartes produit affichent "+ Ajouter" et d'autres uniquement "+". Uniformiser le libellé à "+" sur toutes les cartes pour une interface cohérente et compacte.
+
+**Critères d'acceptance :**
+- [ ] Inspecter `components/client/MenuCard.tsx` : identifier toutes les variantes du bouton d'ajout au panier
+- [ ] Uniformiser à `+` sur toutes les cartes (texte seul, sans "Ajouter")
+- [ ] Style du bouton : rond ou carré compact, centré, taille `w-8 h-8` ou `w-9 h-9`, variant `primary` (couleur bordure SiteConfig)
+- [ ] Le `+` est suffisamment grand pour être accessible sur mobile (zone de touch ≥ 44 px)
+- [ ] `aria-label="Ajouter {nomProduit} au panier"` pour l'accessibilité
+- [ ] Aucune régression sur la logique d'ajout au panier
+
+---
+
+### TICK-097 — HistoriqueCommandes — modal de suivi de commande en cours
+**Épic :** Historique commandes / UX
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-077, TICK-099
+
+**Description :**
+Les commandes en cours dans `HistoriqueCommandes.tsx` sont affichées sous forme de cartes compactes. Ajouter la possibilité d'ouvrir une modale détaillée pour chaque commande en cours, affichant le stepper de statut complet et le récapitulatif complet.
+
+**Critères d'acceptance :**
+
+Déclencheur :
+- [ ] Chaque carte commande en cours possède un bouton/zone cliquable "Voir le suivi" (ou toute la carte est cliquable)
+- [ ] Au clic → ouverture d'une modale `CommandeSuiviModal` en plein écran sur mobile (bottom-sheet ou dialog plein écran) et dialog centré sur desktop
+
+Contenu de la modale :
+- [ ] En-tête : badge numéro court `#XXXXXX`, date et heure de commande
+- [ ] Composant `CommandeStepper` (TICK-099) — affiche les 4 étapes avec l'étape courante mise en évidence
+- [ ] Liste complète des produits : nom, quantité, options choisies, prix unitaire
+- [ ] Créneau de retrait (ou "Dès que possible")
+- [ ] Total de la commande
+- [ ] Bouton "Fermer" (croix en haut à droite + bouton en bas sur mobile)
+
+Technique :
+- [ ] Modale via `dialog` HTML natif ou composant `Modal` (pas de lib externe)
+- [ ] Fermeture par Escape, clic sur le fond sombre, ou bouton Fermer
+- [ ] `aria-modal="true"`, `role="dialog"`, focus trap
+- [ ] Pas de rechargement de données à l'ouverture (utilise les données déjà chargées par le polling)
+
+---
+
+### TICK-098 — HistoriqueCommandes — max 3 commandes passées + page historique complète
+**Épic :** Historique commandes / UX
+**Priorité :** 🟠 Haute
+**Sizing :** 1,5 j
+**Dépendances :** TICK-077, TICK-076
+
+**Description :**
+La section "Commandes passées" de `HistoriqueCommandes.tsx` affiche toutes les commandes sans limite. La limiter à 3 et ajouter un lien vers une nouvelle page dédiée `app/(client)/profil/commandes/page.tsx` avec l'historique complet en timeline verticale groupée par mois.
+
+**Critères d'acceptance :**
+
+`HistoriqueCommandes.tsx` :
+- [ ] Section "Commandes passées" : afficher au maximum **3** commandes (les 3 plus récentes)
+- [ ] Si plus de 3 commandes → afficher un lien "Voir tout l'historique (N commandes)" en bas de la section, pointant vers `/profil/commandes`
+- [ ] Si ≤ 3 commandes → pas de lien
+- [ ] L'API `GET /api/client/commandes` retourne toujours jusqu'à 50 commandes — la limite à 3 est côté client uniquement
+
+`app/(client)/profil/commandes/page.tsx` (nouvelle page) :
+- [ ] `BackLink` en haut à gauche : `← Mon profil` → `/profil`
+- [ ] Titre : "Historique de mes commandes"
+- [ ] Liste complète des commandes `passees` (récupérées), triées antéchronologiquement
+- [ ] **Timeline verticale par mois** : regrouper les commandes par mois/année (ex : "Mars 2026", "Février 2026") — en-tête de mois avec séparateur visuel
+- [ ] Chaque entrée : badge `#XXXXXX`, date complète, liste produits, total, créneau, statut badge
+- [ ] Scroll vertical natif (pas de pagination)
+- [ ] Si aucune commande → message "Votre historique de commandes est vide."
+- [ ] La page charge les données via `GET /api/client/commandes` au montage (pas de polling — historique statique)
+- [ ] Page protégée (role: client) — redirection vers `/auth/login` si non connecté
+
+`app/api/client/commandes/route.ts` :
+- [ ] Mettre à jour la logique `passees` : inclure `statut: "recuperee"` (issu de TICK-099) à la place de `"prete"` uniquement
+- [ ] Retirer la limite à 50 côté API ou augmenter à 200 (la page charge le tout)
+
+---
+
+### TICK-099 — Statuts commande — stepper client + nouveaux statuts "en_preparation" et "recuperee"
+**Épic :** Commande / UX / Modèle de données
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-004, TICK-008, TICK-077, TICK-045
+
+**Description :**
+Étendre le modèle `Commande` avec deux nouveaux statuts (`en_preparation`, `recuperee`) pour compléter le cycle de vie d'une commande. Créer un composant `CommandeStepper` affichant visuellement les 4 étapes. Mettre à jour l'API admin.
+
+**Étapes du stepper :**
+```
+Confirmé ──► Préparation ──► Prêt ──► Récupéré
+(payee)   (en_preparation)  (prete)  (recuperee)
+```
+
+**Critères d'acceptance :**
+
+`models/Commande.ts` :
+- [ ] Mettre à jour l'enum `statut` : `"en_attente_paiement" | "payee" | "en_preparation" | "prete" | "recuperee"`
+- [ ] Aucune migration nécessaire — les commandes existantes avec `"payee"` et `"prete"` restent valides
+
+`app/api/commandes/[id]/statut/route.ts` :
+- [ ] Ajouter `"en_preparation"` et `"recuperee"` aux statuts autorisés via ce endpoint
+- [ ] Transitions valides depuis l'admin : `payee → en_preparation`, `en_preparation → prete`, `prete → recuperee`
+- [ ] Mettre à jour le schéma Zod de validation du body
+
+`app/api/client/commandes/route.ts` :
+- [ ] `enCours` : inclure `"en_attente_paiement" | "payee" | "en_preparation" | "prete"`
+- [ ] `passees` : uniquement `"recuperee"` (remplace `"prete"`)
+
+`components/client/CommandeStepper.tsx` (nouveau composant) :
+- [ ] Props : `statut: string`
+- [ ] 4 étapes affichées horizontalement (ou verticalement sur mobile) : Confirmé / Préparation / Prêt / Récupéré
+- [ ] Étape courante et étapes précédentes : style "actif" (couleur SiteConfig ou vert)
+- [ ] Étapes futures : style "inactif" (gris, opacité réduite)
+- [ ] Connecteurs entre étapes (ligne) remplis jusqu'à l'étape courante
+- [ ] `aria-label` sur chaque étape pour l'accessibilité
+- [ ] Export depuis `components/client/index.ts`
+
+Intégration :
+- [ ] `CommandeStepper` intégré dans la modale TICK-097 (`CommandeSuiviModal`)
+- [ ] `CommandeStepper` intégré dans chaque carte commande en cours de `HistoriqueCommandes` (version compacte si nécessaire)
+
+---
+
+## Sprint 13 — Dashboard Admin & Gestion Avancée (5,25 j)
+
+> Ajouté le 2026-03-26. Nouvelles fonctionnalités admin : dashboard, horaires d'ouverture, filtrage des créneaux, vue menu client, fermeture boutique, export CSV.
+
+---
+
+### TICK-100 — SiteConfig — horaires d'ouverture (modèle + admin personnalisation)
+**Épic :** Configuration / Admin
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-031, TICK-033, TICK-028
+
+**Description :**
+Le modèle `SiteConfig` ne contient pas d'horaires d'ouverture. L'heure d'ouverture/fermeture est actuellement codée en dur dans `lib/creneaux.ts` (ou récupérée depuis des variables d'env). Ajouter ces champs au modèle et à l'interface admin.
+
+**Critères d'acceptance :**
+
+`models/SiteConfig.ts` :
+- [x] Ajouter les champs :
+  - `horaireOuverture: string` — format `"HH:MM"` (ex: `"11:30"`) — requis, défaut `"11:30"`
+  - `horaireFermeture: string` — format `"HH:MM"` (ex: `"14:00"`) — requis, défaut `"14:00"`
+  - `fermeeAujourdhui: boolean` — défaut `false`
+- [x] Validation Mongoose : regex `^([01]\d|2[0-3]):([0-5]\d)$` sur les deux horaires
+- [x] Mettre à jour l'interface TypeScript `ISiteConfig`
+
+`app/api/site-config/route.ts` :
+- [x] `GET` : exposer les nouveaux champs dans la réponse publique
+- [x] `PUT` (admin) : accepter et valider les nouveaux champs via Zod
+
+`app/(admin)/personnalisation/page.tsx` :
+- [x] Ajouter une section "Horaires d'ouverture" avec deux champs `<input type="time">` : Ouverture / Fermeture
+- [x] Validation côté client : fermeture > ouverture (message d'erreur sinon)
+- [x] Sauvegarde via `PUT /api/site-config`
+- [x] Les champs sont pré-remplis avec les valeurs en base
+
+---
+
+### TICK-101 — FormulaireCommande — créneaux filtrés par horaires + blocage heures passées
+**Épic :** Commande / UX
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-100, TICK-028, TICK-012
+
+**Description :**
+Les créneaux de retrait dans `FormulaireCommande.tsx` utilisent des horaires fixes. Les remplacer par ceux de `SiteConfig` et filtrer les créneaux dont l'heure de début est déjà passée (commande click & collect = toujours pour aujourd'hui).
+
+**Critères d'acceptance :**
+
+`components/client/FormulaireCommande.tsx` :
+- [x] Charger `horaireOuverture` et `horaireFermeture` depuis `GET /api/site-config` au montage (ou passer en props depuis la page parent qui charge déjà SiteConfig)
+- [x] Appeler `lib/creneaux.ts` avec `horaireOuverture`, `horaireFermeture`, pas 15 min
+- [x] Filtrer les créneaux : ne conserver que les créneaux dont **l'heure de début** est strictement supérieure à l'heure actuelle + 10 minutes (buffer minimum de préparation)
+- [x] Si aucun créneau disponible (boutique sur le point de fermer) → afficher le message *"Aucun créneau disponible pour aujourd'hui. La boutique ferme bientôt."* et masquer le sélecteur de créneaux
+- [x] Si `fermeeAujourdhui: true` (TICK-105) → afficher *"La boutique est fermée pour aujourd'hui."* et bloquer la soumission du formulaire
+- [x] Le premier créneau de la liste est présélectionné automatiquement
+- [x] Aucune régression sur le reste du formulaire (nom, téléphone, commentaire, soumission)
+
+---
+
+### TICK-102 — Admin menu — vue produits style client avec boutons management
+**Épic :** Admin / UX
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-016, TICK-038, TICK-037
+
+**Description :**
+La page `/admin/menu` affiche les produits sous forme de liste/tableau. La refondre pour afficher les produits comme un client les verrait (grille de cartes avec image, nom, prix, description), mais en remplaçant le bouton "Ajouter au panier" par les boutons de management : Modifier, Activer/Désactiver, Supprimer.
+
+**Critères d'acceptance :**
+
+`app/(admin)/menu/page.tsx` :
+- [x] Affichage en grille de cartes identique au menu client (`MenuCard` ou variante admin) : image, nom, catégorie, description, prix
+- [x] Boutons management en bas de chaque carte (remplaçant le bouton "+") :
+  - **Modifier** → ouvre `ProduitForm` en mode édition (modal ou inline — comportement existant préservé)
+  - **Désactiver / Activer** → toggle `actif` via `PATCH /api/produits/[id]` — label change selon l'état ; produit désactivé affiché avec opacité réduite + badge "Désactivé"
+  - **Supprimer** → confirmation modale avant `DELETE /api/produits/[id]`
+- [x] Groupement par catégorie préservé (si déjà implémenté)
+- [x] Bouton "Ajouter un produit" en haut de page (comportement inchangé)
+- [x] Aucune régression sur les actions existantes (création, modification, suppression, toggle)
+
+---
+
+### TICK-103 — Dashboard admin — page d'accueil et résumé opérationnel
+**Épic :** Admin / Dashboard
+**Priorité :** 🟠 Haute
+**Sizing :** 1,25 j
+**Dépendances :** TICK-008, TICK-015, TICK-099
+
+**Description :**
+Créer une page dashboard `app/(admin)/page.tsx` (ou `app/(admin)/dashboard/page.tsx`) comme page d'accueil de l'espace admin. Elle affiche un résumé opérationnel : 4 dernières commandes en cours/validées et un accès rapide aux modules.
+
+**Critères d'acceptance :**
+
+`app/(admin)/page.tsx` (ou redirect depuis /admin/) :
+- [x] Protégée par le middleware admin existant
+- [x] En-tête : nom du restaurant (depuis SiteConfig), date du jour formatée
+
+Section "Commandes en cours" :
+- [x] Affiche les **4 dernières commandes** avec statut `"payee"` ou `"en_preparation"` (triées par `createdAt` DESC)
+- [x] Chaque carte : badge numéro, heure, prénom client, créneau retrait, total, badge statut coloré
+- [x] Lien "Voir toutes les commandes" → `/admin/commandes`
+
+Section "Commandes d'aujourd'hui" (KPIs) :
+- [x] Nombre total de commandes reçues aujourd'hui
+- [x] Chiffre d'affaires du jour (somme des `total` des commandes `payee` / `en_preparation` / `prete` / `recuperee` du jour, en €)
+- [x] Nombre de commandes récupérées aujourd'hui
+
+Navigation rapide :
+- [x] 3 liens cards : "Commandes", "Menu", "Personnalisation"
+
+Données :
+- [x] L'API existante `GET /api/commandes` est réutilisée (filtre côté client sur les données reçues)
+- [x] Polling toutes les 30 secondes (refresh des commandes en cours)
+- [x] Pas de nouvelle route API nécessaire
+
+---
+
+### TICK-104 — Admin commandes — section "Récupérées" + action "Marquer comme récupérée"
+**Épic :** Admin / Commandes
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-015, TICK-099
+
+**Description :**
+La page `/admin/commandes` gère les commandes en cours. Ajouter le bouton "Récupérée" pour les commandes au statut `"prete"` et une section dédiée aux commandes récupérées.
+
+**Critères d'acceptance :**
+
+`app/(admin)/commandes/page.tsx` :
+- [x] Commandes avec statut `"prete"` : ajouter un bouton **"Récupérée ✓"** — au clic → `PATCH /api/commandes/[id]/statut` avec `{ statut: "recuperee" }` (TICK-099)
+- [x] Transitions admin visibles par statut :
+  - `payee` → bouton "En préparation" → `en_preparation`
+  - `en_preparation` → bouton "Prête" → `prete`
+  - `prete` → bouton "Récupérée ✓" → `recuperee`
+- [x] **Section "Commandes récupérées aujourd'hui"** : affiche en bas de page les commandes `recuperee` du jour courant (filtrées par `createdAt >= début de journée`)
+- [x] Les commandes récupérées sont masquées de la section principale "En cours"
+- [x] Polling inchangé (10 secondes) — les commandes basculent de section automatiquement
+
+---
+
+### TICK-105 — Admin — fermer la boutique pour aujourd'hui
+**Épic :** Admin / Configuration
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-100, TICK-017, TICK-082
+
+**Description :**
+Permettre à l'admin de fermer temporairement la boutique pour la journée en cours. Aucune nouvelle commande ne peut être passée tant que la boutique est fermée.
+
+**Critères d'acceptance :**
+
+`models/SiteConfig.ts` (via TICK-100) :
+- [x] Champ `fermeeAujourdhui: boolean` déjà ajouté — réutilisé ici
+
+`app/api/site-config/route.ts` :
+- [x] `PUT` (admin) : accepter `{ fermeeAujourdhui: boolean }` dans le body
+
+`app/(admin)/commandes/page.tsx` (ou dashboard TICK-103) :
+- [x] Bouton visible en haut de la page : **"Fermer la boutique pour aujourd'hui"** (si `fermeeAujourdhui: false`) / **"Rouvrir la boutique"** (si `fermeeAujourdhui: true`)
+- [x] Badge statut "BOUTIQUE FERMÉE" affiché clairement si `fermeeAujourdhui: true`
+- [x] Au clic "Fermer" : confirmation modale *"Confirmer la fermeture ? Aucune nouvelle commande ne sera acceptée."* puis `PUT /api/site-config` avec `{ fermeeAujourdhui: true }`
+- [x] Au clic "Rouvrir" : `PUT /api/site-config` avec `{ fermeeAujourdhui: false }` (sans confirmation)
+- [x] Note dans l'UI : *"Ce champ se réinitialise manuellement — pensez à rouvrir demain matin."*
+
+`app/api/checkout/route.ts` :
+- [x] Au début du handler `POST` : charger `SiteConfig` et vérifier `fermeeAujourdhui`
+- [x] Si `true` → retourner `{ error: "La boutique est fermée pour aujourd'hui." }` avec status 503
+- [x] Si `false` → comportement inchangé
+
+`app/(client)/page.tsx` (menu client) :
+- [x] Si `siteConfig.fermeeAujourdhui` → afficher un bandeau *"La boutique est fermée pour aujourd'hui. Revenez demain !"* et désactiver les boutons d'ajout au panier
+- [x] SiteConfig déjà chargée sur la page — pas de requête supplémentaire nécessaire
+
+---
+
+### TICK-106 — Admin — export CSV des commandes (comptabilité)
+**Épic :** Admin / Comptabilité
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-008, TICK-015
+
+**Description :**
+Permettre à l'employeur d'exporter les commandes en format CSV, bien formaté pour faciliter la comptabilité. Inclure un filtre par période.
+
+**Critères d'acceptance :**
+
+`app/api/admin/commandes/export/route.ts` (nouvelle route) :
+- [x] `GET /api/admin/commandes/export` — auth admin requise (401 sinon)
+- [x] Query params supportés : `?from=YYYY-MM-DD&to=YYYY-MM-DD` (optionnels — défaut : aujourd'hui)
+- [x] Requête MongoDB : `Commande.find({ createdAt: { $gte: from, $lte: to }, statut: { $ne: "en_attente_paiement" } })` (exclure les commandes non payées)
+- [x] Format CSV généré :
+  ```
+  Date;Heure;Numéro;Client;Produits;Options;Quantités;Sous-total HT;TVA (10%);Total TTC;Créneau;Statut
+  2026-03-26;12:34;#A3F2B1;Jean Dupont;"Burger Classic, Frites";"-;Sel";1,1;X,XX €;X,XX €;X,XX €;12:30 – 12:45;Récupérée
+  ```
+- [x] TVA calculée à 10 % sur le total TTC (restauration rapide — taux standard France)
+- [x] Séparateur : point-virgule (compatible Excel FR)
+- [x] Encodage : UTF-8 avec BOM (`\uFEFF`) pour compatibilité Excel
+- [x] Headers de réponse :
+  - `Content-Type: text/csv; charset=utf-8`
+  - `Content-Disposition: attachment; filename="commandes-{from}-{to}.csv"`
+- [x] Logger `commandes_exported_csv` avec `{ adminId, from, to, count }` via `lib/logger.ts`
+
+`app/(admin)/commandes/page.tsx` :
+- [x] Bouton **"Exporter CSV"** en haut de page
+- [x] Sélecteur de période : 3 boutons radio — "Aujourd'hui" / "Cette semaine" / "Ce mois" — définissent les params `from` et `to`
+- [x] Au clic "Exporter" : fetch `GET /api/admin/commandes/export?from=...&to=...`, déclencher le téléchargement via `URL.createObjectURL(new Blob([csv]))`
+- [x] État de chargement sur le bouton pendant la génération
+
+---
+
+## Sprint 14 — Correctifs UX & Auth — Admin + Client (2,25 j)
+
+> Sprint correctif issu de la revue du Sprint 13 (2026-03-26). Corrige des régressions UX et des incohérences d'authentification identifiées en recette.
+
+---
+
+### TICK-107 — Retrait du bouton "Anonymiser" commandes admin — mise de côté
+**Épic :** Admin / Correctif
+**Priorité :** 🟠 Haute
+**Sizing :** 0,25 j
+**Dépendances :** TICK-057
+
+**Description :**
+Le bouton "Anonymiser" dans `CommandeRow` admin (TICK-057) est retiré de l'interface. La fonctionnalité présente un risque de manipulation accidentelle et nécessite une réflexion UX plus poussée sur les permissions. La route `DELETE /api/commandes/[id]` reste en place mais non exposée dans l'UI. La feature est documentée dans la section "Éléments mis de côté" de `ARCHITECTURE.md`.
+
+**Critères d'acceptance :**
+- [ ] Retirer le bouton "Anonymiser" (et sa modale de confirmation) de `components/admin/CommandeRow.tsx`
+- [ ] La route `DELETE /api/commandes/[id]` reste intacte dans le code (non supprimée)
+- [ ] Documenter dans `ARCHITECTURE.md` > "Éléments mis de côté" — voir section ajoutée au Sprint 14
+- [ ] Aucune régression sur les autres actions admin (changement de statut, marquage "récupérée")
+
+---
+
+### TICK-108 — Admin menu — alignement vertical des boutons d'action (items avec/sans options)
+**Épic :** Admin / UX
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-102
+
+**Description :**
+Dans la page admin `/admin/menu`, les cartes produit affichant des options (ex. : "Sel / Sans sel") ont une zone de contenu plus haute que les cartes sans options. Les boutons d'action (Modifier / Activer-Désactiver / Supprimer) se retrouvent donc à des hauteurs différentes selon les cartes, brisant l'alignement visuel de la grille.
+
+**Critères d'acceptance :**
+- [ ] Les cartes produit utilisent `flex flex-col h-full` sur leur conteneur principal
+- [ ] La zone texte/options utilise `flex-grow` pour occuper tout l'espace disponible entre l'entête de la carte et les boutons
+- [ ] Les boutons d'action sont systématiquement en bas de carte via `mt-auto` ou structure flex
+- [ ] Testé visuellement avec : 0 option, 1 option, 3 options sur des cartes côte à côte
+- [ ] Aucune régression sur le groupement par catégorie ni sur les actions (Modifier, Activer, Supprimer)
+
+---
+
+### TICK-109 — Page /confirmation — masquer bouton "Se connecter" si déjà connecté
+**Épic :** Client / UX Auth
+**Priorité :** 🟠 Haute
+**Sizing :** 0,25 j
+**Dépendances :** TICK-070, TICK-074
+
+**Description :**
+La page `/confirmation` (post-paiement) affiche un bouton "Se connecter" même lorsque l'utilisateur est déjà connecté. Ce bouton ne doit être visible que pour les utilisateurs invités (non authentifiés).
+
+**Critères d'acceptance :**
+- [ ] Utiliser `useSession()` (NextAuth) dans la page de confirmation
+- [ ] Si `status === "unauthenticated"` → afficher le bouton "Se connecter" → `/auth/login`
+- [ ] Si `status === "authenticated"` → afficher à la place un lien "Voir mes commandes" → `/profil` (ou masquer simplement le bloc)
+- [ ] Pendant le chargement de la session (`status === "loading"`) → ne rien rendre (pas de flash du bouton)
+- [ ] Aucune régression sur l'affichage du récapitulatif commande et du numéro de commande
+
+---
+
+### TICK-110 — Page /auth/login — redirection automatique si déjà connecté
+**Épic :** Client / Auth
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,25 j
+**Dépendances :** TICK-070
+
+**Description :**
+La page `/auth/login` est accessible à un utilisateur déjà connecté — il peut la visiter manuellement sans être redirigé. Cette page doit être réservée aux utilisateurs non authentifiés.
+
+**Critères d'acceptance :**
+- [ ] Dans `app/(client)/auth/login/page.tsx` : utiliser `useSession()` et rediriger via `router.replace("/")` si `status === "authenticated"`
+- [ ] Pendant `status === "loading"` : afficher un spinner ou écran vide (éviter un flash du formulaire de connexion)
+- [ ] Appliquer la même protection sur `/auth/register` : rediriger vers `/` si déjà connecté
+- [ ] Un utilisateur connecté visitant `/auth/login` via l'URL directe atterrit sur `/` sans voir le formulaire
+- [ ] La redirection ne crée pas de boucle infinie avec le middleware existant
+
+---
+
+### TICK-111 — Social login — corriger la redirection d'erreur + proposer fallback email/mdp
+**Épic :** Client / Auth
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-070, TICK-066
+
+**Description :**
+En cas d'erreur lors de la connexion Google (OAuth), l'utilisateur est redirigé vers `/admin/login` au lieu de `/auth/login`. La configuration NextAuth (`pages.error`) pointe vers la mauvaise page. De plus, aucun message d'erreur ni alternative n'est présenté à l'utilisateur.
+
+**Critères d'acceptance :**
+- [ ] Dans `lib/auth.ts` (config NextAuth) : s'assurer que `pages.error` est défini à `"/auth/login"` (et non `"/admin/login"`)
+- [ ] L'appel `signIn("google")` passe `callbackUrl: "/"` en cas de succès et utilise la page d'erreur correcte en cas d'échec
+- [ ] Sur `/auth/login` : détecter le paramètre `?error=` dans l'URL (ex. `?error=OAuthCallback`) et afficher un message clair : *"La connexion Google a échoué. Veuillez utiliser votre email et mot de passe ci-dessous."*
+- [ ] Le formulaire email/mdp est visible et accessible sans action supplémentaire (pas d'accordéon caché)
+- [ ] Aucune régression sur la connexion Google réussie (redirection correcte vers `/`)
+
+---
+
+### TICK-112 — Formulaire login — toggle visibilité du mot de passe (icône œil)
+**Épic :** Client / UX
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,25 j
+**Dépendances :** TICK-070
+
+**Description :**
+Les champs mot de passe des pages d'authentification ne permettent pas à l'utilisateur d'afficher le caractère en cours de saisie. Ajouter un bouton icône œil (afficher/masquer) sur tous les champs de type password.
+
+**Critères d'acceptance :**
+- [ ] Ajouter un bouton icône à droite du champ mot de passe — bascule entre `type="password"` et `type="text"`
+- [ ] L'icône reflète l'état : œil ouvert (mot de passe visible) / œil barré (mot de passe masqué)
+- [ ] Appliquer sur :
+  - Champ "Mot de passe" de `/auth/login`
+  - Champs "Mot de passe" et "Confirmer le mot de passe" de `/auth/register`
+  - Champ "Nouveau mot de passe" de `/auth/reset-password`
+- [ ] Utiliser une icône SVG inline (pas de nouvelle dépendance)
+- [ ] Accessible : `aria-label="Afficher le mot de passe"` / `"Masquer le mot de passe"` selon l'état
+- [ ] Le bouton n'intercepte pas la soumission du formulaire (`type="button"` explicite)
+
+---
+
+### TICK-113 — Page profil — contraste input "Nom affiché" + bouton "Enregistrer" via composant Button
+**Épic :** Client / UX / Design System
+**Priorité :** 🟠 Haute
+**Sizing :** 0,25 j
+**Dépendances :** TICK-073
+
+**Description :**
+La section "Nom affiché" de la page `/profil` présente deux problèmes de contraste : le texte de l'input est peu lisible (ratio WCAG insuffisant), et le bouton "Enregistrer" utilise un style inline orange clair avec texte blanc illisible au lieu du composant `Button` du design system (Sprint 10.2).
+
+**Critères d'acceptance :**
+- [ ] Remplacer le bouton "Enregistrer" par `<Button variant="primary">Enregistrer</Button>` (`components/ui/Button.tsx`) — même composant que les autres actions de la page
+- [ ] L'input "Nom affiché" utilise `text-gray-900` (ou équivalent) sur fond blanc — ratio de contraste ≥ 4.5:1 (WCAG AA)
+- [ ] Supprimer tout style inline ou classe Tailwind de couleur de texte non conforme sur cet input (`text-orange-*`, `text-gray-300`, etc.)
+- [ ] Tester visuellement : texte lisible dans l'input en état normal, focus et désactivé
+- [ ] Aucune régression sur les autres éléments de la page profil (bouton "Se déconnecter", "Supprimer mon compte", historique commandes)
 
 ---
 

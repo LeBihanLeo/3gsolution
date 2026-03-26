@@ -16,13 +16,15 @@ interface MenuCardProps {
   prix: number; // centimes
   options: Option[];
   imageUrl?: string;
+  // TICK-105 — Désactiver les boutons si boutique fermée
+  disabled?: boolean;
 }
 
 function formatPrix(centimes: number): string {
   return (centimes / 100).toFixed(2).replace('.', ',') + ' €';
 }
 
-export default function MenuCard({ produitId, nom, description, prix, options, imageUrl }: MenuCardProps) {
+export default function MenuCard({ produitId, nom, description, prix, options, imageUrl, disabled = false }: MenuCardProps) {
   const { items, addItem, updateQuantity } = useCart();
   const [selectedOptions, setSelectedOptions] = useState<CartOption[]>([]);
   const [showOptions, setShowOptions] = useState(false);
@@ -43,6 +45,7 @@ export default function MenuCard({ produitId, nom, description, prix, options, i
   const totalItem = prix + selectedOptions.reduce((s, o) => s + o.prix, 0);
 
   const handleAdd = () => {
+    if (disabled) return;
     addItem({ produitId, nom, prix, quantite: 1, options: selectedOptions, imageUrl });
     setSelectedOptions([]);
     setShowOptions(false);
@@ -114,19 +117,22 @@ export default function MenuCard({ produitId, nom, description, prix, options, i
                   /* Bouton + rond */
                   <button
                     onClick={handleAdd}
-                    className="w-9 h-9 rounded-full bg-orange-500 text-white flex items-center justify-center shrink-0 text-xl font-bold leading-none hover:bg-orange-600 active:bg-orange-700 transition-colors shadow-sm"
-                    aria-label={`Ajouter ${nom}`}
+                    disabled={disabled}
+                    className="w-9 h-9 rounded-full bg-orange-500 text-white flex items-center justify-center shrink-0 text-xl font-bold leading-none hover:bg-orange-600 active:bg-orange-700 transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                    aria-label={`Ajouter ${nom} au panier`}
                   >
                     +
                   </button>
                 )
               ) : (
-                /* Produit avec options : bouton texte */
+                /* TICK-096 — bouton + uniforme sur toutes les cartes */
                 <button
                   onClick={handleAdd}
-                  className="shrink-0 text-sm font-semibold px-4 py-1.5 rounded-xl bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700 transition-colors"
+                  disabled={disabled}
+                  className="w-9 h-9 rounded-full bg-orange-500 text-white flex items-center justify-center shrink-0 text-xl font-bold leading-none hover:bg-orange-600 active:bg-orange-700 transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label={`Ajouter ${nom} au panier`}
                 >
-                  + Ajouter
+                  +
                 </button>
               )}
             </div>

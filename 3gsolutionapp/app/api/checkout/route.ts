@@ -10,6 +10,7 @@ import { getStripe } from '@/lib/stripe';
 import { mockSessions } from '@/lib/mockStore';
 import { connectDB } from '@/lib/mongodb';
 import Produit from '@/models/Produit';
+import SiteConfig from '@/models/SiteConfig';
 import { randomUUID } from 'crypto';
 import { logger } from '@/lib/logger';
 
@@ -46,6 +47,16 @@ const CheckoutSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    // TICK-105 — Vérifier si la boutique est fermée pour aujourd'hui
+    await connectDB();
+    const siteConfig = await SiteConfig.findOne().lean();
+    if (siteConfig?.fermeeAujourdhui) {
+      return NextResponse.json(
+        { error: 'La boutique est fermée pour aujourd\'hui.' },
+        { status: 503 }
+      );
+    }
+
     const body = await request.json();
     const parsed = CheckoutSchema.safeParse(body);
 
@@ -65,8 +76,6 @@ export async function POST(request: NextRequest) {
 
     // ── Récupération et validation des prix depuis la BDD ─────────────────────
     // SEC-01 : on ne fait jamais confiance aux prix envoyés par le client
-    await connectDB();
-
     const produitIds = produitsClient.map((p) => p.produitId);
     const produitIdsUniques = [...new Set(produitIds)];
     const produitsDB = await Produit.find({

@@ -25,9 +25,10 @@
 │   ├── (client)/
 │   │   ├── page.tsx               # Menu principal
 │   │   ├── panier/page.tsx        # Panier
-│   │   ├── commande/page.tsx      # Formulaire commande (nom, tel, créneau)
-│   │   ├── confirmation/page.tsx  # Page post-paiement
-│   │   ├── profil/page.tsx        # Profil client + historique commandes
+│   │   ├── commande/page.tsx               # Formulaire commande (nom, tel, créneau)
+│   │   ├── confirmation/page.tsx          # Page post-paiement
+│   │   ├── profil/page.tsx                # Profil client + historique commandes (max 3)
+│   │   ├── profil/commandes/page.tsx      # Historique complet timeline par mois — Sprint 12 TICK-098
 │   │   ├── auth/
 │   │   │   ├── login/page.tsx     # Connexion (Google + email/mdp + invité)
 │   │   │   ├── register/page.tsx  # Inscription (credentials)
@@ -37,9 +38,10 @@
 │   │   └── layout.tsx
 │   ├── (admin)/
 │   │   ├── login/page.tsx
-│   │   ├── commandes/page.tsx     # Liste commandes + statuts
-│   │   ├── menu/page.tsx          # Gestion produits
-│   │   ├── personnalisation/page.tsx  # Bannière, nom, couleurs bordures
+│   │   ├── page.tsx               # Dashboard admin — KPIs + 4 dernières commandes — Sprint 13 TICK-103
+│   │   ├── commandes/page.tsx     # Liste commandes + statuts + section récupérées + export CSV
+│   │   ├── menu/page.tsx          # Gestion produits (vue client avec boutons management — TICK-102)
+│   │   ├── personnalisation/page.tsx  # Bannière, nom, couleurs bordures, horaires d'ouverture
 │   │   └── layout.tsx             # Auth guard
 │   └── api/
 │       ├── produits/
@@ -57,6 +59,9 @@
 │       │   └── route.ts           # GET public / PUT admin (personnalisation)
 │       ├── webhooks/
 │       │   └── stripe/route.ts    # Validation paiement Stripe
+│       ├── admin/
+│       │   └── commandes/
+│       │       └── export/route.ts    # GET export CSV commandes (admin, comptabilité) — Sprint 13 TICK-106
 │       └── client/
 │           ├── register/route.ts      # POST inscription
 │           ├── verify-email/route.ts  # POST vérification token
@@ -64,7 +69,7 @@
 │           ├── reset-password/route.ts  # POST nouveau mdp
 │           ├── profil/route.ts        # PATCH mise à jour nom
 │           ├── account/route.ts       # DELETE suppression compte (RGPD)
-│           ├── commandes/route.ts     # GET historique commandes
+│           ├── commandes/route.ts     # GET historique commandes (enCours + passees)
 │           └── export/route.ts        # GET export données RGPD (Art. 20)
 ├── components/
 │   ├── ui/
@@ -75,7 +80,9 @@
 │   │   ├── Panier.tsx
 │   │   ├── FormulaireCommande.tsx
 │   │   ├── HeaderAuth.tsx             # Header auth (connexion / profil) — Sprint 10
-│   │   └── HistoriqueCommandes.tsx    # Historique commandes profil — Sprint 10.2
+│   │   ├── HistoriqueCommandes.tsx    # Historique commandes profil — Sprint 10.2
+│   │   ├── CommandeStepper.tsx        # Stepper 4 étapes statut commande — Sprint 12 TICK-099
+│   │   └── CommandeSuiviModal.tsx     # Modale détail commande en cours — Sprint 12 TICK-097
 │   └── admin/
 │       ├── CommandeRow.tsx
 │       ├── ProduitForm.tsx
@@ -132,11 +139,15 @@
   banniereUrl?: string,          // URL image (HTTPS ou chemin /public)
   couleurBordureGauche: string,  // hex ex: "#E63946"
   couleurBordureDroite: string,  // hex ex: "#457B9D"
+  horaireOuverture: string,      // format "HH:MM", ex: "11:30" — Sprint 13 TICK-100
+  horaireFermeture: string,      // format "HH:MM", ex: "14:00" — Sprint 13 TICK-100
+  fermeeAujourdhui: boolean,     // fermeture manuelle du jour, défaut: false — Sprint 13 TICK-105
   updatedAt: Date
 }
 ```
 
 > Document **singleton** : un seul enregistrement en base, mis à jour par `upsert`.
+> `fermeeAujourdhui` est un toggle manuel — non réinitialisé automatiquement à minuit.
 
 ---
 
@@ -170,7 +181,9 @@
 {
   _id: ObjectId,
   stripeSessionId: string,     // pour webhook
-  statut: "en_attente_paiement" | "payee" | "prete",
+  statut: "en_attente_paiement" | "payee" | "en_preparation" | "prete" | "recuperee",
+  // Cycle de vie : en_attente_paiement → payee → en_preparation → prete → recuperee
+  // Transitions admin (TICK-099) : payee→en_preparation, en_preparation→prete, prete→recuperee
   client: {
     nom: string,
     telephone: string,
@@ -254,6 +267,7 @@ Le menu (`/`) est masqué tant que l'utilisateur n'a pas choisi son mode (connec
 | DELETE  | /api/client/account          | Supprimer le compte et anonymiser (RGPD)    | Client |
 | GET     | /api/client/commandes        | Historique des commandes du client          | Client |
 | GET     | /api/client/export           | Export de toutes les données (RGPD Art. 20) | Client |
+| GET     | /api/admin/commandes/export  | Export CSV commandes (comptabilité)         | Admin  |
 
 ---
 
@@ -335,9 +349,63 @@ Envoyé depuis le webhook Stripe (source de vérité = paiement confirmé).
 
 ## Refresh admin (sans WebSocket)
 
-- Polling auto toutes les **10 secondes** sur `/api/commandes`
-- Implémenté avec `setInterval` + `useEffect` dans le composant admin
-- Ou via `router.refresh()` de Next.js App Router
+- Polling auto toutes les **10 secondes** sur `/api/commandes` (page commandes)
+- Polling toutes les **30 secondes** sur le dashboard admin (TICK-103)
+- Implémenté avec `setInterval` + `useEffect` dans les composants admin
+
+---
+
+## Sprint 13 — Dashboard Admin & Gestion Avancée (2026-03-26)
+
+### SiteConfig étendu (TICK-100, TICK-105)
+
+```typescript
+{
+  horaireOuverture: string,      // "HH:MM" ex: "11:30" — défaut "11:30"
+  horaireFermeture: string,      // "HH:MM" ex: "14:00" — défaut "14:00"
+  fermeeAujourdhui: boolean,     // toggle manuel — non réinitialisé automatiquement
+}
+```
+
+> `fermeeAujourdhui: true` → checkout bloqué (503) + bandeau client + formulaire disabled.
+
+### Créneaux dynamiques (TICK-101)
+
+`FormulaireCommande` charge les horaires depuis `GET /api/site-config` et filtre les créneaux dont le début est `> now + 10 min`. `filtrerCreneauxDisponibles()` est exportée et testée unitairement.
+
+### Admin menu — vue cartes (TICK-102)
+
+`app/admin/(protected)/menu/page.tsx` : grille de cartes style client avec boutons Modifier / Activer-Désactiver / Supprimer. Groupement par catégorie préservé. Modale confirmation avant suppression.
+
+### Dashboard admin (TICK-103)
+
+`app/admin/(protected)/page.tsx` : 4 KPIs (commandes du jour, CA, en cours, récupérées) + 4 dernières commandes en cours + 3 cards navigation rapide. Polling 30 s.
+
+### Transitions commandes complètes (TICK-099, TICK-104)
+
+`CommandeRow` refactorisé avec `onAdvance(id, statut)` générique. Transitions visibles :
+
+| Statut actuel | Bouton | → Statut |
+|---|---|---|
+| `payee` | En préparation → | `en_preparation` |
+| `en_preparation` | Prête → | `prete` |
+| `prete` | Récupérée ✓ | `recuperee` |
+
+Section "Récupérées aujourd'hui" en bas de page commandes.
+
+### Export CSV comptabilité (TICK-106)
+
+`GET /api/admin/commandes/export?from=YYYY-MM-DD&to=YYYY-MM-DD` — auth admin.
+- TVA 10% incluse : `TVA = round(TTC / 11)`
+- UTF-8 BOM (`\uFEFF`), séparateur `;`, compatible Excel FR
+- Log `commandes_exported_csv` via `lib/logger.ts`
+
+### Middleware — nouvelles routes protégées (TICK-103, TICK-106)
+
+| Route | Protection |
+|---|---|
+| `/admin/` (dashboard) | Token JWT + `role === "admin"` |
+| `GET /api/admin/commandes/export` | Token JWT + `role === "admin"` |
 
 ---
 
@@ -941,6 +1009,23 @@ Cette section recense les fonctionnalités intentionnellement exclues du scope a
 
 ---
 
+### Anonymisation manuelle des commandes (RGPD Art. 17 — Admin)
+
+**Mis de côté lors de :** Sprint 14 (2026-03-26) — TICK-107
+**Pourquoi :** Risque de manipulation accidentelle trop élevé sans UX de confirmation robuste ni gestion fine des permissions. La valeur métier immédiate est faible — l'anonymisation automatique (suppression compte) et la purge TTL couvrent les obligations légales.
+**À reprendre quand :** Besoin métier confirmé (ex. demande client explicite ou obligation légale ponctuelle) avec UX de confirmation repensée (double validation, log d'audit).
+
+**Périmètre mis de côté :**
+- Bouton "Anonymiser" dans `components/admin/CommandeRow.tsx` (retiré de l'UI)
+- Modale de confirmation associée
+
+**Ce qui reste actif :**
+- Route `DELETE /api/commandes/[id]` — conservée dans le code, non exposée dans l'UI admin
+- Anonymisation automatique via `DELETE /api/client/account` (suppression compte client)
+- Champ `purgeAt` sur `Commande` (index TTL MongoDB — purge automatique à 12 mois, TICK-060)
+
+---
+
 ### Export de données personnelles (RGPD Art. 20 — Droit à la portabilité)
 
 **Mis de côté lors de :** Sprint 10.2 (2026-03-24)
@@ -958,4 +1043,4 @@ Cette section recense les fonctionnalités intentionnellement exclues du scope a
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19) — Version 1.8 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20 : validation prix serveur, headers HTTP, rate limiting, magic bytes upload, middleware étendu, mock guard, CNIL, rétention RGPD, sous-traitants, logs structurés) — Version 1.9 (Sprint 9 Correctifs post-audit ajoutés le 2026-03-20 : index TTL MongoDB purgeAt, CSP sans unsafe-eval en prod, middleware /api/commandes/:id + IP non-spoofable, rate limiting fail-safe, Zod validation metadata webhook, logger mock-checkout) — Version 1.10 (Conventions de mock complétées le 2026-03-20 : file-type ESM mocké, vi.hoisted() pour factories dépendant de variables externes, connectDB + Produit mockés dans checkout) — Version 2.0 (Sprint 10–11 Compte Client ajouté le 2026-03-24 : modèle Client, auth étendue NextAuth Google + credentials client, inscription + vérification email, reset mdp, page profil, historique commandes, suppression compte RGPD, rate limiting étendu) — Version 2.1 (Re-commande rapide + Export RGPD Art. 20 ajoutés le 2026-03-24) — Version 2.2 (Sprint 10.2 ajouté le 2026-03-24 : écran choix invité/connexion, design system Button/BackLink, nom client obligatoire, historique commandes avancé, fix confirmation post-paiement, navigation retour, Mes données mis de côté)*
+*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19) — Version 1.8 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20 : validation prix serveur, headers HTTP, rate limiting, magic bytes upload, middleware étendu, mock guard, CNIL, rétention RGPD, sous-traitants, logs structurés) — Version 1.9 (Sprint 9 Correctifs post-audit ajoutés le 2026-03-20 : index TTL MongoDB purgeAt, CSP sans unsafe-eval en prod, middleware /api/commandes/:id + IP non-spoofable, rate limiting fail-safe, Zod validation metadata webhook, logger mock-checkout) — Version 1.10 (Conventions de mock complétées le 2026-03-20 : file-type ESM mocké, vi.hoisted() pour factories dépendant de variables externes, connectDB + Produit mockés dans checkout) — Version 2.0 (Sprint 10–11 Compte Client ajouté le 2026-03-24 : modèle Client, auth étendue NextAuth Google + credentials client, inscription + vérification email, reset mdp, page profil, historique commandes, suppression compte RGPD, rate limiting étendu) — Version 2.1 (Re-commande rapide + Export RGPD Art. 20 ajoutés le 2026-03-24) — Version 2.2 (Sprint 10.2 ajouté le 2026-03-24 : écran choix invité/connexion, design system Button/BackLink, nom client obligatoire, historique commandes avancé, fix confirmation post-paiement, navigation retour, Mes données mis de côté) — Version 2.3 (Sprint 14 ajouté le 2026-03-26 : anonymisation manuelle commandes mise de côté, 7 correctifs UX & Auth admin + client)*

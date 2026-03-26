@@ -1,4 +1,4 @@
-// TICK-076 — Tests GET /api/client/commandes
+// TICK-076 + TICK-099 — Tests GET /api/client/commandes
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockFind, mockSort, mockLimit, mockLean } = vi.hoisted(() => {
@@ -33,9 +33,27 @@ const commandePayee = {
   createdAt: new Date().toISOString(),
 };
 
+const commandeEnPreparation = {
+  _id: 'cmd3',
+  statut: 'en_preparation',
+  produits: [{ nom: 'Pizza', quantite: 1, prix: 1200, options: [] }],
+  total: 1200,
+  retrait: { type: 'immediat' },
+  createdAt: new Date().toISOString(),
+};
+
 const commandePrete = {
-  _id: 'cmd2',
+  _id: 'cmd4',
   statut: 'prete',
+  produits: [{ nom: 'Salade', quantite: 1, prix: 900, options: [] }],
+  total: 900,
+  retrait: { type: 'immediat' },
+  createdAt: new Date().toISOString(),
+};
+
+const commandeRecuperee = {
+  _id: 'cmd2',
+  statut: 'recuperee',
   produits: [{ nom: 'Frites', quantite: 2, prix: 350, options: [] }],
   total: 700,
   retrait: { type: 'immediat' },
@@ -70,27 +88,41 @@ describe('GET /api/client/commandes', () => {
     expect(data.passees).toEqual([]);
   });
 
-  it('sépare correctement enCours et passees', async () => {
+  it('TICK-099 — sépare correctement enCours (payee/en_preparation/prete) et passees (recuperee)', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce(clientSession);
-    mockLean.mockResolvedValueOnce([commandePayee, commandePrete]);
+    mockLean.mockResolvedValueOnce([commandePayee, commandeEnPreparation, commandePrete, commandeRecuperee]);
     const res = await GET();
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.enCours).toHaveLength(1);
-    expect(data.enCours[0]._id).toBe('cmd1');
+    expect(data.enCours).toHaveLength(3);
+    expect(data.enCours.map((c: { _id: string }) => c._id)).toEqual(['cmd1', 'cmd3', 'cmd4']);
     expect(data.passees).toHaveLength(1);
     expect(data.passees[0]._id).toBe('cmd2');
   });
 
-  it('projection exclut client.telephone et client.email (vérification de la projection)', async () => {
+  it('TICK-099 — statut "prete" est en cours, pas dans passees', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce(clientSession);
+    mockLean.mockResolvedValueOnce([commandePrete]);
+    const res = await GET();
+    const data = await res.json();
+    expect(data.enCours).toHaveLength(1);
+    expect(data.passees).toHaveLength(0);
+  });
+
+  it('TICK-098 — limite à 200 commandes', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce(clientSession);
     mockLean.mockResolvedValueOnce([]);
     await GET();
-    // La projection passée à find() ne doit pas inclure client.telephone ni client.email
+    expect(mockLimit).toHaveBeenCalledWith(200);
+  });
+
+  it('projection exclut client.telephone et client.email (RGPD)', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce(clientSession);
+    mockLean.mockResolvedValueOnce([]);
+    await GET();
     const projection = mockFind.mock.calls[0][1] as Record<string, unknown>;
     expect(projection['client.telephone']).toBeUndefined();
     expect(projection['client.email']).toBeUndefined();
-    // Les champs autorisés sont présents
     expect(projection._id).toBe(1);
     expect(projection.statut).toBe(1);
     expect(projection.total).toBe(1);

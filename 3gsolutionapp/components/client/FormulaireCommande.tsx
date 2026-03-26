@@ -1,14 +1,13 @@
 'use client';
 
 // TICK-040 — Cache client RGPD (email + téléphone)
+// TICK-101 — Créneaux filtrés depuis SiteConfig (horaireOuverture / horaireFermeture) + buffer +10 min
 import { useState, useEffect, useRef } from 'react';
 import { z } from 'zod';
 import { useCart, CartItem } from '@/lib/cartContext';
-import { creneauxDepuisEnv } from '@/lib/creneaux';
+import { genererCreneaux } from '@/lib/creneaux';
 
-// ─── Créneaux dynamiques (depuis variables d'env NEXT_PUBLIC_) ───────────────
-
-const CRENEAUX = creneauxDepuisEnv();
+const BUFFER_MIN = 10; // minutes avant le créneau de retrait
 
 // ─── Cache RGPD ─────────────────────────────────────────────────────────────
 
@@ -65,6 +64,23 @@ function itemTotal(item: CartItem): number {
   return (item.prix + item.options.reduce((s, o) => s + o.prix, 0)) * item.quantite;
 }
 
+/**
+ * Filtre les créneaux dont le début est strictement > maintenant + bufferMin.
+ * Format attendu : "HH:MM – HH:MM"
+ */
+export function filtrerCreneauxDisponibles(creneaux: string[], bufferMin: number): string[] {
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const limite = nowMin + bufferMin;
+
+  return creneaux.filter((c) => {
+    const debut = c.split(' – ')[0];
+    if (!debut) return false;
+    const [h, m] = debut.split(':').map(Number);
+    return h * 60 + m > limite;
+  });
+}
+
 const inputCls =
   'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500';
 
@@ -77,12 +93,34 @@ export default function FormulaireCommande() {
   const [serverError, setServerError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // TICK-101 — créneaux depuis SiteConfig
+  const [creneaux, setCreneaux] = useState<string[]>([]);
+  const [fermeeAujourdhui, setFermeeAujourdhui] = useState(false);
+  const [loadingConfig, setLoadingConfig] = useState(true);
+
   // ─── TICK-040 : Cache RGPD ───────────────────────────────────────────────
   const [memoriser, setMemoriser] = useState(false);
   const [cacheExists, setCacheExists] = useState(false);
   const nomRef = useRef<HTMLInputElement>(null);
   const telRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
+
+  // Charger SiteConfig au montage — TICK-101
+  useEffect(() => {
+    fetch('/api/site-config')
+      .then((r) => r.json())
+      .then(({ data }) => {
+        if (data) {
+          setFermeeAujourdhui(data.fermeeAujourdhui ?? false);
+          const ouverture = data.horaireOuverture ?? '11:30';
+          const fermeture = data.horaireFermeture ?? '14:00';
+          const tous = genererCreneaux(ouverture, fermeture, 15);
+          setCreneaux(filtrerCreneauxDisponibles(tous, BUFFER_MIN));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingConfig(false));
+  }, []);
 
   // Pré-remplir les champs si un cache existe
   useEffect(() => {
@@ -137,7 +175,7 @@ export default function FormulaireCommande() {
         setFieldErrors({ creneau: 'Veuillez sélectionner un créneau horaire' });
         return;
       }
-      if (!CRENEAUX.includes(creneau)) {
+      if (!creneaux.includes(creneau)) {
         setFieldErrors({ creneau: 'Créneau invalide, veuillez en choisir un dans la liste' });
         return;
       }
@@ -219,6 +257,13 @@ export default function FormulaireCommande() {
         </div>
       </div>
 
+      {/* TICK-105 — Boutique fermée */}
+      {fermeeAujourdhui && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-6 text-sm text-red-700 font-medium">
+          La boutique est fermée pour aujourd&apos;hui. Revenez demain !
+        </div>
+      )}
+
       {/* Formulaire */}
       <form onSubmit={handleSubmit} className="space-y-4">
 
@@ -298,12 +343,18 @@ export default function FormulaireCommande() {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Créneau de retrait <span className="text-red-400">*</span>
             </label>
-            <select name="creneau" className={`${inputCls} w-full`}>
-              <option value="">— Choisir un créneau —</option>
-              {CRENEAUX.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
+            {!loadingConfig && creneaux.length === 0 ? (
+              <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                Aucun créneau disponible pour aujourd&apos;hui. La boutique ferme bientôt.
+              </p>
+            ) : (
+              <select name="creneau" className={`${inputCls} w-full`} defaultValue="">
+                <option value="">— Choisir un créneau —</option>
+                {creneaux.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            )}
             {fieldErrors.creneau && (
               <p className="text-xs text-red-500 mt-1">{fieldErrors.creneau}</p>
             )}
@@ -362,7 +413,7 @@ export default function FormulaireCommande() {
 
         <button
           type="submit"
-          disabled={loading || items.length === 0}
+          disabled={loading || items.length === 0 || fermeeAujourdhui}
           className="w-full bg-orange-600 hover:bg-orange-700 active:bg-orange-800 disabled:opacity-50 text-white font-semibold py-3 rounded-2xl transition-colors"
         >
           {loading ? 'Redirection vers le paiement…' : 'Payer →'}

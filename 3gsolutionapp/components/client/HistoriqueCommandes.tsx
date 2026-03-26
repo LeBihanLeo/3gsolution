@@ -1,9 +1,16 @@
 'use client';
 // TICK-077 — Composant HistoriqueCommandes
 // TICK-080 — Re-commande rapide
+// TICK-094 — Fix comparaison IDs (toString())
+// TICK-097 — Modale de suivi CommandeSuiviModal
+// TICK-098 — Max 3 commandes passées + lien historique complet
+// TICK-099 — Nouveaux statuts en_preparation / recuperee + CommandeStepper
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui';
+import CommandeSuiviModal from './CommandeSuiviModal';
+import { StatutBadge } from './StatutBadge';
+import { CommandeStatusCard } from './CommandeStatusCard';
 
 interface ProduitSnapshot {
   produitId: string;
@@ -15,7 +22,7 @@ interface ProduitSnapshot {
 
 interface CommandeHistorique {
   _id: string;
-  statut: 'en_attente_paiement' | 'payee' | 'prete';
+  statut: 'en_attente_paiement' | 'payee' | 'en_preparation' | 'prete' | 'recuperee';
   produits: ProduitSnapshot[];
   total: number;
   retrait: { type: 'immediat' | 'creneau'; creneau?: string };
@@ -57,29 +64,36 @@ function CommandeCard({
   variant,
   reorderLoading,
   onReorder,
+  onSuivi,
 }: {
   commande: CommandeHistorique;
   variant: 'en-cours' | 'passee';
   reorderLoading?: boolean;
   onReorder?: () => void;
+  onSuivi?: () => void;
 }) {
-  const estPrete = commande.statut === 'prete';
-  const badgeCls = estPrete
-    ? 'bg-green-100 text-green-700'
-    : 'bg-amber-100 text-amber-700';
-  const badgeLabel = estPrete ? 'Prête' : 'En préparation';
+
+  const cardCls = variant === 'en-cours'
+    ? 'rounded-2xl p-4 space-y-3 shadow-sm'
+    : 'bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3';
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
-      {/* En-tête */}
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-xs font-bold text-gray-500">
-          #{idCourt(commande._id)}
-        </span>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${badgeCls}`}>
-          {badgeLabel}
-        </span>
-      </div>
+    <div className={cardCls}>
+      {/* Statut — card partagée sur les commandes en cours, en-tête simple sur les passées */}
+      {variant === 'en-cours' ? (
+        <CommandeStatusCard
+          statut={commande.statut}
+          commandeId={commande._id}
+          produits={commande.produits}
+        />
+      ) : (
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-xs font-bold text-muted">
+            #{idCourt(commande._id)}
+          </span>
+          <StatutBadge statut={commande.statut} size="sm" />
+        </div>
+      )}
 
       {/* Créneau */}
       <p className="text-sm text-gray-600">
@@ -89,26 +103,40 @@ function CommandeCard({
           : commande.retrait.creneau}
       </p>
 
-      {/* Produits */}
-      <ul className="space-y-0.5">
-        {commande.produits.map((p, i) => (
-          <li key={i} className="text-sm text-gray-700">
-            {p.quantite}× {p.nom}
-            {p.options.length > 0 && (
-              <span className="text-gray-400">
-                {' '}
-                ({p.options.map((o) => o.nom).join(', ')})
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
+      {/* Produits — uniquement sur les commandes passées (en-cours : déjà dans CommandeStatusCard) */}
+      {variant === 'passee' && (
+        <ul className="space-y-0.5">
+          {commande.produits.map((p, i) => (
+            <li key={i} className="text-sm text-gray-700">
+              {p.quantite}× {p.nom}
+              {p.options.length > 0 && (
+                <span className="text-gray-400">
+                  {' '}
+                  ({p.options.map((o) => o.nom).join(', ')})
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {/* Footer */}
       <div className="flex items-center justify-between pt-1 border-t border-gray-50">
         <span className="text-xs text-gray-400">{formatDate(commande.createdAt)}</span>
         <span className="font-bold text-gray-900 text-sm">{formatPrix(commande.total)}</span>
       </div>
+
+      {/* TICK-097 — Bouton suivi sur commandes en cours */}
+      {variant === 'en-cours' && onSuivi && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full mt-1"
+          onClick={onSuivi}
+        >
+          Voir le suivi
+        </Button>
+      )}
 
       {/* TICK-080 — Bouton re-commande sur commandes passées */}
       {variant === 'passee' && onReorder && (
@@ -134,6 +162,8 @@ export default function HistoriqueCommandes() {
   const [error, setError] = useState(false);
   const [reorderLoadingId, setReorderLoadingId] = useState<string | null>(null);
   const [reorderMessage, setReorderMessage] = useState<string | null>(null);
+  // TICK-097 — commande sélectionnée pour la modale de suivi
+  const [suiviCommande, setSuiviCommande] = useState<CommandeHistorique | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function fetchCommandes() {
@@ -169,13 +199,20 @@ export default function HistoriqueCommandes() {
 
     try {
       const res = await fetch('/api/produits');
-      if (!res.ok) throw new Error('fetch_failed');
+      // TICK-094 — erreur réseau ou non-200 : message explicite
+      if (!res.ok) {
+        setReorderMessage('Impossible de vérifier les produits disponibles. Réessayez dans un instant.');
+        return;
+      }
 
       const produitsActifs: ProduitActif[] = await res.json();
-      const actifIds = new Set(produitsActifs.filter((p) => p.actif).map((p) => p._id));
+      // TICK-094 — toString() des deux côtés pour comparaison fiable des ObjectIds sérialisés
+      const actifIds = new Set(
+        produitsActifs.filter((p) => p.actif).map((p) => p._id.toString())
+      );
 
       const produitsFiltres = commande.produits.filter((p) =>
-        actifIds.has(p.produitId)
+        actifIds.has(p.produitId.toString())
       );
 
       if (produitsFiltres.length === 0) {
@@ -185,7 +222,9 @@ export default function HistoriqueCommandes() {
 
       // Construire les CartItems pour localStorage
       const cartItems = produitsFiltres.map((p) => {
-        const produitActif = produitsActifs.find((pa) => pa._id === p.produitId);
+        const produitActif = produitsActifs.find(
+          (pa) => pa._id.toString() === p.produitId.toString()
+        );
         return {
           produitId: p.produitId,
           nom: p.nom,
@@ -209,7 +248,7 @@ export default function HistoriqueCommandes() {
         router.push('/panier');
       }
     } catch {
-      setReorderMessage('Impossible de vérifier les produits disponibles.');
+      setReorderMessage('Impossible de vérifier les produits disponibles. Réessayez dans un instant.');
     } finally {
       setReorderLoadingId(null);
     }
@@ -233,6 +272,10 @@ export default function HistoriqueCommandes() {
     );
   }
 
+  // TICK-098 — max 3 commandes passées côté client
+  const passeesAffichees = data?.passees.slice(0, 3) ?? [];
+  const totalPassees = data?.passees.length ?? 0;
+
   return (
     <div className="space-y-6">
       {/* ── Commandes en cours ── */}
@@ -245,7 +288,12 @@ export default function HistoriqueCommandes() {
         ) : (
           <div className="space-y-3">
             {data?.enCours.map((c) => (
-              <CommandeCard key={c._id} commande={c} variant="en-cours" />
+              <CommandeCard
+                key={c._id}
+                commande={c}
+                variant="en-cours"
+                onSuivi={() => setSuiviCommande(c)}
+              />
             ))}
           </div>
         )}
@@ -264,11 +312,11 @@ export default function HistoriqueCommandes() {
           </p>
         )}
 
-        {data?.passees.length === 0 ? (
+        {passeesAffichees.length === 0 ? (
           <p className="text-sm text-gray-400">Aucune commande passée.</p>
         ) : (
           <div className="space-y-3">
-            {data?.passees.map((c) => (
+            {passeesAffichees.map((c) => (
               <CommandeCard
                 key={c._id}
                 commande={c}
@@ -279,7 +327,25 @@ export default function HistoriqueCommandes() {
             ))}
           </div>
         )}
+
+        {/* TICK-098 — Lien vers historique complet si > 3 commandes */}
+        {totalPassees > 3 && (
+          <button
+            onClick={() => router.push('/profil/commandes')}
+            className="mt-3 text-sm text-orange-600 hover:text-orange-700 font-medium underline underline-offset-2"
+          >
+            Voir tout l&apos;historique ({totalPassees} commandes)
+          </button>
+        )}
       </div>
+
+      {/* TICK-097 — Modale de suivi */}
+      {suiviCommande && (
+        <CommandeSuiviModal
+          commande={suiviCommande}
+          onClose={() => setSuiviCommande(null)}
+        />
+      )}
     </div>
   );
 }

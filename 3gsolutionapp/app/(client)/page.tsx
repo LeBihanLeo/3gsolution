@@ -85,6 +85,8 @@ function Menu() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [activeCategory, setActiveCategory] = useState('Tout');
+  // TICK-105 — Fermeture boutique
+  const [fermeeAujourdhui, setFermeeAujourdhui] = useState(false);
   const { totalItems } = useCart();
 
   useEffect(() => {
@@ -100,6 +102,14 @@ function Menu() {
       });
   }, []);
 
+  // TICK-105 — Charger SiteConfig pour fermeeAujourdhui
+  useEffect(() => {
+    fetch('/api/site-config')
+      .then((r) => r.json())
+      .then(({ data }) => setFermeeAujourdhui(data?.fermeeAujourdhui ?? false))
+      .catch(() => {});
+  }, []);
+
   const categories = Array.from(new Set(produits.map((p) => p.categorie)));
   const tabs = ['Tout', ...categories];
 
@@ -109,6 +119,13 @@ function Menu() {
 
   return (
     <div>
+      {/* TICK-105 — Bandeau boutique fermée */}
+      {fermeeAujourdhui && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-5 text-sm text-red-700 font-medium text-center">
+          La boutique est fermée pour aujourd&apos;hui. Revenez demain !
+        </div>
+      )}
+
       {/* Tabs catégories */}
       {!loading && !error && produits.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-1 mb-5 scrollbar-hide -mx-4 px-4">
@@ -159,6 +176,7 @@ function Menu() {
               prix={p.prix}
               options={p.options}
               imageUrl={p.imageUrl}
+              disabled={fermeeAujourdhui}
             />
           ))}
         </div>
@@ -199,7 +217,7 @@ export default function MenuPage() {
     }
   }, []);
 
-  if (status === 'authenticated' && session?.user?.role === 'client') {
+  if (status === 'authenticated') {
     return <Menu />;
   }
 

@@ -1,6 +1,9 @@
 'use client';
 
+// TICK-102 — Vue produits style cartes client avec boutons management
+
 import { useEffect, useState, useCallback } from 'react';
+import Image from 'next/image';
 import ProduitForm, { ProduitData, ProduitFormValues } from '@/components/admin/ProduitForm';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -13,6 +16,133 @@ function formatPrix(centimes: number): string {
   return (centimes / 100).toFixed(2).replace('.', ',') + ' €';
 }
 
+// ─── Modale confirmation suppression ─────────────────────────────────────────
+
+function ModalConfirmation({
+  nom,
+  onConfirm,
+  onCancel,
+}: {
+  nom: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4">
+        <h3 className="text-base font-semibold text-gray-900 mb-2">Supprimer ce produit ?</h3>
+        <p className="text-sm text-gray-500 mb-5">
+          <span className="font-medium text-gray-800">&ldquo;{nom}&rdquo;</span> sera définitivement supprimé. Cette action est irréversible.
+        </p>
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 border border-gray-200 text-gray-700 text-sm font-medium py-2 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Annuler
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 bg-red-500 hover:bg-red-600 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+          >
+            Supprimer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Carte produit admin ──────────────────────────────────────────────────────
+
+function ProduitCard({
+  produit,
+  onEdit,
+  onToggle,
+  onDelete,
+}: {
+  produit: ProduitData;
+  onEdit: () => void;
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      className={`bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-opacity flex flex-col h-full ${
+        !produit.actif ? 'opacity-60' : ''
+      }`}
+    >
+      {/* Image */}
+      {produit.imageUrl ? (
+        <div className="relative w-full h-40 bg-gray-100">
+          <Image
+            src={produit.imageUrl}
+            alt={produit.nom}
+            fill
+            className="object-cover"
+            sizes="(max-width: 640px) 100vw, 300px"
+          />
+          {!produit.actif && (
+            <div className="absolute top-2 right-2 bg-gray-800/70 text-white text-xs font-semibold px-2 py-0.5 rounded-full">
+              Désactivé
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="w-full h-40 bg-gray-100 flex items-center justify-center">
+          <span className="text-gray-300 text-4xl">🍽</span>
+          {!produit.actif && (
+            <span className="absolute text-xs font-semibold bg-gray-800/70 text-white px-2 py-0.5 rounded-full">
+              Désactivé
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Infos */}
+      <div className="p-4 flex flex-col flex-1">
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <h3 className="font-semibold text-gray-900 leading-tight">{produit.nom}</h3>
+          <span className="shrink-0 text-base font-bold text-gray-900">{formatPrix(produit.prix)}</span>
+        </div>
+        <p className="text-xs text-orange-500 font-medium mb-1">{produit.categorie}</p>
+        {produit.description && (
+          <p className="text-sm text-gray-500 line-clamp-2 mb-3">{produit.description}</p>
+        )}
+        {produit.options.length > 0 && (
+          <p className="text-xs text-gray-400 mb-3">{produit.options.length} option(s)</p>
+        )}
+
+        {/* Boutons management */}
+        <div className="flex gap-2 pt-2 border-t border-gray-100 mt-auto">
+          <button
+            onClick={onEdit}
+            className="flex-1 text-xs font-medium text-blue-600 hover:text-blue-700 border border-blue-200 hover:bg-blue-50 rounded-lg py-1.5 transition-colors"
+          >
+            Modifier
+          </button>
+          <button
+            onClick={onToggle}
+            className={`flex-1 text-xs font-medium rounded-lg py-1.5 border transition-colors ${
+              produit.actif
+                ? 'text-gray-500 border-gray-200 hover:bg-gray-50'
+                : 'text-green-600 border-green-200 hover:bg-green-50'
+            }`}
+          >
+            {produit.actif ? 'Désactiver' : 'Activer'}
+          </button>
+          <button
+            onClick={onDelete}
+            className="flex-1 text-xs font-medium text-red-500 hover:text-red-600 border border-red-200 hover:bg-red-50 rounded-lg py-1.5 transition-colors"
+          >
+            Supprimer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AdminMenuPage() {
@@ -21,6 +151,7 @@ export default function AdminMenuPage() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ProduitData | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<ProduitData | null>(null);
 
   const showToast = (message: string, type: Toast['type'] = 'success') => {
     setToast({ message, type });
@@ -29,7 +160,6 @@ export default function AdminMenuPage() {
 
   const fetchProduits = useCallback(async () => {
     try {
-      // L'admin veut TOUS les produits (actifs + inactifs)
       const res = await fetch('/api/produits?all=true');
       if (!res.ok) throw new Error('Erreur API');
       const data = await res.json();
@@ -48,7 +178,6 @@ export default function AdminMenuPage() {
   // ── Créer ──────────────────────────────────────────────────────────────────
 
   const handleCreate = async (values: ProduitFormValues) => {
-    // null imageUrl n'est pas valide pour un POST (champ optionnel non défini)
     const body = { ...values, imageUrl: values.imageUrl || undefined };
     const res = await fetch('/api/produits', {
       method: 'POST',
@@ -103,16 +232,20 @@ export default function AdminMenuPage() {
 
   // ── Supprimer ──────────────────────────────────────────────────────────────
 
-  const handleDelete = async (produit: ProduitData) => {
-    if (!confirm(`Supprimer "${produit.nom}" ? Cette action est irréversible.`)) return;
-    const res = await fetch(`/api/produits/${produit._id}`, { method: 'DELETE' });
+  const handleDeleteConfirmed = async () => {
+    if (!confirmDelete) return;
+    const res = await fetch(`/api/produits/${confirmDelete._id}`, { method: 'DELETE' });
+    setConfirmDelete(null);
     if (!res.ok) {
       showToast('Erreur lors de la suppression', 'error');
       return;
     }
-    setProduits((prev) => prev.filter((p) => p._id !== produit._id));
+    setProduits((prev) => prev.filter((p) => p._id !== confirmDelete._id));
     showToast('Produit supprimé');
   };
+
+  // Groupement par catégorie
+  const categories = Array.from(new Set(produits.map((p) => p.categorie)));
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -127,6 +260,15 @@ export default function AdminMenuPage() {
         >
           {toast.message}
         </div>
+      )}
+
+      {/* Modale suppression */}
+      {confirmDelete && (
+        <ModalConfirmation
+          nom={confirmDelete.nom}
+          onConfirm={handleDeleteConfirmed}
+          onCancel={() => setConfirmDelete(null)}
+        />
       )}
 
       {/* En-tête */}
@@ -153,87 +295,57 @@ export default function AdminMenuPage() {
         </div>
       )}
 
-      {/* Liste */}
+      {/* Formulaire d'édition (panneau plein) */}
+      {editing && (
+        <div className="bg-white rounded-xl border shadow-sm p-6 mb-6">
+          <h2 className="text-lg font-semibold text-gray-800 mb-4">
+            Modifier — {editing.nom}
+          </h2>
+          <ProduitForm
+            initial={editing}
+            onSubmit={handleUpdate}
+            onCancel={() => setEditing(null)}
+          />
+        </div>
+      )}
+
+      {/* Loading */}
       {loading && (
-        <div className="space-y-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="bg-gray-200 rounded-xl h-16 animate-pulse" />
+            <div key={i} className="bg-gray-200 rounded-2xl h-64 animate-pulse" />
           ))}
         </div>
       )}
 
-      {!loading && produits.length === 0 && mode === 'list' && (
+      {!loading && produits.length === 0 && (
         <p className="text-gray-400 text-center py-16">
           Aucun produit. Créez le premier !
         </p>
       )}
 
+      {/* Grille par catégorie */}
       {!loading && produits.length > 0 && (
-        <div className="space-y-2">
-          {produits.map((p) => (
-            <div key={p._id} className="bg-white rounded-xl border shadow-sm overflow-hidden">
-              {/* Ligne principale */}
-              <div
-                className={`px-4 py-3 flex items-center gap-3 transition-opacity ${
-                  !p.actif ? 'opacity-50' : ''
-                }`}
-              >
-                {/* Badge statut */}
-                <span
-                  className={`shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${
-                    p.actif ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                  }`}
-                >
-                  {p.actif ? 'Actif' : 'Inactif'}
-                </span>
-
-                {/* Infos */}
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-gray-900 truncate">{p.nom}</p>
-                  <p className="text-xs text-gray-500 truncate">
-                    {p.categorie} · {formatPrix(p.prix)}
-                    {p.options.length > 0 && ` · ${p.options.length} option(s)`}
-                  </p>
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => setEditing(editing?._id === p._id ? null : p)}
-                    className="text-xs text-blue-600 hover:underline"
-                  >
-                    {editing?._id === p._id ? 'Fermer' : 'Modifier'}
-                  </button>
-                  <button
-                    onClick={() => toggleActif(p)}
-                    className="text-xs text-gray-500 hover:text-gray-800 hover:underline"
-                  >
-                    {p.actif ? 'Désactiver' : 'Activer'}
-                  </button>
-                  <button
-                    onClick={() => handleDelete(p)}
-                    className="text-xs text-red-400 hover:text-red-600 hover:underline"
-                  >
-                    Supprimer
-                  </button>
-                </div>
-              </div>
-
-              {/* Formulaire d'édition inline (accordéon animé) */}
-              <div className={`grid transition-all duration-300 ease-in-out ${
-                editing?._id === p._id ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
-              }`}>
-                <div className="overflow-hidden">
-                  <div className="border-t px-4 py-4 bg-gray-50">
-                    <ProduitForm
-                      initial={p}
-                      onSubmit={handleUpdate}
-                      onCancel={() => setEditing(null)}
+        <div className="space-y-8">
+          {categories.map((cat) => (
+            <section key={cat}>
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
+                {cat}
+              </h2>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {produits
+                  .filter((p) => p.categorie === cat)
+                  .map((p) => (
+                    <ProduitCard
+                      key={p._id}
+                      produit={p}
+                      onEdit={() => { setEditing(p); setCreating(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                      onToggle={() => toggleActif(p)}
+                      onDelete={() => setConfirmDelete(p)}
                     />
-                  </div>
-                </div>
+                  ))}
               </div>
-            </div>
+            </section>
           ))}
         </div>
       )}

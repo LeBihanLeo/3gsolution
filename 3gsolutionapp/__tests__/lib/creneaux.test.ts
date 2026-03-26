@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { genererCreneaux } from '@/lib/creneaux';
+import { filtrerCreneauxDisponibles } from '@/components/client/FormulaireCommande';
 
 describe('genererCreneaux', () => {
   it('génère 8 créneaux de 15 min entre 12:00 et 14:00', () => {
@@ -41,5 +42,29 @@ describe('genererCreneaux', () => {
     const result = genererCreneaux('09:00', '09:30', 15);
     expect(result[0]).toBe('09:00 – 09:15');
     expect(result[1]).toBe('09:15 – 09:30');
+  });
+});
+
+// TICK-101 — filtrerCreneauxDisponibles
+describe('filtrerCreneauxDisponibles', () => {
+  it('filtre les créneaux dont le début est dans le passé', () => {
+    // Créneaux fictifs dans le futur lointain → tous conservés
+    const future = ['23:00 – 23:15', '23:15 – 23:30'];
+    expect(filtrerCreneauxDisponibles(future, 10)).toHaveLength(2);
+  });
+
+  it('exclut les créneaux trop proches (buffer)', () => {
+    // Créneaux dont le début est 00:00 → passé garanti → filtrés
+    const past = ['00:00 – 00:15', '00:15 – 00:30'];
+    const result = filtrerCreneauxDisponibles(past, 10);
+    expect(result).toHaveLength(0);
+  });
+
+  it('retourne tableau vide si input vide', () => {
+    expect(filtrerCreneauxDisponibles([], 10)).toHaveLength(0);
+  });
+
+  it('ignore les créneaux au format invalide', () => {
+    expect(filtrerCreneauxDisponibles(['invalide'], 10)).toHaveLength(0);
   });
 });

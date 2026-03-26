@@ -1,4 +1,6 @@
-// TICK-057 — RGPD Art. 17 : bouton d'anonymisation des PII (commandes "prête" uniquement)
+// TICK-099 — Transitions complètes : payee → en_preparation → prete → recuperee
+// TICK-104 — Transitions visibles par statut
+// TICK-107 — Bouton "Anonymiser" retiré de l'UI (route DELETE /api/commandes/[id] conservée)
 'use client';
 
 import { useState } from 'react';
@@ -10,9 +12,11 @@ interface ProduitSnapshot {
   options: { nom: string; prix: number }[];
 }
 
+export type StatutCommande = 'en_attente_paiement' | 'payee' | 'en_preparation' | 'prete' | 'recuperee';
+
 export interface CommandeData {
   _id: string;
-  statut: 'en_attente_paiement' | 'payee' | 'prete';
+  statut: StatutCommande;
   client: { nom: string; telephone: string; email?: string };
   retrait: { type: 'immediat' | 'creneau'; creneau?: string };
   produits: ProduitSnapshot[];
@@ -23,8 +27,7 @@ export interface CommandeData {
 
 interface CommandeRowProps {
   commande: CommandeData;
-  onMarquerPrete: (id: string) => Promise<void>;
-  onSupprimer?: (id: string) => Promise<void>;
+  onAdvance: (id: string, statut: StatutCommande) => Promise<void>;
 }
 
 function formatPrix(centimes: number): string {
@@ -35,21 +38,31 @@ function idCourt(id: string): string {
   return id.slice(-6).toUpperCase();
 }
 
-const STATUT_LABEL: Record<CommandeData['statut'], string> = {
+const STATUT_LABEL: Record<StatutCommande, string> = {
   en_attente_paiement: 'En attente',
   payee: 'Payée',
+  en_preparation: 'En préparation',
   prete: 'Prête',
+  recuperee: 'Récupérée',
 };
 
-const STATUT_STYLE: Record<CommandeData['statut'], string> = {
+const STATUT_STYLE: Record<StatutCommande, string> = {
   en_attente_paiement: 'bg-yellow-100 text-yellow-700',
   payee: 'bg-blue-100 text-blue-700',
+  en_preparation: 'bg-amber-100 text-amber-700',
   prete: 'bg-green-100 text-green-700',
+  recuperee: 'bg-gray-100 text-gray-500',
 };
 
-export default function CommandeRow({ commande, onMarquerPrete, onSupprimer }: CommandeRowProps) {
+// Transitions admin — TICK-099
+const TRANSITION_NEXT: Partial<Record<StatutCommande, { label: string; statut: StatutCommande; className: string }>> = {
+  payee: { label: 'En préparation →', statut: 'en_preparation', className: 'bg-amber-500 hover:bg-amber-600 text-white' },
+  en_preparation: { label: 'Prête →', statut: 'prete', className: 'bg-green-600 hover:bg-green-700 text-white' },
+  prete: { label: 'Récupérée ✓', statut: 'recuperee', className: 'bg-gray-700 hover:bg-gray-800 text-white' },
+};
+
+export default function CommandeRow({ commande, onAdvance }: CommandeRowProps) {
   const [loading, setLoading] = useState(false);
-  const [loadingSuppr, setLoadingSuppr] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   const heure = new Date(commande.createdAt).toLocaleTimeString('fr-FR', {
@@ -57,21 +70,13 @@ export default function CommandeRow({ commande, onMarquerPrete, onSupprimer }: C
     minute: '2-digit',
   });
 
-  const handlePrete = async () => {
-    setLoading(true);
-    await onMarquerPrete(commande._id);
-    setLoading(false);
-  };
+  const transition = TRANSITION_NEXT[commande.statut];
 
-  const handleSupprimer = async () => {
-    if (!onSupprimer) return;
-    const confirmed = window.confirm(
-      `Anonymiser les données personnelles de la commande #${idCourt(commande._id)} ?\n\nLe nom, téléphone et email du client seront effacés. Cette action est irréversible.`
-    );
-    if (!confirmed) return;
-    setLoadingSuppr(true);
-    await onSupprimer(commande._id);
-    setLoadingSuppr(false);
+  const handleAdvance = async () => {
+    if (!transition) return;
+    setLoading(true);
+    await onAdvance(commande._id, transition.statut);
+    setLoading(false);
   };
 
   const retrait =
@@ -80,11 +85,7 @@ export default function CommandeRow({ commande, onMarquerPrete, onSupprimer }: C
       : `À ${commande.retrait.creneau}`;
 
   return (
-    <div
-      className={`bg-white rounded-xl border shadow-sm p-4 transition-all ${
-        commande.statut === 'prete' ? 'opacity-60' : ''
-      }`}
-    >
+    <div className="bg-white rounded-xl border shadow-sm p-4 transition-all">
       {/* Ligne principale */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex items-center gap-3">
@@ -101,26 +102,18 @@ export default function CommandeRow({ commande, onMarquerPrete, onSupprimer }: C
 
         <div className="flex items-center gap-2">
           <span className="font-bold text-gray-900">{formatPrix(commande.total)}</span>
-          {commande.statut === 'payee' && (
+
+          {/* Bouton transition suivante */}
+          {transition && (
             <button
-              onClick={handlePrete}
+              onClick={handleAdvance}
               disabled={loading}
-              className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+              className={`disabled:opacity-50 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${transition.className}`}
             >
-              {loading ? '…' : 'Marquer prête'}
+              {loading ? '…' : transition.label}
             </button>
           )}
-          {/* TICK-057 — RGPD Art. 17 : anonymisation des PII */}
-          {commande.statut === 'prete' && onSupprimer && (
-            <button
-              onClick={handleSupprimer}
-              disabled={loadingSuppr}
-              title="Anonymiser les données personnelles (RGPD)"
-              className="bg-red-700 hover:bg-red-800 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
-            >
-              {loadingSuppr ? '…' : 'Supprimer'}
-            </button>
-          )}
+
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
-export type StatutCommande = 'en_attente_paiement' | 'payee' | 'prete';
+export type StatutCommande = 'en_attente_paiement' | 'payee' | 'en_preparation' | 'prete' | 'recuperee';
 
 export interface IProduitSnapshot {
   produitId: mongoose.Types.ObjectId;
@@ -57,7 +57,7 @@ const CommandeSchema = new Schema<ICommande>(
     stripeSessionId: { type: String, required: true, unique: true },
     statut: {
       type: String,
-      enum: ['en_attente_paiement', 'payee', 'prete'] as StatutCommande[],
+      enum: ['en_attente_paiement', 'payee', 'en_preparation', 'prete', 'recuperee'] as StatutCommande[],
       default: 'en_attente_paiement',
     },
     client: {

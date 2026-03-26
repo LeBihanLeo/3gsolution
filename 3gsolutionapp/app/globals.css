@@ -33,6 +33,22 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ── Animations stepper ──────────────────────────────────────────────────── */
+@keyframes stepper-dot-in {
+  from { transform: scale(0); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+@keyframes stepper-line-in {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* ── Animation emoji ─────────────────────────────────────────────────────── */
+@keyframes emoji-swap {
+  from { transform: scale(0.5) rotate(-10deg); opacity: 0; }
+  to   { transform: scale(1)   rotate(0deg);   opacity: 1; }
+}
+
 .scrollbar-hide {
   scrollbar-width: none;
   -ms-overflow-style: none;
