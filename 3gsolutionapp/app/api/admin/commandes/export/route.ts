@@ -1,6 +1,7 @@
 // TICK-106 — Export CSV commandes (comptabilité)
+// TICK-125 — Paramètre ?statut=recuperee pour l'onglet "Passées"
 // Auth : admin requis (401 sinon)
-// Query : ?from=YYYY-MM-DD&to=YYYY-MM-DD (défaut : aujourd'hui)
+// Query : ?from=YYYY-MM-DD&to=YYYY-MM-DD&statut=recuperee (défaut : aujourd'hui, tous statuts payés)
 // Format CSV : UTF-8 BOM, séparateur point-virgule, TVA 10%
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -40,6 +41,9 @@ export async function GET(request: NextRequest) {
   const todayStr = toDateStr(new Date());
   const fromStr = searchParams.get('from') ?? todayStr;
   const toStr = searchParams.get('to') ?? todayStr;
+  // TICK-125 — filtre statut optionnel : 'recuperee' pour l'export comptabilité passées
+  const statutFilter = searchParams.get('statut');
+  const STATUTS_VALIDES = ['payee', 'en_preparation', 'prete', 'recuperee'];
 
   // Construire les bornes de date (inclusive)
   const from = new Date(`${fromStr}T00:00:00.000Z`);
@@ -49,12 +53,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Paramètres de date invalides (YYYY-MM-DD attendu)' }, { status: 400 });
   }
 
+  if (statutFilter && !STATUTS_VALIDES.includes(statutFilter)) {
+    return NextResponse.json({ error: 'Statut invalide' }, { status: 400 });
+  }
+
   try {
     await connectDB();
 
+    const statutQuery = statutFilter
+      ? { statut: statutFilter }
+      : { statut: { $ne: 'en_attente_paiement' } };
+
     const commandes = await Commande.find({
       createdAt: { $gte: from, $lte: to },
-      statut: { $ne: 'en_attente_paiement' }, // exclure les non-payées
+      ...statutQuery,
     })
       .sort({ createdAt: 1 })
       .lean() as (ICommande & { _id: { toString(): string } })[];

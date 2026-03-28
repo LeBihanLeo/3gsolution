@@ -2,15 +2,19 @@
 
 // TICK-039 — Bannière via DropZone (remplace le champ URL)
 // TICK-100 — Horaires d'ouverture
+// TICK-118 — Layout side-by-side formulaire | aperçu
+// TICK-122 — Sélecteur couleur principale + aperçu palette
 import { useEffect, useState } from 'react';
 import PersonnalisationApercu from '@/components/admin/PersonnalisationApercu';
 import DropZone from '@/components/admin/DropZone';
+import { generatePalette, SitePalette } from '@/lib/palette';
 
 interface FormData {
   nomRestaurant: string;
   banniereUrl: string;
   horaireOuverture: string;
   horaireFermeture: string;
+  couleurPrincipale: string;
 }
 
 const DEFAULT: FormData = {
@@ -18,25 +22,30 @@ const DEFAULT: FormData = {
   banniereUrl: '',
   horaireOuverture: '11:30',
   horaireFermeture: '14:00',
+  couleurPrincipale: '#E63946',
 };
 
 export default function PersonnalisationPage() {
   const [form, setForm] = useState<FormData>(DEFAULT);
+  const [palette, setPalette] = useState<SitePalette>(() => generatePalette(DEFAULT.couleurPrincipale));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
-    fetch('/api/site-config')
+    fetch('/api/site-config', { cache: 'no-store' })
       .then((r) => r.json())
       .then(({ data }) => {
         if (data) {
+          const couleur = data.couleurPrincipale ?? DEFAULT.couleurPrincipale;
           setForm({
             nomRestaurant: data.nomRestaurant ?? DEFAULT.nomRestaurant,
             banniereUrl: data.banniereUrl ?? '',
             horaireOuverture: data.horaireOuverture ?? DEFAULT.horaireOuverture,
             horaireFermeture: data.horaireFermeture ?? DEFAULT.horaireFermeture,
+            couleurPrincipale: couleur,
           });
+          setPalette(generatePalette(couleur));
         }
       })
       .catch(() => {})
@@ -44,7 +53,13 @@ export default function PersonnalisationPage() {
   }, []);
 
   function set(key: keyof FormData, value: string) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === 'couleurPrincipale' && /^#[0-9a-fA-F]{6}$/.test(value)) {
+        setPalette(generatePalette(value));
+      }
+      return next;
+    });
     setMessage(null);
   }
 
@@ -72,8 +87,11 @@ export default function PersonnalisationPage() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...form,
+          nomRestaurant: form.nomRestaurant,
           banniereUrl: form.banniereUrl || undefined,
+          horaireOuverture: form.horaireOuverture,
+          horaireFermeture: form.horaireFermeture,
+          couleurPrincipale: form.couleurPrincipale,
         }),
       });
       if (res.ok) {
@@ -98,9 +116,13 @@ export default function PersonnalisationPage() {
   }
 
   return (
-    <div className="max-w-2xl space-y-8">
+    // TICK-118 — layout side-by-side sur tablette/desktop
+    <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Personnalisation de la vitrine</h1>
 
+      <div className="flex flex-col md:flex-row gap-6 items-start">
+      {/* Colonne gauche : formulaire */}
+      <div className="flex-1 min-w-0">
       <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm p-6 space-y-6">
 
         {/* Nom du restaurant */}
@@ -127,6 +149,51 @@ export default function PersonnalisationPage() {
           onUploadSuccess={(url) => set('banniereUrl', url)}
           onRemove={() => set('banniereUrl', '')}
         />
+
+        {/* Couleur principale — TICK-122 */}
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">
+            Couleur principale du site
+          </label>
+          <div className="flex items-center gap-3 mb-3">
+            <input
+              type="color"
+              value={form.couleurPrincipale}
+              onChange={(e) => set('couleurPrincipale', e.target.value)}
+              className="h-10 w-16 cursor-pointer rounded border border-gray-200 p-0.5"
+            />
+            <input
+              type="text"
+              value={form.couleurPrincipale}
+              onChange={(e) => set('couleurPrincipale', e.target.value)}
+              pattern="^#[0-9a-fA-F]{6}$"
+              maxLength={7}
+              className="w-28 border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          {/* Swatches palette */}
+          <div className="flex gap-2 flex-wrap">
+            {(
+              [
+                ['primary', 'Principale'],
+                ['primaryLight', 'Claire'],
+                ['primaryDark', 'Foncée'],
+                ['primaryForeground', 'Texte'],
+                ['surface', 'Surface'],
+                ['border', 'Bordure'],
+              ] as [keyof SitePalette, string][]
+            ).map(([key, label]) => (
+              <div key={key} className="flex flex-col items-center gap-1">
+                <div
+                  className="w-9 h-9 rounded-lg border border-gray-200 shadow-sm"
+                  style={{ backgroundColor: palette[key] }}
+                  title={`${label}: ${palette[key]}`}
+                />
+                <span className="text-xs text-gray-400">{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* Horaires d'ouverture — TICK-100 */}
         <div>
@@ -185,16 +252,20 @@ export default function PersonnalisationPage() {
           {saving ? 'Enregistrement…' : 'Enregistrer'}
         </button>
       </form>
+      </div>
 
-      {/* Aperçu en temps réel */}
-      <div>
+      {/* Colonne droite : aperçu en temps réel */}
+      <div className="md:w-80 lg:w-96 shrink-0 md:sticky md:top-6">
         <h2 className="text-sm font-medium text-gray-600 mb-3 uppercase tracking-wide">
           Aperçu en temps réel
         </h2>
-        <PersonnalisationApercu
-          nomRestaurant={form.nomRestaurant}
-          banniereUrl={form.banniereUrl}
-        />
+        <div className="overflow-y-auto max-h-[80vh]">
+          <PersonnalisationApercu
+            nomRestaurant={form.nomRestaurant}
+            banniereUrl={form.banniereUrl}
+          />
+        </div>
+      </div>
       </div>
     </div>
   );

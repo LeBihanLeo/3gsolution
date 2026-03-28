@@ -7,24 +7,32 @@ import HeaderAuth from '@/components/client/HeaderAuth';
 import ProfilButton from '@/components/client/ProfilButton';
 import { connectDB } from '@/lib/mongodb';
 import SiteConfig from '@/models/SiteConfig';
+import { generatePalette, SitePalette } from '@/lib/palette';
+
+const DEFAULT_COULEUR = '#E63946';
 
 interface SiteConfigData {
   nomRestaurant: string;
   banniereUrl?: string;
+  palette: SitePalette;
 }
 
 const DEFAULT_CONFIG: SiteConfigData = {
   nomRestaurant: 'Mon Restaurant',
+  palette: generatePalette(DEFAULT_COULEUR),
 };
 
+// TICK-123 — no-store : palette fraîche à chaque requête
 async function getSiteConfig(): Promise<SiteConfigData> {
   try {
     await connectDB();
     const config = await SiteConfig.findOne().lean();
     if (!config) return DEFAULT_CONFIG;
+    const couleur = (config as { couleurPrincipale?: string }).couleurPrincipale ?? DEFAULT_COULEUR;
     return {
       nomRestaurant: config.nomRestaurant,
       banniereUrl: config.banniereUrl,
+      palette: generatePalette(couleur),
     };
   } catch {
     return DEFAULT_CONFIG;
@@ -39,9 +47,19 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function ClientLayout({ children }: { children: ReactNode }) {
   const config = await getSiteConfig();
 
+  // TICK-123 — CSS custom properties injectées sur le conteneur principal (Server Component)
+  const cssVars = {
+    '--color-primary': config.palette.primary,
+    '--color-primary-light': config.palette.primaryLight,
+    '--color-primary-dark': config.palette.primaryDark,
+    '--color-primary-fg': config.palette.primaryForeground,
+    '--color-surface': config.palette.surface,
+    '--color-border': config.palette.border,
+  } as React.CSSProperties;
+
   return (
     <CartProvider>
-      <div className="min-h-screen flex flex-col bg-stone-50">
+      <div className="min-h-screen flex flex-col bg-stone-50" style={cssVars}>
 
         {config.banniereUrl ? (
           /* ── Hero bannière ── */

@@ -41,7 +41,7 @@
 │   │   ├── page.tsx               # Dashboard admin — KPIs + 4 dernières commandes — Sprint 13 TICK-103
 │   │   ├── commandes/page.tsx     # Liste commandes + statuts + section récupérées + export CSV
 │   │   ├── menu/page.tsx          # Gestion produits (vue client avec boutons management — TICK-102)
-│   │   ├── personnalisation/page.tsx  # Bannière, nom, couleurs bordures, horaires d'ouverture
+│   │   ├── personnalisation/page.tsx  # Bannière, nom, couleur principale, horaires — layout side-by-side (Sprint 16 TICK-118)
 │   │   └── layout.tsx             # Auth guard
 │   └── api/
 │       ├── produits/
@@ -95,7 +95,8 @@
 │   ├── auth.ts                    # Config NextAuth
 │   ├── blob.ts                    # Helper Vercel Blob (upload)
 │   ├── ratelimit.ts               # TICK-052 — Rate limiting login (Upstash/in-memory)
-│   └── logger.ts                  # TICK-059 — Logs de sécurité structurés (JSON prod)
+│   ├── logger.ts                  # TICK-059 — Logs de sécurité structurés (JSON prod)
+│   └── palette.ts                 # TICK-122 — Génération palette couleur depuis couleurPrincipale (hex → SitePalette)
 ├── models/
 │   ├── Produit.ts
 │   ├── Commande.ts
@@ -142,6 +143,7 @@
   horaireOuverture: string,      // format "HH:MM", ex: "11:30" — Sprint 13 TICK-100
   horaireFermeture: string,      // format "HH:MM", ex: "14:00" — Sprint 13 TICK-100
   fermeeAujourdhui: boolean,     // fermeture manuelle du jour, défaut: false — Sprint 13 TICK-105
+  couleurPrincipale: string,     // hex ex: "#E63946" — Sprint 16 TICK-122 (remplace couleurBordureGauche/Droite)
   updatedAt: Date
 }
 ```

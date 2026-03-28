@@ -11,9 +11,12 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   return (
     <div className="min-h-screen bg-gray-100">
       <AdminNav />
-      <main className="max-w-5xl mx-auto px-4 py-6">
-        {children}
-      </main>
+      {/* TICK-117 — overflow-x-auto pour tablette, min-w pour éviter le scroll horizontal sur le nav */}
+      <div className="overflow-x-auto">
+        <main className="min-w-[768px] max-w-5xl mx-auto px-4 py-6">
+          {children}
+        </main>
+      </div>
     </div>
   );
 }

@@ -105,9 +105,9 @@ export default function FormulaireCommande() {
   const telRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
 
-  // Charger SiteConfig au montage — TICK-101
+  // Charger SiteConfig au montage — TICK-101 / TICK-119/120 : cache: 'no-store' pour horaires/fermeture frais
   useEffect(() => {
-    fetch('/api/site-config')
+    fetch('/api/site-config', { cache: 'no-store' })
       .then((r) => r.json())
       .then(({ data }) => {
         if (data) {

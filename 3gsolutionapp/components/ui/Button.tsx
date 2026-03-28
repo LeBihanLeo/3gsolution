@@ -11,9 +11,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
 }
 
+// TICK-123 — variant primary utilise les CSS custom properties injectées par le layout client
+// Les autres variants conservent leurs couleurs hardcodées (admin + pages hors palette)
 const variantClasses: Record<Variant, string> = {
   primary:
-    'bg-orange-600 text-white hover:bg-orange-700 active:bg-orange-800 disabled:bg-orange-300',
+    'text-[color:var(--color-primary-fg,#fff)] [background-color:var(--color-primary,#E63946)] hover:[background-color:var(--color-primary-dark,#b02030)] active:[background-color:var(--color-primary-dark,#b02030)] disabled:opacity-60',
   secondary:
     'bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 disabled:text-orange-300',
   danger:

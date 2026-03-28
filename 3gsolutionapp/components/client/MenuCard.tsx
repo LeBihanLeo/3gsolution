@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { useCart, CartOption } from '@/lib/cartContext';
+import { useCart, CartOption, buildOptionsKey } from '@/lib/cartContext';
 
 interface Option {
   nom: string;
@@ -29,10 +29,10 @@ export default function MenuCard({ produitId, nom, description, prix, options, i
   const [selectedOptions, setSelectedOptions] = useState<CartOption[]>([]);
   const [showOptions, setShowOptions] = useState(false);
 
-  // Quantité en panier pour ce produit sans options
-  const cartItem = options.length === 0
-    ? items.find((i) => i.produitId === produitId && i.options.length === 0)
-    : null;
+  // Quantité en panier pour la sélection courante (options cochées ou aucune)
+  const cartItem = items.find(
+    (i) => i.produitId === produitId && buildOptionsKey(i.options) === buildOptionsKey(selectedOptions)
+  );
   const quantite = cartItem?.quantite ?? 0;
 
   const toggleOption = (opt: Option) => {
@@ -52,11 +52,11 @@ export default function MenuCard({ produitId, nom, description, prix, options, i
   };
 
   const handleIncrement = () => {
-    updateQuantity(produitId, [], quantite + 1);
+    updateQuantity(produitId, selectedOptions, quantite + 1);
   };
 
   const handleDecrement = () => {
-    updateQuantity(produitId, [], quantite - 1);
+    updateQuantity(produitId, selectedOptions, quantite - 1);
   };
 
   return (
@@ -86,50 +86,38 @@ export default function MenuCard({ produitId, nom, description, prix, options, i
               <div>
                 <span className="text-base font-bold text-gray-900">{formatPrix(prix)}</span>
                 {selectedOptions.length > 0 && (
-                  <span className="ml-2 text-sm text-orange-500 font-medium">
+                  <span className="ml-2 text-sm font-medium [color:var(--color-primary,#E63946)]">
                     → {formatPrix(totalItem)}
                   </span>
                 )}
               </div>
 
               {/* Action droite */}
-              {options.length === 0 ? (
-                quantite > 0 ? (
-                  /* Stepper */
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={handleDecrement}
-                      className="w-8 h-8 rounded-full border-2 border-orange-500 text-orange-500 flex items-center justify-center font-bold text-lg leading-none hover:bg-orange-50 active:bg-orange-100 transition-colors"
-                      aria-label="Retirer un"
-                    >
-                      −
-                    </button>
-                    <span className="w-5 text-center font-semibold text-gray-900 text-sm">{quantite}</span>
-                    <button
-                      onClick={handleIncrement}
-                      className="w-8 h-8 rounded-full bg-orange-500 text-white flex items-center justify-center font-bold text-lg leading-none hover:bg-orange-600 active:bg-orange-700 transition-colors"
-                      aria-label="Ajouter un"
-                    >
-                      +
-                    </button>
-                  </div>
-                ) : (
-                  /* Bouton + rond */
+              {quantite > 0 ? (
+                /* Stepper — pour toutes les cartes dès qu'un item correspondant est au panier */
+                <div className="flex items-center gap-2 shrink-0">
                   <button
-                    onClick={handleAdd}
-                    disabled={disabled}
-                    className="w-9 h-9 rounded-full bg-orange-500 text-white flex items-center justify-center shrink-0 text-xl font-bold leading-none hover:bg-orange-600 active:bg-orange-700 transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                    aria-label={`Ajouter ${nom} au panier`}
+                    onClick={handleDecrement}
+                    className="w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold text-lg leading-none transition-colors [border-color:var(--color-primary,#E63946)] [color:var(--color-primary,#E63946)] hover:[background-color:var(--color-surface,#fdf0f0)] active:[background-color:var(--color-surface,#fdf0f0)]"
+                    aria-label="Retirer un"
+                  >
+                    −
+                  </button>
+                  <span className="w-5 text-center font-semibold text-gray-900 text-sm">{quantite}</span>
+                  <button
+                    onClick={handleIncrement}
+                    className="w-8 h-8 rounded-full text-[color:var(--color-primary-fg,#fff)] flex items-center justify-center font-bold text-lg leading-none transition-colors [background-color:var(--color-primary,#E63946)] hover:[background-color:var(--color-primary-dark,#b02030)] active:[background-color:var(--color-primary-dark,#b02030)]"
+                    aria-label="Ajouter un"
                   >
                     +
                   </button>
-                )
+                </div>
               ) : (
-                /* TICK-096 — bouton + uniforme sur toutes les cartes */
+                /* Bouton + rond */
                 <button
                   onClick={handleAdd}
                   disabled={disabled}
-                  className="w-9 h-9 rounded-full bg-orange-500 text-white flex items-center justify-center shrink-0 text-xl font-bold leading-none hover:bg-orange-600 active:bg-orange-700 transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-9 h-9 rounded-full text-[color:var(--color-primary-fg,#fff)] flex items-center justify-center shrink-0 text-xl font-bold leading-none transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed [background-color:var(--color-primary,#E63946)] hover:[background-color:var(--color-primary-dark,#b02030)] active:[background-color:var(--color-primary-dark,#b02030)]"
                   aria-label={`Ajouter ${nom} au panier`}
                 >
                   +
@@ -142,7 +130,7 @@ export default function MenuCard({ produitId, nom, description, prix, options, i
         {options.length > 0 && (
           <button
             onClick={() => setShowOptions(!showOptions)}
-            className="mt-3 text-xs font-medium text-orange-500 hover:text-orange-600 flex items-center gap-1 transition-colors"
+            className="mt-3 text-xs font-medium flex items-center gap-1 transition-colors [color:var(--color-primary,#E63946)]"
           >
             <span>{showOptions ? '▲' : '▼'}</span>
             <span>{showOptions ? 'Masquer les options' : 'Personnaliser'}</span>
@@ -160,7 +148,7 @@ export default function MenuCard({ produitId, nom, description, prix, options, i
                   className="rounded accent-orange-500 w-4 h-4"
                 />
                 <span className="flex-1 text-gray-800 group-hover:text-gray-900">{opt.nom}</span>
-                <span className="text-orange-500 font-medium">+{formatPrix(opt.prix)}</span>
+                <span className="font-medium [color:var(--color-primary,#E63946)]">+{formatPrix(opt.prix)}</span>
               </label>
             ))}
           </div>

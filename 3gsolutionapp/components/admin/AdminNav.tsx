@@ -12,7 +12,7 @@ export default function AdminNav() {
     return (
       <Link
         href={href}
-        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+        className={`px-4 min-h-[44px] flex items-center rounded-lg text-sm font-medium transition-colors ${
           active
             ? 'bg-blue-600 text-white'
             : 'text-gray-600 hover:bg-gray-100'
@@ -24,17 +24,18 @@ export default function AdminNav() {
   };
 
   return (
-    <nav className="bg-white border-b shadow-sm">
-      <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+    // TICK-117 — overflow-x-auto pour tablette, hauteur de touch ≥ 44px sur les liens nav
+    <nav className="bg-white border-b shadow-sm overflow-x-auto">
+      <div className="min-w-[768px] max-w-5xl mx-auto px-4 flex items-center justify-between">
         <div className="flex items-center gap-1">
-          <span className="font-bold text-gray-900 mr-4">Admin</span>
+          <span className="font-bold text-gray-900 mr-4 py-3">Admin</span>
           {navLink('/admin/commandes', 'Commandes')}
           {navLink('/admin/menu', 'Menu')}
           {navLink('/admin/personnalisation', 'Personnalisation')}
         </div>
         <button
           onClick={() => signOut({ callbackUrl: '/admin/login' })}
-          className="text-sm text-gray-500 hover:text-red-500 hover:underline transition-colors"
+          className="text-sm text-gray-500 hover:text-red-500 hover:underline transition-colors min-h-[44px]"
         >
           Se déconnecter
         </button>

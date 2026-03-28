@@ -3,7 +3,11 @@ import mongoose, { Schema, Document, Model } from 'mongoose';
 export interface ISiteConfig extends Document {
   nomRestaurant: string;
   banniereUrl?: string;
+  // TICK-122 — couleurPrincipale remplace couleurBordureGauche/Droite
+  couleurPrincipale: string;  // hex ex: "#E63946" — défaut: "#E63946"
+  /** @deprecated Use couleurPrincipale */
   couleurBordureGauche?: string;
+  /** @deprecated Use couleurPrincipale */
   couleurBordureDroite?: string;
   // TICK-100 — Horaires d'ouverture
   horaireOuverture: string;   // format "HH:MM", ex: "11:30"
@@ -17,6 +21,8 @@ const SiteConfigSchema = new Schema<ISiteConfig>(
   {
     nomRestaurant: { type: String, required: true, default: 'Mon Restaurant' },
     banniereUrl: { type: String },
+    // TICK-122 — couleurPrincipale
+    couleurPrincipale: { type: String, required: true, default: '#E63946' },
     couleurBordureGauche: { type: String },
     couleurBordureDroite: { type: String },
     // TICK-100

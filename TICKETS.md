@@ -25,7 +25,8 @@
 | 13 | Dashboard Admin & Gestion Avancée | TICK-100 → 106 | 5,25 j | ✅ Implémenté |
 | 14 | Correctifs UX & Auth — Admin + Client | TICK-107 → 113 | 2,25 j |
 | 15 | Correctifs UX Client — Re-commande, Profil, Navigation | TICK-114 → 116 | 1,0 j |
-| **Total** | | **116 tickets** | **~76,75 j** |
+| 16 | Refactoring Admin, Palette Couleur & Correctifs | TICK-117 → 125 | 7,0 j |
+| **Total** | | **125 tickets** | **~83,75 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -3033,6 +3034,273 @@ Le bouton/lien "Mon profil" est actuellement rendu dans `HeaderAuth.tsx` (compos
 - [ ] Sur toutes les pages client (menu, panier, commande, confirmation, profil) : le bouton est visible en haut à droite de la zone de contenu
 - [ ] Aucune régression sur les autres éléments du header (nom du restaurant, bannière, etc.)
 - [ ] Vérifier que le bouton ne chevauche pas d'autres éléments de contenu sur mobile
+
+---
+
+## Sprint 16 — Refactoring Admin, Palette Couleur & Correctifs (7,0 j)
+
+> Ajouté le 2026-03-27 · Cible : iPad/tablette pour l'admin, bugfixes horaires/boutique, palette couleur dynamique, onglets commandes + export CSV.
+
+---
+
+### TICK-117 — Layout admin : responsive tablette (iPad first)
+**Épic :** Admin / UX / Layout
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-014
+
+**Description :**
+L'interface admin est conçue pour desktop large. Elle doit être optimisée pour une utilisation sur iPad/tablette (768px–1024px) sans être mobile-first. Objectif : lisibilité maximale, sections bien délimitées, navigation claire à partir de 768px.
+
+**Critères d'acceptance :**
+- [ ] Le layout admin (`app/(admin)/layout.tsx`) définit une largeur minimale de `min-w-[768px]` — pas de scroll horizontal sur tablette
+- [ ] La navigation admin (onglets ou sidebar) est lisible et cliquable au doigt (hauteur de touche ≥ 44px)
+- [ ] Toutes les pages admin (`/admin`, `/admin/commandes`, `/admin/menu`, `/admin/personnalisation`) sont utilisables à 768px sans chevauchement d'éléments
+- [ ] Les tableaux/listes de commandes et produits ont un scroll horizontal interne (`overflow-x-auto`) sur tablette plutôt que de casser le layout
+- [ ] Les boutons d'action (modifier, supprimer, changer statut) restent visibles et cliquables sur tablette
+- [ ] Aucune régression sur desktop (≥ 1024px)
+
+---
+
+### TICK-118 — Admin personnalisation : layout side-by-side (formulaire | rendu)
+**Épic :** Admin / UX / Personnalisation
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-117, TICK-031
+
+**Description :**
+Dans `app/(admin)/personnalisation/page.tsx`, la section formulaire et la section aperçu (`PersonnalisationApercu`) sont empilées verticalement. Les mettre côte à côte : formulaire à gauche, aperçu (rendu) à droite. Cela améliore drastiquement l'utilisabilité sur tablette/desktop où l'utilisateur voit en temps réel l'impact de ses modifications.
+
+**Critères d'acceptance :**
+- [ ] Mise en page `flex flex-row gap-6` (ou `grid grid-cols-2 gap-6`) sur tablette/desktop (≥ 768px)
+- [ ] Colonne gauche : formulaire de personnalisation (champs nom, couleurs, horaires, bannière)
+- [ ] Colonne droite : composant `PersonnalisationApercu` — rendu en temps réel de la vitrine
+- [ ] Sur mobile (< 768px) : empilement vertical conservé (formulaire au-dessus, aperçu en dessous)
+- [ ] L'aperçu reste visible sans scroll vertical dès 768px (hauteur adaptée, scroll interne si nécessaire)
+- [ ] Aucune régression fonctionnelle : les sauvegardes et l'aperçu temps réel fonctionnent comme avant
+
+---
+
+### TICK-119 — Fix : toggle "Fermer la boutique" sans effet
+**Épic :** Admin / Bug / Boutique
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-105 (Sprint 13)
+
+**Description :**
+Le bouton "Fermer la boutique aujourd'hui" (`fermeeAujourdhui`) côté admin ne se traduit pas par un blocage effectif des commandes côté client. Le champ est peut-être bien persisté en base mais n'est pas lu correctement lors du chargement côté client, ou le fetch de `site-config` est mis en cache et retourne une valeur périmée.
+
+**Cause probable :**
+- `GET /api/site-config` est mis en cache par Next.js ou le navigateur → la valeur `fermeeAujourdhui: true` n'est pas vue côté client après modification admin.
+- Ou : le code client qui vérifie `fermeeAujourdhui` n'est pas exécuté au bon endroit (ex. vérification absente dans `FormulaireCommande` ou `commande/page.tsx`).
+
+**Critères d'acceptance :**
+- [ ] Identifier le point de lecture de `fermeeAujourdhui` côté client (API + composant concerné)
+- [ ] `GET /api/site-config` : ajouter `{ cache: 'no-store' }` ou `revalidate: 0` pour éviter tout cache sur cette route — la valeur doit être fraîche à chaque requête
+- [ ] Si `fermeeAujourdhui === true` : la page de commande côté client affiche un message clair ("La boutique est fermée aujourd'hui") et empêche la sélection d'un créneau ou la soumission
+- [ ] Après que l'admin désactive "Fermer la boutique" → le client peut à nouveau commander sans rafraîchir manuellement (au plus 1 rechargement de page)
+- [ ] Test manuel : toggle ON → commande bloquée côté client, toggle OFF → commande possible
+
+---
+
+### TICK-120 — Fix : modification des horaires admin sans impact sur les créneaux disponibles côté client
+**Épic :** Admin / Bug / Créneaux
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,0 j
+**Dépendances :** TICK-028, TICK-119
+
+**Description :**
+Modifier les horaires d'ouverture/fermeture en admin (`horaireOuverture`, `horaireFermeture`) ne met pas à jour les créneaux disponibles côté client. Exemple : boutique ouverte de 11h30 à 14h, modification à 8h30 → client reçoit toujours "Aucun créneau disponible pour aujourd'hui. La boutique ferme bientôt." à 9h30.
+
+**Causes probables :**
+1. **Cache** : `GET /api/site-config` retourne l'ancienne valeur (idem TICK-119).
+2. **Calcul des créneaux** : le calcul dans `FormulaireCommande` compare l'heure courante aux horaires lus au montage du composant — si les horaires ne sont pas rechargés, les créneaux ne se recalculent pas.
+3. **Logique de "ferme bientôt"** : le message peut être généré par une condition sur `horaireFermeture` qui n'est pas recalculée après mise à jour.
+
+**Critères d'acceptance :**
+- [ ] `GET /api/site-config` retourne systématiquement les données fraîches (no-store / revalidate: 0) — même correction que TICK-119 si non déjà appliquée
+- [ ] `FormulaireCommande.tsx` (ou équivalent) recharge `site-config` à chaque affichage de la page commande (pas seulement au montage initial de l'app)
+- [ ] Le calcul des créneaux disponibles est effectué **après** réception des horaires frais : `horaireOuverture` et `horaireFermeture` lus depuis la config fraîche
+- [ ] Test : ouvrir `/commande`, noter les créneaux, modifier les horaires en admin, recharger `/commande` → les créneaux reflètent les nouveaux horaires
+- [ ] Test spécifique scénario signalé : il est 9h30, admin passe l'ouverture à 8h30 → le client peut voir des créneaux à partir de 8h30 (ou le prochain créneau ≥ heure courante)
+- [ ] Le message "La boutique ferme bientôt" n'apparaît que si l'heure courante dépasse réellement `horaireFermeture` selon la config fraîche
+- [ ] Aucune régression sur la génération des créneaux (intervalles 15 min, non passés, dans la plage d'ouverture)
+
+---
+
+### TICK-121 — Fix : section "Récupérer aujourd'hui" vide malgré des commandes récupérées
+**Épic :** Admin / Bug / Dashboard
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-103 (Sprint 13)
+
+**Description :**
+La section "Récupérer aujourd'hui" dans la page admin des commandes (`/admin/commandes`) n'affiche aucune commande alors que des commandes ont été marquées comme récupérées (`statut: "recuperee"`) dans la journée.
+
+**Cause probable :**
+- Le filtre côté API ou côté UI compare `createdAt` au lieu de la date de passage en statut `"recuperee"` — or ce timestamp de transition n'est pas stocké.
+- Ou : le filtre `"recuperee"` n'est pas inclus dans la requête qui alimente cette section, ou la date de comparaison utilise UTC au lieu du fuseau local.
+
+**Critères d'acceptance :**
+- [ ] Identifier la requête qui alimente la section "Récupérer aujourd'hui" (API ou filtre client)
+- [ ] Corriger le filtre : inclure les commandes avec `statut: "recuperee"` **et** `createdAt` dans la journée courante (minuit → maintenant, heure locale)
+- [ ] Si le problème est lié au fuseau horaire UTC/local : adapter la comparaison de dates pour utiliser le début de journée en heure locale (Paris/Europe)
+- [ ] La section affiche bien les commandes récupérées du jour après correction
+- [ ] Aucune régression sur les autres sections (commandes en cours, en attente)
+
+---
+
+### TICK-122 — Admin personnalisation : sélecteur couleur principale + génération de palette
+**Épic :** Admin / Personnalisation / Design System
+**Priorité :** 🟠 Haute
+**Sizing :** 1,5 j
+**Dépendances :** TICK-031, TICK-118
+
+**Description :**
+Remplacer les deux champs "couleur bordure gauche" et "couleur bordure droite" par un seul champ **couleur principale** (color picker). À partir de cette couleur, générer automatiquement une palette complète (teintes claires, foncées, couleur de texte contrastée) qui sera utilisée sur tout le site. La palette doit rester dans la teinte choisie et respecter les contraintes de contraste WCAG AA.
+
+**Algorithme de génération de palette (`lib/palette.ts`) :**
+```typescript
+// Entrée : couleur principale hex (ex: "#E63946")
+// Sortie : palette de 6 tokens
+export interface SitePalette {
+  primary: string;         // couleur choisie (ex: #E63946)
+  primaryLight: string;    // teinte +40% luminosité (fonds, survols légers)
+  primaryDark: string;     // teinte -30% luminosité (hover boutons, focus)
+  primaryForeground: string; // blanc (#fff) ou noir (#111) selon contraste WCAG AA sur primary
+  surface: string;         // très clair, quasi-blanc teinté (fonds de cartes)
+  border: string;          // teinte moyennement saturée (séparateurs, bordures)
+}
+// Utiliser hsl() pour les manipulations de luminosité
+// primaryForeground : choisir #fff si contrast ratio > 4.5 sur primary, sinon #111
+```
+
+**Modèle `SiteConfig` — modification :**
+```typescript
+// Remplacer :
+couleurBordureGauche: string;
+couleurBordureDroite: string;
+// Par :
+couleurPrincipale: string;  // hex, ex: "#E63946" — défaut: "#E63946"
+```
+
+**Critères d'acceptance :**
+- [ ] `lib/palette.ts` : fonction `generatePalette(hex: string): SitePalette` exportée et testable
+- [ ] La palette générée reste dans la teinte de la couleur choisie (pas de couleurs complémentaires ou analogues)
+- [ ] `primaryForeground` garantit un ratio de contraste ≥ 4.5:1 sur `primary` (WCAG AA)
+- [ ] `surface` est suffisamment clair pour servir de fond de carte (luminosité ≥ 92%)
+- [ ] `models/SiteConfig.ts` : champ `couleurPrincipale` remplace `couleurBordureGauche/Droite` — migration `upsert` transparente (valeur par défaut `"#E63946"` si absente)
+- [ ] `PUT /api/site-config` : accepte `couleurPrincipale` (string hex, validé Zod `z.string().regex(/^#[0-9a-fA-F]{6}$/)`)
+- [ ] `GET /api/site-config` : retourne `couleurPrincipale` **et** la palette calculée (`palette: SitePalette`) — calculée à la volée, non stockée
+- [ ] Formulaire admin (`personnalisation/page.tsx`) : `<input type="color">` pour choisir la couleur principale, avec aperçu de la palette générée (6 swatches colorés affichés)
+- [ ] L'aperçu `PersonnalisationApercu` utilise la palette pour le rendu temps réel
+- [ ] Aucune régression : les anciens enregistrements SiteConfig sans `couleurPrincipale` utilisent la valeur par défaut
+
+---
+
+### TICK-123 — Application de la palette couleur dynamique côté client
+**Épic :** Client / Design System / Personnalisation
+**Priorité :** 🟠 Haute
+**Sizing :** 1,5 j
+**Dépendances :** TICK-122
+
+**Description :**
+Injecter la palette générée (TICK-122) dans le layout client via des **CSS custom properties** (`var(--color-primary)`, etc.), et remplacer toutes les couleurs hardcodées sur les éléments visuels principaux (boutons, headers, accents, fonds de cartes) par ces variables. Le résultat : changer la couleur principale en admin re-colore instantanément tout le site client.
+
+**Stratégie d'injection :**
+```tsx
+// app/(client)/layout.tsx — Server Component
+const config = await fetch('/api/site-config', { cache: 'no-store' }).then(r => r.json());
+const { palette } = config;
+
+const cssVars = {
+  '--color-primary': palette.primary,
+  '--color-primary-light': palette.primaryLight,
+  '--color-primary-dark': palette.primaryDark,
+  '--color-primary-fg': palette.primaryForeground,
+  '--color-surface': palette.surface,
+  '--color-border': palette.border,
+} as React.CSSProperties;
+
+return <html><body style={cssVars}>{children}</body></html>;
+```
+
+**Éléments à migrer vers les CSS variables :**
+- Boutons primaires (`Button` variant primary) : fond `var(--color-primary)`, texte `var(--color-primary-fg)`, hover `var(--color-primary-dark)`
+- Header client (bannière, nom restaurant) : accent `var(--color-primary)`
+- Cartes produits (`MenuCard`) : bordure/accent `var(--color-border)`
+- Stepper commande (`CommandeStepper`) : étape active `var(--color-primary)`
+- Fonds de sections légèrement teintés : `var(--color-surface)`
+
+**Critères d'acceptance :**
+- [ ] `app/(client)/layout.tsx` injecte les 6 CSS variables via `style` sur `<body>` (Server Component, pas de JS client)
+- [ ] `components/ui/Button.tsx` variant `primary` utilise les CSS variables (via `style` inline ou classe Tailwind arbitraire `bg-[var(--color-primary)]`)
+- [ ] `components/client/MenuCard.tsx` : au moins un élément visuel utilise `var(--color-border)` ou `var(--color-primary)`
+- [ ] Changer `couleurPrincipale` en admin → recharger le site client → les couleurs sont mises à jour (sans redéploiement)
+- [ ] Tous les contrastes texte/fond respectent WCAG AA (≥ 4.5:1) avec la palette par défaut ET avec une couleur sombre testée (ex: `#1a1a2e`)
+- [ ] L'ancien système `couleurBordureGauche/Droite` est supprimé de tous les composants client
+- [ ] Le layout admin n'est **pas** affecté par la palette client (classes admin restent hardcodées ou utilisent une palette neutre dédiée)
+- [ ] Aucune régression visuelle notable sur les pages client avec la couleur par défaut
+
+---
+
+### TICK-124 — Admin commandes : 2 onglets "En cours" / "Passées"
+**Épic :** Admin / UX / Commandes
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-015, TICK-103
+
+**Description :**
+La page `/admin/commandes` affiche toutes les commandes dans une liste unique. La diviser en **2 onglets** :
+- **En cours** : statuts `payee`, `en_preparation`, `prete` — commandes actives à traiter
+- **Passées** : statut `recuperee` — commandes terminées (historique)
+
+**Critères d'acceptance :**
+- [ ] Deux onglets visuels en haut de la page : "En cours" et "Passées" — onglet actif clairement mis en évidence
+- [ ] **Onglet "En cours"** : affiche les commandes avec `statut` dans `["payee", "en_preparation", "prete"]`, triées par `createdAt` ASC (les plus anciennes d'abord)
+- [ ] **Onglet "Passées"** : affiche les commandes avec `statut === "recuperee"`, triées par `createdAt` DESC (les plus récentes d'abord)
+- [ ] Le filtre peut être côté client (state local) si toutes les commandes sont déjà chargées, ou côté API avec un paramètre `?onglet=en_cours|passees`
+- [ ] La section "Récupérer aujourd'hui" (TICK-121 fixé) reste présente dans l'onglet "En cours" ou en header global
+- [ ] L'onglet actif est conservé lors d'un changement de statut (pas de reset vers "En cours" après action)
+- [ ] Les actions d'onglet (changement de statut, export) sont contextuelles à l'onglet actif
+- [ ] Aucune régression sur les fonctionnalités existantes (changement de statut, affichage des détails)
+
+---
+
+### TICK-125 — Admin commandes passées : export CSV comptabilité
+**Épic :** Admin / Commandes / Export
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-124, TICK-106
+
+**Description :**
+Ajouter un bouton **"Exporter CSV"** dans l'onglet "Commandes passées" pour télécharger les commandes récupérées au format CSV. Ce fichier est destiné à la comptabilité : une ligne par commande, avec les informations essentielles.
+
+**Format CSV (séparateur `;`, encodage UTF-8 BOM pour Excel) :**
+```
+Date;Heure;Numéro commande;Client;Téléphone;Email;Produits;Total (€)
+2026-03-15;12h30;abc123...;Jean Dupont;06 12 34 56 78;jean@example.com;"Burger x2, Frites x1";18,50
+```
+
+**Colonnes :**
+- `Date` : `createdAt` au format `YYYY-MM-DD` (heure locale)
+- `Heure` : `createdAt` au format `HH:MM` (heure locale)
+- `Numéro commande` : `_id` tronqué (8 premiers caractères) ou `stripeSessionId` tronqué
+- `Client` : `client.nom`
+- `Téléphone` : `client.telephone`
+- `Email` : `client.email` (vide si absent)
+- `Produits` : liste concaténée `"Produit A x2, Produit B x1"` (avec options si présentes)
+- `Total (€)` : `total / 100` avec virgule décimale (format français : `18,50`)
+
+**Critères d'acceptance :**
+- [ ] Bouton "Exporter CSV" visible dans l'onglet "Commandes passées" (haut ou bas de liste)
+- [ ] Appel `GET /api/admin/commandes/export?statut=recuperee` — route existante (TICK-106) ou à étendre avec le filtre `statut`
+- [ ] Le CSV inclut **uniquement** les commandes avec `statut: "recuperee"`
+- [ ] Filtrage optionnel par période (si une plage de dates est sélectionnée dans l'UI) — le paramètre `?from=YYYY-MM-DD&to=YYYY-MM-DD` est supporté par la route
+- [ ] Encodage UTF-8 avec BOM (`\uFEFF`) pour compatibilité Excel
+- [ ] Header HTTP : `Content-Disposition: attachment; filename="commandes-YYYY-MM-DD.csv"`
+- [ ] Les commandes anonymisées (PII remplacés par `[Supprimé]`) sont incluses telles quelles dans le CSV
+- [ ] Aucune régression sur l'onglet "En cours"
 
 ---
 
