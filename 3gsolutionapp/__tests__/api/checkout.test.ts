@@ -55,6 +55,7 @@ const mockProduitDB = {
   _id: { toString: () => 'p1' },
   nom: 'Burger',
   prix: 850,
+  taux_tva: 10, // TICK-129
   actif: true,
   options: [],
 };
@@ -120,5 +121,17 @@ describe('POST /api/checkout', () => {
     mockCreateSession.mockRejectedValueOnce(new Error('Stripe error'));
     const res = await POST(makeReq(validBody));
     expect(res.status).toBe(500);
+  });
+
+  // TICK-129 — taux_tva inclus dans metadata produits
+  it('taux_tva du produit BDD est inclus dans metadata.produits', async () => {
+    mockProduitFind.mockReturnValueOnce({
+      lean: vi.fn().mockResolvedValue([{ ...mockProduitDB, taux_tva: 20 }]),
+    });
+    mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
+    await POST(makeReq(validBody));
+    const call = mockCreateSession.mock.calls[0][0];
+    const produitsSnapshot = JSON.parse(call.metadata.produits);
+    expect(produitsSnapshot[0].taux_tva).toBe(20);
   });
 });

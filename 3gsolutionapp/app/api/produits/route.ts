@@ -10,11 +10,19 @@ const OptionSchema = z.object({
   prix: z.number().int().min(0),
 });
 
+const TauxTvaSchema = z.union([
+  z.literal(0),
+  z.literal(5.5),
+  z.literal(10),
+  z.literal(20),
+]).default(10); // TICK-127
+
 const ProduitSchema = z.object({
   nom: z.string().min(1, 'Le nom est requis'),
   description: z.string().min(1, 'La description est requise'),
   categorie: z.string().min(1, 'La catégorie est requise'),
   prix: z.number().int().min(0, 'Le prix doit être positif'),
+  taux_tva: TauxTvaSchema, // TICK-127
   options: z.array(OptionSchema).default([]),
   imageUrl: z.string().url().optional(), // TICK-036
   actif: z.boolean().default(true),

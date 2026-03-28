@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
-import Commande, { ICommande } from '@/models/Commande';
+import Commande, { ICommande, IProduitSnapshot } from '@/models/Commande';
 import { logger } from '@/lib/logger';
 
 function toDateStr(d: Date): string {
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
 
     // En-tête CSV
     const BOM = '\uFEFF';
-    const HEADER = 'Date;Heure;Numéro;Client;Produits;Options;Quantités;Sous-total HT;TVA (10%);Total TTC;Créneau;Statut';
+    const HEADER = 'Date;Heure;Numéro;Client;Produits;Options;Quantités;Sous-total HT;TVA (10%);Total TTC;TVA appliquée;Total HT (€);Total TVA (€);Créneau;Statut';
 
     const rows = commandes.map((c) => {
       const date = new Date(c.createdAt);
@@ -87,8 +87,30 @@ export async function GET(request: NextRequest) {
       const quantites = c.produits.map((p) => String(p.quantite)).join(', ');
 
       const totalTTC = c.total; // centimes
-      const tva = Math.round(totalTTC / 11); // TVA 10% incluse : TTC / 1.1 → TVA = TTC - TTC/1.1 = TTC * 0.1/1.1 = TTC/11
-      const ht = totalTTC - tva;
+      // Colonnes legacy (TVA globale 10% — conservées pour rétrocompatibilité)
+      const tvaLegacy = Math.round(totalTTC / 11);
+      const htLegacy = totalTTC - tvaLegacy;
+
+      // TICK-130 — colonnes TVA depuis snapshot par ligne de commande
+      let totalHTCentimes = 0;
+      let totalTVACentimes = 0;
+      const tauxDistincts = new Set<number>();
+      for (const p of c.produits) {
+        const taux = (p as IProduitSnapshot & { taux_tva?: number }).taux_tva ?? 10;
+        tauxDistincts.add(taux);
+        const ligneTotal = p.prix * p.quantite;
+        if (taux === 0) {
+          totalHTCentimes += ligneTotal;
+          // totalTVA += 0
+        } else {
+          const ligneHT = ligneTotal / (1 + taux / 100);
+          totalHTCentimes += ligneHT;
+          totalTVACentimes += ligneTotal - ligneHT;
+        }
+      }
+      const tvaAppliquee = [...tauxDistincts].sort((a, b) => a - b).map((t) => `${t} %`).join(' / ');
+      const totalHTEur = (totalHTCentimes / 100).toFixed(2).replace('.', ',');
+      const totalTVAEur = (totalTVACentimes / 100).toFixed(2).replace('.', ',');
 
       const creneau = c.retrait.type === 'immediat' ? 'Dès que possible' : (c.retrait.creneau ?? '');
 
@@ -107,9 +129,12 @@ export async function GET(request: NextRequest) {
         escapeCsv(nomsProds),
         escapeCsv(options),
         escapeCsv(quantites),
-        formatEur(ht),
-        formatEur(tva),
+        formatEur(htLegacy),
+        formatEur(tvaLegacy),
         formatEur(totalTTC),
+        escapeCsv(tvaAppliquee),
+        totalHTEur,
+        totalTVAEur,
         escapeCsv(creneau),
         statutLabel[c.statut] ?? c.statut,
       ].join(';');

@@ -121,7 +121,8 @@
   nom: string,           // "Burger Classic"
   description: string,
   categorie: string,     // "Burgers", "Boissons", etc.
-  prix: number,          // en centimes (ex: 850 = 8,50€)
+  prix: number,          // en centimes, toujours TTC (ex: 850 = 8,50€)
+  taux_tva: 0 | 5.5 | 10 | 20, // taux TVA applicable — défaut 10 (restauration standard) — Sprint 17 TICK-126
   options: [             // suppléments
     { nom: string, prix: number }
   ],
@@ -199,8 +200,9 @@
     {
       produitId: ObjectId,
       nom: string,             // snapshot au moment de la commande
-      prix: number,
+      prix: number,            // TTC, en centimes
       quantite: number,
+      taux_tva: number,        // snapshot du taux TVA au moment de la commande — Sprint 17 TICK-129
       options: [{ nom: string, prix: number }]
     }
   ],

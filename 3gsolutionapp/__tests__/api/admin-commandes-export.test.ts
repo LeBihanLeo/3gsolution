@@ -24,8 +24,8 @@ const mockCommande = {
   client: { nom: 'Jean Dupont', telephone: '0612345678', email: 'jean@test.fr' },
   retrait: { type: 'creneau', creneau: '12:30 – 12:45' },
   produits: [
-    { nom: 'Burger', prix: 800, quantite: 1, options: [] },
-    { nom: 'Frites', prix: 300, quantite: 2, options: [{ nom: 'Sel', prix: 0 }] },
+    { nom: 'Burger', prix: 800, quantite: 1, taux_tva: 10, options: [] },
+    { nom: 'Frites', prix: 300, quantite: 2, taux_tva: 10, options: [{ nom: 'Sel', prix: 0 }] },
   ],
   total: 1400,
   createdAt: new Date('2026-03-26T10:34:00.000Z'),
@@ -109,5 +109,69 @@ describe('GET /api/admin/commandes/export', () => {
       'commandes_exported_csv',
       expect.objectContaining({ adminId: 'admin@test.fr', count: 1 })
     );
+  });
+
+  // TICK-130 — colonnes TVA
+  it('CSV contient les colonnes TVA appliquée, Total HT, Total TVA', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockCommandeFind.mockReturnValueOnce({
+      sort: vi.fn().mockReturnThis(),
+      lean: vi.fn().mockResolvedValue([mockCommande]),
+    });
+    const res = await GET(makeReq('?from=2026-03-26&to=2026-03-26'));
+    const text = await res.text();
+    expect(text).toContain('TVA appliquée');
+    expect(text).toContain('Total HT (€)');
+    expect(text).toContain('Total TVA (€)');
+  });
+
+  it('TVA 10% taux unique → colonne "TVA appliquée" = "10 %"', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockCommandeFind.mockReturnValueOnce({
+      sort: vi.fn().mockReturnThis(),
+      lean: vi.fn().mockResolvedValue([mockCommande]),
+    });
+    const res = await GET(makeReq('?from=2026-03-26&to=2026-03-26'));
+    const text = await res.text();
+    expect(text).toContain('10 %');
+  });
+
+  it('commande mixte (10% + 20%) → colonne "TVA appliquée" = "10 % / 20 %"', async () => {
+    const commandeMixte = {
+      ...mockCommande,
+      produits: [
+        { nom: 'Burger', prix: 1100, quantite: 1, taux_tva: 10, options: [] },
+        { nom: 'Bière', prix: 500, quantite: 1, taux_tva: 20, options: [] },
+      ],
+      total: 1600,
+    };
+    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockCommandeFind.mockReturnValueOnce({
+      sort: vi.fn().mockReturnThis(),
+      lean: vi.fn().mockResolvedValue([commandeMixte]),
+    });
+    const res = await GET(makeReq('?from=2026-03-26&to=2026-03-26'));
+    const text = await res.text();
+    expect(text).toContain('10 % / 20 %');
+  });
+
+  it('produit avec taux_tva=0 → Total HT = Total TTC, Total TVA = 0,00', async () => {
+    const commandeExo = {
+      ...mockCommande,
+      produits: [
+        { nom: 'Eau', prix: 100, quantite: 1, taux_tva: 0, options: [] },
+      ],
+      total: 100,
+    };
+    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockCommandeFind.mockReturnValueOnce({
+      sort: vi.fn().mockReturnThis(),
+      lean: vi.fn().mockResolvedValue([commandeExo]),
+    });
+    const res = await GET(makeReq('?from=2026-03-26&to=2026-03-26'));
+    const text = await res.text();
+    // HT = 1,00 (= TTC), TVA = 0,00
+    expect(text).toContain('1,00');
+    expect(text).toContain('0,00');
   });
 });

@@ -25,7 +25,7 @@ import { getServerSession } from 'next-auth';
 import { GET, POST } from '@/app/api/produits/route';
 
 const mockProduits = [
-  { _id: '1', nom: 'Burger', description: 'Desc', categorie: 'Burgers', prix: 850, actif: true, options: [] },
+  { _id: '1', nom: 'Burger', description: 'Desc', categorie: 'Burgers', prix: 850, taux_tva: 10, actif: true, options: [] },
 ];
 
 const makeReq = (url: string, method = 'GET', body?: unknown) =>
@@ -89,12 +89,42 @@ describe('POST /api/produits', () => {
 
   it('body valide + session → 201 + produit créé', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
-    mockProduitModel.create.mockResolvedValueOnce({ _id: 'new1', nom: 'Burger', prix: 850 });
+    mockProduitModel.create.mockResolvedValueOnce({ _id: 'new1', nom: 'Burger', prix: 850, taux_tva: 10 });
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
       nom: 'Burger', description: 'Desc', categorie: 'Burgers', prix: 850,
     }));
     expect(res.status).toBe(201);
     const json = await res.json();
     expect(json.data.nom).toBe('Burger');
+  });
+
+  // TICK-127 — taux_tva Zod
+  it('body avec taux_tva valide (20) → 201', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    mockProduitModel.create.mockResolvedValueOnce({ _id: 'new2', nom: 'Bière', prix: 500, taux_tva: 20 });
+    const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
+      nom: 'Bière', description: 'Desc', categorie: 'Boissons', prix: 500, taux_tva: 20,
+    }));
+    expect(res.status).toBe(201);
+  });
+
+  it('body avec taux_tva invalide (7) → 400', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
+      nom: 'Test', description: 'Desc', categorie: 'Cat', prix: 500, taux_tva: 7,
+    }));
+    expect(res.status).toBe(400);
+  });
+
+  it('body sans taux_tva → 201 (défaut 10 appliqué)', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    mockProduitModel.create.mockResolvedValueOnce({ _id: 'new3', nom: 'Pizza', prix: 900, taux_tva: 10 });
+    const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
+      nom: 'Pizza', description: 'Desc', categorie: 'Plats', prix: 900,
+    }));
+    expect(res.status).toBe(201);
+    expect(mockProduitModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({ taux_tva: 10 })
+    );
   });
 });

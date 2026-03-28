@@ -70,4 +70,27 @@ describe('Modèle Produit', () => {
     });
     expect(produit.imageUrl).toBe('https://example.com/image.jpg');
   });
+
+  // TICK-126 — taux_tva
+  it('taux_tva est 10 par défaut', async () => {
+    const produit = await Produit.create({
+      nom: 'Test TVA', description: 'Desc', categorie: 'Cat', prix: 100,
+    });
+    expect(produit.taux_tva).toBe(10);
+  });
+
+  it('accepte les valeurs autorisées de taux_tva (0, 5.5, 10, 20)', async () => {
+    for (const taux of [0, 5.5, 10, 20] as const) {
+      const produit = await Produit.create({
+        nom: `TVA ${taux}`, description: 'Desc', categorie: 'Cat', prix: 100, taux_tva: taux,
+      });
+      expect(produit.taux_tva).toBe(taux);
+    }
+  });
+
+  it('rejette un taux_tva non autorisé (ex: 7)', async () => {
+    await expect(
+      Produit.create({ nom: 'Test', description: 'Desc', categorie: 'Cat', prix: 100, taux_tva: 7 })
+    ).rejects.toThrow(mongoose.Error.ValidationError);
+  });
 });

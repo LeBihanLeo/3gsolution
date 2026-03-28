@@ -10,13 +10,21 @@ const OptionSchema = z.object({
   prix: z.number().int().min(0),
 });
 
+const TauxTvaSchema = z.union([
+  z.literal(0),
+  z.literal(5.5),
+  z.literal(10),
+  z.literal(20),
+]); // TICK-127
+
 const ProduitUpdateSchema = z.object({
   nom: z.string().min(1).optional(),
   description: z.string().min(1).optional(),
   categorie: z.string().min(1).optional(),
   prix: z.number().int().min(0).optional(),
+  taux_tva: TauxTvaSchema.optional(), // TICK-127 — inchangé si absent du body
   options: z.array(OptionSchema).optional(),
-  imageUrl: z.string().min(1).optional().nullable(), // TICK-036 — null pour supprimer l'image (chemin relatif ou URL absolue)
+  imageUrl: z.string().min(1).optional().nullable(), // TICK-036 — null pour supprimer l'image
   actif: z.boolean().optional(),
 });
 

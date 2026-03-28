@@ -113,6 +113,7 @@ export async function POST(request: NextRequest) {
         nom: produitDB.nom,              // nom issu de la BDD
         prix: produitDB.prix,            // prix issu de la BDD
         quantite: p.quantite,
+        taux_tva: produitDB.taux_tva ?? 10, // TICK-129 — snapshot fiscal
         options: optionsVerifiees,
       };
     });

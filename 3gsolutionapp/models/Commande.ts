@@ -7,6 +7,7 @@ export interface IProduitSnapshot {
   nom: string;       // snapshot au moment de la commande
   prix: number;      // en centimes
   quantite: number;
+  taux_tva: number;  // 0 | 5.5 | 10 | 20 — snapshot fiscal — TICK-129
   options: { nom: string; prix: number }[];
 }
 
@@ -40,6 +41,7 @@ const ProduitSnapshotSchema = new Schema<IProduitSnapshot>(
     nom: { type: String, required: true },
     prix: { type: Number, required: true },
     quantite: { type: Number, required: true, min: 1 },
+    taux_tva: { type: Number, enum: [0, 5.5, 10, 20], default: 10 }, // TICK-129
     options: {
       type: [
         {

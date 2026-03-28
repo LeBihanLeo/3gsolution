@@ -25,7 +25,7 @@ const makeWebhookReq = (body: string, sig: string) =>
   });
 
 const produits = JSON.stringify([
-  { produitId: 'p1', nom: 'Burger', prix: 850, quantite: 1, options: [] },
+  { produitId: 'p1', nom: 'Burger', prix: 850, quantite: 1, taux_tva: 10, options: [] },
 ]);
 
 const mockSession: Partial<Stripe.Checkout.Session> = {
@@ -179,5 +179,48 @@ describe('POST /api/webhooks/stripe', () => {
     await POST(makeWebhookReq('{}', 'valid_sig'));
     const createArg = mockCommandeModel.create.mock.calls[0][0];
     expect(createArg).not.toHaveProperty('clientId');
+  });
+
+  // TICK-129 — taux_tva dans le snapshot
+  it('taux_tva est persisté dans le snapshot produit', async () => {
+    const produitsAvecTva = JSON.stringify([
+      { produitId: 'p1', nom: 'Bière', prix: 500, quantite: 2, taux_tva: 20, options: [] },
+    ]);
+    const eventAvecTva = {
+      ...completedEvent,
+      data: {
+        object: {
+          ...mockSession,
+          metadata: { ...mockSession.metadata, produits: produitsAvecTva },
+        },
+      },
+    };
+    mockConstructEvent.mockReturnValueOnce(eventAvecTva);
+    mockCommandeModel.findOne.mockResolvedValueOnce(null);
+    mockCommandeModel.create.mockResolvedValueOnce({ _id: 'new1' });
+    await POST(makeWebhookReq('{}', 'valid_sig'));
+    const createArg = mockCommandeModel.create.mock.calls[0][0];
+    expect(createArg.produits[0].taux_tva).toBe(20);
+  });
+
+  it('taux_tva absent des métadonnées → défaut 10 appliqué par Zod', async () => {
+    const produitsSansTva = JSON.stringify([
+      { produitId: 'p1', nom: 'Burger', prix: 850, quantite: 1, options: [] },
+    ]);
+    const eventSansTva = {
+      ...completedEvent,
+      data: {
+        object: {
+          ...mockSession,
+          metadata: { ...mockSession.metadata, produits: produitsSansTva },
+        },
+      },
+    };
+    mockConstructEvent.mockReturnValueOnce(eventSansTva);
+    mockCommandeModel.findOne.mockResolvedValueOnce(null);
+    mockCommandeModel.create.mockResolvedValueOnce({ _id: 'new1' });
+    await POST(makeWebhookReq('{}', 'valid_sig'));
+    const createArg = mockCommandeModel.create.mock.calls[0][0];
+    expect(createArg.produits[0].taux_tva).toBe(10);
   });
 });

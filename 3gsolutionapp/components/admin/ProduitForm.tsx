@@ -12,6 +12,7 @@ export interface ProduitData {
   description: string;
   categorie: string;
   prix: number; // centimes
+  taux_tva: 0 | 5.5 | 10 | 20; // TICK-128
   options: { nom: string; prix: number }[];
   imageUrl?: string; // TICK-037
   actif: boolean;
@@ -28,6 +29,7 @@ export interface ProduitFormValues {
   description: string;
   categorie: string;
   prix: number; // centimes
+  taux_tva: 0 | 5.5 | 10 | 20; // TICK-128
   options: { nom: string; prix: number }[];
   imageUrl?: string | null; // TICK-037 — null = supprimer l'image existante
   actif: boolean;
@@ -62,6 +64,13 @@ const inputFlexCls =
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+const TVA_OPTIONS: { label: string; value: 0 | 5.5 | 10 | 20 }[] = [
+  { label: 'Standard (10 %)', value: 10 },
+  { label: 'Alcool (20 %)', value: 20 },
+  { label: 'Alimentaire (5,5 %)', value: 5.5 },
+  { label: 'Pas de TVA', value: 0 },
+];
+
 export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitFormProps) {
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -71,6 +80,9 @@ export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitForm
   const [actif, setActif] = useState(initial?.actif ?? true);
   // TICK-037 — null = image explicitement supprimée, undefined = jamais définie
   const [imageUrl, setImageUrl] = useState<string | null>(initial?.imageUrl ?? null);
+  // TICK-128 — taux TVA
+  const [tauxTva, setTauxTva] = useState<0 | 5.5 | 10 | 20>(initial?.taux_tva ?? 10);
+  const [prixEurosStr, setPrixEurosStr] = useState<string>(initial ? centimesToEuros(initial.prix) : '');
 
   const addOption = () => setOptions((prev) => [...prev, { nom: '', prix: '0' }]);
 
@@ -92,7 +104,7 @@ export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitForm
       nom: get('nom').trim(),
       description: get('description').trim(),
       categorie: get('categorie').trim(),
-      prixEuros: get('prix').trim(),
+      prixEuros: prixEurosStr.trim(),
     };
 
     const parsed = FormSchema.safeParse(raw);
@@ -125,6 +137,7 @@ export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitForm
         description: raw.description,
         categorie: raw.categorie,
         prix: eurosToCentimes(raw.prixEuros),
+        taux_tva: tauxTva, // TICK-128
         options: options.map((o) => ({
           nom: o.nom.trim(),
           prix: eurosToCentimes(o.prix),
@@ -188,11 +201,12 @@ export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitForm
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Prix (€) <span className="text-red-400">*</span>
+            Prix de vente (€) <span className="text-red-400">*</span>
           </label>
           <input
             name="prix"
-            defaultValue={initial ? centimesToEuros(initial.prix) : ''}
+            value={prixEurosStr}
+            onChange={(e) => setPrixEurosStr(e.target.value)}
             className={inputCls}
             placeholder="8,50"
           />
@@ -201,6 +215,42 @@ export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitForm
           )}
         </div>
       </div>
+
+      {/* Taux de TVA — TICK-128 */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Taux de TVA
+        </label>
+        <select
+          value={tauxTva}
+          onChange={(e) => setTauxTva(parseFloat(e.target.value) as 0 | 5.5 | 10 | 20)}
+          className={inputCls}
+        >
+          {TVA_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Détail fiscal — repliable, visible uniquement si taux_tva !== 0 — TICK-128 */}
+      {tauxTva !== 0 && (() => {
+        const prixCentimes = eurosToCentimes(prixEurosStr);
+        const prixHT = prixCentimes / (1 + tauxTva / 100);
+        const montantTVA = prixCentimes - prixHT;
+        return (
+          <details className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            <summary className="cursor-pointer text-sm font-medium text-gray-600 select-none">
+              Détail fiscal
+            </summary>
+            <div className="mt-2 space-y-1 text-sm text-gray-700">
+              <p>Prix hors taxes : <span className="font-medium">{(prixHT / 100).toFixed(2).replace('.', ',')} €</span></p>
+              <p>Dont TVA ({tauxTva} %) : <span className="font-medium">{(montantTVA / 100).toFixed(2).replace('.', ',')} €</span></p>
+            </div>
+          </details>
+        );
+      })()}
 
       {/* Image produit — TICK-037 */}
       <DropZone

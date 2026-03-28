@@ -1,6 +1,6 @@
 # Backlog de développement — Plateforme de commande en ligne
 > Généré le 2026-03-17 · Basé sur ARCHITECTURE.md · Sizing en jours/dev
-> Mis à jour le 2026-03-26 · Sprint 15 ajouté
+> Mis à jour le 2026-03-28 · Sprint 17 ajouté (gestion TVA)
 
 ---
 
@@ -26,7 +26,8 @@
 | 14 | Correctifs UX & Auth — Admin + Client | TICK-107 → 113 | 2,25 j |
 | 15 | Correctifs UX Client — Re-commande, Profil, Navigation | TICK-114 → 116 | 1,0 j |
 | 16 | Refactoring Admin, Palette Couleur & Correctifs | TICK-117 → 125 | 7,0 j |
-| **Total** | | **125 tickets** | **~83,75 j** |
+| 17 | Gestion des prix et de la TVA | TICK-126 → 130 | 2,0 j |
+| **Total** | | **130 tickets** | **~85,75 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -3301,6 +3302,202 @@ Date;Heure;Numéro commande;Client;Téléphone;Email;Produits;Total (€)
 - [ ] Header HTTP : `Content-Disposition: attachment; filename="commandes-YYYY-MM-DD.csv"`
 - [ ] Les commandes anonymisées (PII remplacés par `[Supprimé]`) sont incluses telles quelles dans le CSV
 - [ ] Aucune régression sur l'onglet "En cours"
+
+---
+
+## Sprint 17 — Gestion des prix et de la TVA (2,0 j)
+
+> Ajouté le 2026-03-28. Fonctionnalité dédiée aux commerçants (restaurants, food trucks, snacks) pour définir simplement le prix TTC de leurs produits et configurer la TVA applicable par produit, en restant compatible avec les exports comptables.
+
+---
+
+### TICK-126 — Modèle Produit : ajout du champ `taux_tva`
+**Épic :** Modèles de données
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,25 j
+**Dépendances :** TICK-003
+
+**Description :**
+Étendre `models/Produit.ts` avec le champ `taux_tva` représentant le taux de TVA applicable au produit. Le prix existant (`prix`, en centimes) reste le **prix final payé par le client** (TTC). Le taux par défaut est 10 % (restauration standard).
+
+**Modification du schéma :**
+```typescript
+// models/Produit.ts — ajout
+taux_tva: {
+  type: Number,
+  enum: [0, 5.5, 10, 20],
+  default: 10,
+  required: true,
+}
+```
+
+**Critères d'acceptance :**
+- [ ] Champ `taux_tva` ajouté à `models/Produit.ts` avec validation Mongoose `enum: [0, 5.5, 10, 20]`
+- [ ] Valeur par défaut : `10` (Mongoose applique automatiquement sur les anciens documents sans ce champ)
+- [ ] Interface TypeScript `IProduit` mise à jour : `taux_tva: 0 | 5.5 | 10 | 20`
+- [ ] Export du modèle inchangé (guard `mongoose.models.Produit ||` conservé)
+- [ ] Les produits existants en base sans ce champ renvoient `10` via la valeur par défaut Mongoose — aucune migration manuelle requise
+- [ ] `ARCHITECTURE.md` — schéma `Produit` mis à jour pour refléter le nouveau champ
+
+---
+
+### TICK-127 — API produits : validation Zod du champ `taux_tva`
+**Épic :** API / Sécurité
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,25 j
+**Dépendances :** TICK-126, TICK-007
+
+**Description :**
+Mettre à jour les schémas Zod des routes `POST /api/produits` (création) et `PUT /api/produits/[id]` (modification) pour accepter et valider le champ `taux_tva`. Valeur par défaut côté serveur si absent.
+
+**Schéma Zod à mettre à jour :**
+```typescript
+const taux_tva = z.union([
+  z.literal(0),
+  z.literal(5.5),
+  z.literal(10),
+  z.literal(20),
+]).default(10);
+```
+
+**Critères d'acceptance :**
+- [ ] `POST /api/produits` : `taux_tva` optionnel dans le body Zod — défaut `10` si absent
+- [ ] `PUT /api/produits/[id]` : `taux_tva` optionnel dans le body Zod — inchangé si absent du body
+- [ ] Valeur hors enum (`ex: 7`) → réponse `400` avec message Zod explicite
+- [ ] `GET /api/produits` : le champ `taux_tva` est inclus dans la réponse JSON pour chaque produit
+- [ ] La validation côté serveur empêche tout taux non autorisé d'être persisté en base
+
+---
+
+### TICK-128 — ProduitForm admin : sélecteur TVA et affichage du calcul HT
+**Épic :** Admin / UX / Formulaires
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-127, TICK-037
+
+**Description :**
+Modifier `components/admin/ProduitForm.tsx` pour intégrer un sélecteur de taux de TVA et un affichage automatique du détail fiscal (prix HT + montant TVA) dans une **section avancée repliable**. L'interface principale reste simple : seul le prix de vente final est saisi.
+
+**Règles de calcul (côté client, en temps réel) :**
+```typescript
+// taux_tva !== 0
+const prixHT = prix / (1 + taux_tva / 100);       // prix TTC ÷ (1 + taux)
+const montantTVA = prix - prixHT;                  // montant TVA = TTC - HT
+
+// taux_tva === 0 : aucun calcul, prix = net, pas d'affichage fiscal
+```
+
+**Sélecteur TVA — options (label → valeur) :**
+| Label affiché | Valeur |
+|---------------|--------|
+| Standard (10 %) | `10` |
+| Alcool (20 %) | `20` |
+| Alimentaire (5,5 %) | `5.5` |
+| Pas de TVA | `0` |
+
+**Critères d'acceptance :**
+
+Section principale (toujours visible) :
+- [ ] Champ **"Prix de vente"** (en €) — comportement inchangé (`prix` en centimes en interne)
+- [ ] Sélecteur **taux TVA** : 4 options listées ci-dessus, valeur par défaut `10` (Standard)
+- [ ] L'étiquette du sélecteur est "Taux de TVA" — **aucune mention de "HT" ou "TTC"** dans l'interface principale
+
+Section avancée (repliable, intitulée "Détail fiscal") :
+- [ ] Visible uniquement si `taux_tva !== 0`
+- [ ] Affichage en lecture seule, recalculé en temps réel à chaque modification du prix ou du taux :
+  - "Prix hors taxes : X,XX €"
+  - "Dont TVA (Y %) : Z,ZZ €"
+- [ ] Si `taux_tva === 0` : section masquée, aucun calcul effectué
+- [ ] Les valeurs affichées sont arrondies à 2 décimales (affichage uniquement — la persistance reste en centimes pour `prix`)
+
+Comportement formulaire :
+- [ ] En mode création : `taux_tva` initialisé à `10`
+- [ ] En mode édition : `taux_tva` pré-rempli avec la valeur existante du produit
+- [ ] Soumission : `taux_tva` envoyé dans le body de `POST` ou `PUT` produit
+- [ ] Aucune régression sur les autres champs (nom, description, catégorie, prix, options, image)
+
+---
+
+### TICK-129 — Snapshot commande : capturer `taux_tva` par produit
+**Épic :** Commandes / Données / Comptabilité
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-126, TICK-017, TICK-018, TICK-064
+
+**Description :**
+Enrichir le snapshot produit dans `models/Commande.ts` avec le champ `taux_tva`, capturé au moment du paiement. Cela permet de connaître le régime fiscal applicable à chaque ligne de commande, indispensable pour les exports comptables futurs.
+
+**Modification `models/Commande.ts` :**
+```typescript
+produits: [
+  {
+    produitId: ObjectId,
+    nom: string,
+    prix: number,         // TTC, en centimes — inchangé
+    quantite: number,
+    taux_tva: number,     // 0 | 5.5 | 10 | 20 — nouveau champ snapshot
+    options: [{ nom: string, prix: number }]
+  }
+]
+```
+
+**Critères d'acceptance :**
+
+`models/Commande.ts` :
+- [ ] Sous-document produit : ajout de `taux_tva: { type: Number, enum: [0, 5.5, 10, 20], default: 10 }`
+- [ ] Interface TypeScript `ICommande` mise à jour
+- [ ] Les commandes existantes sans `taux_tva` dans le snapshot renvoient `10` via la valeur par défaut — aucune migration requise
+
+`app/api/checkout/route.ts` :
+- [ ] Lors de la récupération des produits en base (validation prix serveur — TICK-050), lire également `taux_tva`
+- [ ] Inclure `taux_tva` dans les métadonnées Stripe encodées : `metadata.produits` (tableau JSON)
+
+`app/api/webhooks/stripe/route.ts` :
+- [ ] Mettre à jour `ProduitMetadataSchema` (Zod — TICK-064) pour inclure `taux_tva: z.union([z.literal(0), z.literal(5.5), z.literal(10), z.literal(20)]).default(10)`
+- [ ] Persister `taux_tva` dans le snapshot `Commande.produits[].taux_tva` à la création de la commande
+
+Validation :
+- [ ] Passer une commande avec des produits ayant des taux différents (10 %, 20 %) → chaque ligne du snapshot conserve son propre taux
+- [ ] Les tests TICK-046 (`webhook-stripe.test.ts`) passent toujours (mettre à jour les fixtures de test si nécessaire)
+
+---
+
+### TICK-130 — Export CSV comptabilité : colonnes TVA par ligne de commande
+**Épic :** Admin / Export / Comptabilité
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,25 j
+**Dépendances :** TICK-129, TICK-106, TICK-125
+
+**Description :**
+Enrichir l'export CSV des commandes (`GET /api/admin/commandes/export`) avec les informations TVA calculées depuis les snapshots. L'objectif est la compatibilité avec un logiciel de comptabilité français (format CSV avec virgule décimale, encodage UTF-8 BOM pour Excel).
+
+**Nouvelles colonnes à ajouter (après la colonne "Total (€)") :**
+| Colonne | Source | Calcul |
+|---------|--------|--------|
+| `TVA appliquée` | Taux majoritaire de la commande | Agrégation des taux par produit (ex: "10 %" ou "10 % / 20 %") |
+| `Total HT (€)` | Somme des `(prix * quantite) / (1 + taux_tva/100)` | Calculé depuis le snapshot, arrondi à 2 décimales |
+| `Total TVA (€)` | `Total TTC - Total HT` | Arrondi à 2 décimales |
+
+**Règle de calcul pour commandes mixtes (produits à taux différents) :**
+```typescript
+// Pour chaque produit du snapshot :
+const ligneHT = (produit.prix * produit.quantite) / (1 + produit.taux_tva / 100);
+const ligneTVA = (produit.prix * produit.quantite) - ligneHT;
+
+// Total commande :
+const totalHT = sum(lignesHT);   // en centimes puis /100 pour l'affichage
+const totalTVA = sum(lignesTVA);
+
+// Produits avec taux_tva === 0 : ligneHT = prix * quantite, ligneTVA = 0
+```
+
+**Critères d'acceptance :**
+- [ ] Route `GET /api/admin/commandes/export` : 3 colonnes supplémentaires ajoutées après "Total (€)"
+- [ ] Format décimal français (virgule) pour toutes les colonnes monétaires : `18,50` et non `18.50`
+- [ ] Commandes dont tous les produits ont `taux_tva === 0` : colonnes HT = Total TTC, TVA = 0,00
+- [ ] Commandes avec snapshots anciens (sans `taux_tva`) : utiliser le défaut `10` pour le calcul (Mongoose default)
+- [ ] L'encodage UTF-8 BOM et le `Content-Disposition` existants sont préservés
+- [ ] Aucune régression sur les colonnes existantes de l'export
 
 ---
 

@@ -18,6 +18,8 @@ const ProduitMetadataSchema = z.array(
     nom: z.string(),
     prix: z.number().int().min(0),
     quantite: z.number().int().min(1),
+    // TICK-129 — snapshot fiscal TVA
+    taux_tva: z.union([z.literal(0), z.literal(5.5), z.literal(10), z.literal(20)]).default(10),
     options: z
       .array(
         z.object({
