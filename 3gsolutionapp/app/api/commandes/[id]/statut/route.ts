@@ -55,6 +55,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     commande.statut = newStatut;
+    if (newStatut === 'recuperee') {
+      commande.recupereeAt = new Date();
+    }
     await commande.save();
 
     return NextResponse.json({ data: commande });

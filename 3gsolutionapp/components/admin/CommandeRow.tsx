@@ -3,7 +3,7 @@
 // TICK-107 — Bouton "Anonymiser" retiré de l'UI (route DELETE /api/commandes/[id] conservée)
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface ProduitSnapshot {
   nom: string;
@@ -23,6 +23,7 @@ export interface CommandeData {
   commentaire?: string;
   total: number; // centimes
   createdAt: string;
+  recupereeAt?: string;
 }
 
 interface CommandeRowProps {
@@ -64,6 +65,12 @@ const TRANSITION_NEXT: Partial<Record<StatutCommande, { label: string; statut: S
 export default function CommandeRow({ commande, onAdvance }: CommandeRowProps) {
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   const heure = new Date(commande.createdAt).toLocaleTimeString('fr-FR', {
     hour: '2-digit',
@@ -85,7 +92,12 @@ export default function CommandeRow({ commande, onAdvance }: CommandeRowProps) {
       : `À ${commande.retrait.creneau}`;
 
   return (
-    <div className="bg-white rounded-xl border shadow-sm p-4 transition-all">
+    <div
+      className={`bg-white rounded-xl shadow-md p-4 transition-all duration-300 ease-out ${
+        mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
+      }`}
+      style={{ border: '1px solid #d2d2d245' }}
+    >
       {/* Ligne principale */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex items-center gap-3">

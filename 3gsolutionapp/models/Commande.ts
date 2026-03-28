@@ -29,6 +29,8 @@ export interface ICommande extends Document {
   clientId?: mongoose.Types.ObjectId;
   // TICK-057 — RGPD Art. 5(1)(e) : date de purge automatique (createdAt + 12 mois)
   purgeAt: Date;
+  // Horodatage de récupération effective (posé par le PATCH statut → recuperee)
+  recupereeAt?: Date;
   createdAt: Date;
 }
 
@@ -80,6 +82,7 @@ const CommandeSchema = new Schema<ICommande>(
     clientId: { type: Schema.Types.ObjectId, ref: 'Client', index: true },
     // TICK-057 — RGPD Art. 5(1)(e) : durée de conservation 12 mois (obligation comptable)
     // Calculée automatiquement si absente (migration des commandes existantes)
+    recupereeAt: { type: Date, index: true },
     purgeAt: {
       type: Date,
       // TTL index : MongoDB supprime automatiquement le document après cette date

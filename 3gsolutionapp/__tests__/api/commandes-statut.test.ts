@@ -58,13 +58,14 @@ describe('PATCH /api/commandes/[id]/statut', () => {
     expect(mockCommande.statut).toBe('prete');
   });
 
-  it('transition prete → recuperee → 200', async () => {
+  it('transition prete → recuperee → 200 + recupereeAt posé', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
-    const mockCommande = { _id: 'abc123', statut: 'prete', save: vi.fn().mockResolvedValue(undefined) };
+    const mockCommande = { _id: 'abc123', statut: 'prete', recupereeAt: undefined as Date | undefined, save: vi.fn().mockResolvedValue(undefined) };
     mockCommandeModel.findById.mockResolvedValueOnce(mockCommande);
     const res = await PATCH(makeReq({ statut: 'recuperee' }), params);
     expect(res.status).toBe(200);
     expect(mockCommande.statut).toBe('recuperee');
+    expect(mockCommande.recupereeAt).toBeInstanceOf(Date);
   });
 
   it('transition invalide payee → prete → 422', async () => {
