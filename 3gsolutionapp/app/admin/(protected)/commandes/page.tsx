@@ -13,7 +13,8 @@
 // TICK-130 — Modale export : uniquement les dates ayant des données
 // TICK-131 — Fix "Récupérées aujourd'hui" : utiliser recupereeAt au lieu de createdAt
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import CommandeRow, { CommandeData, StatutCommande } from '@/components/admin/CommandeRow';
 import OrderCard from '@/components/admin/OrderCard';
 
@@ -112,6 +113,9 @@ export default function AdminCommandesPage() {
   const [exportMoisYear, setExportMoisYear] = useState(() => String(new Date().getFullYear()));
   const [exportMoisMonth, setExportMoisMonth] = useState(() => String(new Date().getMonth())); // 0-indexed
   const [exportAnnee, setExportAnnee] = useState(() => String(new Date().getFullYear()));
+
+  // Ligne dépliée dans la table "Récupérées aujourd'hui"
+  const [expandedRecupId, setExpandedRecupId] = useState<string | null>(null);
 
   // TICK-128 — État rétraction timeline
   const [collapsedYears, setCollapsedYears] = useState<Set<number>>(new Set());
@@ -637,27 +641,71 @@ export default function AdminCommandesPage() {
                       <th className="px-4 py-3 text-left">Téléphone</th>
                       <th className="px-4 py-3 text-left">Retrait</th>
                       <th className="px-4 py-3 text-right">Total</th>
+                      <th className="px-4 py-3" />
                     </tr>
                   </thead>
                   <tbody>
-                    {commandesRecupereesAujourdHui.map((c) => (
-                      <tr key={c._id} className="border-b border-gray-100 last:border-0 odd:bg-white even:bg-gray-50 hover:bg-blue-50 transition-colors">
-                        <td className="px-4 py-3 font-mono text-xs text-gray-400">
-                          #{c._id.slice(-6).toUpperCase()}
-                        </td>
-                        <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                          {new Date(c.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                        </td>
-                        <td className="px-4 py-3 font-medium text-gray-900">{c.client.nom}</td>
-                        <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{c.client.telephone}</td>
-                        <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                          {c.retrait.type === 'immediat' ? 'Dès que possible' : `À ${c.retrait.creneau}`}
-                        </td>
-                        <td className="px-4 py-3 text-right font-semibold text-gray-900 whitespace-nowrap">
-                          {(c.total / 100).toFixed(2).replace('.', ',') + ' €'}
-                        </td>
-                      </tr>
-                    ))}
+                    {commandesRecupereesAujourdHui.map((c) => {
+                      const isOpen = expandedRecupId === c._id;
+                      return (
+                        <React.Fragment key={c._id}>
+                          <tr
+                            onClick={() => setExpandedRecupId(isOpen ? null : c._id)}
+                            className={`odd:bg-white even:bg-gray-50 hover:bg-blue-50 transition-colors cursor-pointer ${isOpen ? '' : 'border-b border-gray-100'}`}
+                          >
+                            <td className="px-4 py-3 font-mono text-xs text-gray-400">
+                              #{c._id.slice(-6).toUpperCase()}
+                            </td>
+                            <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                              {new Date(c.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                            </td>
+                            <td className="px-4 py-3 font-medium text-gray-900">{c.client.nom}</td>
+                            <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{c.client.telephone}</td>
+                            <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                              {c.retrait.type === 'immediat' ? 'Dès que possible' : `À ${c.retrait.creneau}`}
+                            </td>
+                            <td className="px-4 py-3 text-right font-semibold text-gray-900 whitespace-nowrap">
+                              {(c.total / 100).toFixed(2).replace('.', ',') + ' €'}
+                            </td>
+                            <td className="px-4 py-3 text-gray-400 text-xs">{isOpen ? '▲' : '▼'}</td>
+                          </tr>
+                          <tr className="border-b border-gray-100 odd:bg-white even:bg-gray-50">
+                            <td colSpan={7} className="px-4 pb-0 pt-0 overflow-hidden">
+                              <AnimatePresence initial={false}>
+                                {isOpen && (
+                                  <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: 'auto', opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    transition={{ duration: 0.22, ease: 'easeInOut' }}
+                                    className="overflow-hidden"
+                                  >
+                                    <div className="border-t border-dashed border-gray-200 py-2.5 space-y-1.5">
+                                      {c.produits.map((p, idx) => (
+                                        <div key={idx} className="flex justify-between text-xs text-gray-600">
+                                          <span>
+                                            {p.quantite}× {p.nom}
+                                            {p.options.length > 0 && (
+                                              <span className="text-gray-400"> ({p.options.map((o) => o.nom).join(', ')})</span>
+                                            )}
+                                          </span>
+                                          <span className="text-gray-500">
+                                            {((p.prix + p.options.reduce((s, o) => s + o.prix, 0)) * p.quantite / 100).toFixed(2).replace('.', ',') + ' €'}
+                                          </span>
+                                        </div>
+                                      ))}
+                                      {c.commentaire && (
+                                        <p className="text-xs text-gray-400 italic mt-1">Note : {c.commentaire}</p>
+                                      )}
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
