@@ -15,6 +15,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import CommandeRow, { CommandeData, StatutCommande } from '@/components/admin/CommandeRow';
+import OrderCard from '@/components/admin/OrderCard';
 
 const POLL_INTERVAL_MS = 10_000;
 
@@ -163,10 +164,17 @@ export default function AdminCommandesPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ statut }),
     });
+    const now = new Date().toISOString();
     setCommandes((prev) =>
       prev.map((c) =>
         c._id === id
-          ? { ...c, statut, ...(statut === 'recuperee' ? { recupereeAt: new Date().toISOString() } : {}) }
+          ? {
+              ...c,
+              statut,
+              ...(statut === 'en_preparation' ? { enPreparationAt: now } : {}),
+              ...(statut === 'prete' ? { preteAt: now } : {}),
+              ...(statut === 'recuperee' ? { recupereeAt: now } : {}),
+            }
           : c
       )
     );
@@ -285,10 +293,15 @@ export default function AdminCommandesPage() {
 
   const today = startOfTodayParis();
 
-  const sortByDate = (a: CommandeData, b: CommandeData) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-  const commandesEnAttente = commandes.filter((c) => c.statut === 'payee').sort(sortByDate);
-  const commandesEnPreparation = commandes.filter((c) => c.statut === 'en_preparation').sort(sortByDate);
-  const commandesPrêtes = commandes.filter((c) => c.statut === 'prete').sort(sortByDate);
+  const sortByCreatedAt = (a: CommandeData, b: CommandeData) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  const sortByEnPreparationAt = (a: CommandeData, b: CommandeData) =>
+    new Date(a.enPreparationAt ?? a.createdAt).getTime() - new Date(b.enPreparationAt ?? b.createdAt).getTime();
+  const sortByPreteAt = (a: CommandeData, b: CommandeData) =>
+    new Date(a.preteAt ?? a.createdAt).getTime() - new Date(b.preteAt ?? b.createdAt).getTime();
+
+  const commandesEnAttente = commandes.filter((c) => c.statut === 'payee').sort(sortByCreatedAt);
+  const commandesEnPreparation = commandes.filter((c) => c.statut === 'en_preparation').sort(sortByEnPreparationAt);
+  const commandesPrêtes = commandes.filter((c) => c.statut === 'prete').sort(sortByPreteAt);
 
   // Commandes du jour (createdAt aujourd'hui) avec statut recuperee
   const commandesRecupereesAujourdHui = commandes.filter((c) => {
@@ -557,48 +570,56 @@ export default function AdminCommandesPage() {
 
       {/* ── Onglet "En cours" ─────────────────────────────────────────────── */}
       {!loading && !error && onglet === 'en_cours' && (
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-5 space-y-6">
-          {nbEnCours === 0 && (
-            <div className="text-center py-16">
-              <div className="text-5xl mb-3">🍽️</div>
-              <p className="text-gray-400">Aucune commande en cours.</p>
-            </div>
-          )}
+        <div className="space-y-5">
+          {/* Kanban */}
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-5">
+            <div className="grid grid-cols-3 gap-4">
+                {/* À préparer */}
+                <div className="flex flex-col rounded-xl overflow-hidden border border-blue-100">
+                  <div className="bg-blue-50 px-4 py-2.5 border-b border-blue-100 shrink-0">
+                    <h2 className="text-sm font-semibold text-blue-700 uppercase tracking-wider flex items-center gap-2">
+                      À préparer
+                      <span className="bg-blue-100 text-blue-700 text-xs font-bold px-1.5 py-0.5 rounded-full">{commandesEnAttente.length}</span>
+                    </h2>
+                  </div>
+                  <div className="min-h-[30vh] max-h-[55vh] overflow-y-auto p-3 space-y-3">
+                    {commandesEnAttente.map((c) => <OrderCard key={c._id} commande={c} onAdvance={advanceStatut} />)}
+                    {commandesEnAttente.length === 0 && <p className="text-xs text-gray-400 italic text-center mt-4">Aucune.</p>}
+                  </div>
+                </div>
 
-          {nbEnCours > 0 && <div className="grid grid-cols-3 divide-x divide-gray-200 rounded-xl h-[55vh] overflow-hidden">
-            <section className="flex flex-col p-5 h-full overflow-hidden">
-              <h2 className="text-sm font-semibold text-blue-700 uppercase tracking-wider mb-3 shrink-0">
-                À préparer ({commandesEnAttente.length})
-              </h2>
-              <div className="space-y-3 overflow-y-auto flex-1 pr-1 pb-4">
-                {commandesEnAttente.map((c) => <CommandeRow key={c._id} commande={c} onAdvance={advanceStatut} />)}
-                {commandesEnAttente.length === 0 && <p className="text-xs text-gray-400 italic">Aucune.</p>}
-              </div>
-            </section>
+                {/* En préparation */}
+                <div className="flex flex-col rounded-xl overflow-hidden border border-orange-100">
+                  <div className="bg-orange-50 px-4 py-2.5 border-b border-orange-100 shrink-0">
+                    <h2 className="text-sm font-semibold text-amber-700 uppercase tracking-wider flex items-center gap-2">
+                      En préparation
+                      <span className="bg-orange-100 text-orange-700 text-xs font-bold px-1.5 py-0.5 rounded-full">{commandesEnPreparation.length}</span>
+                    </h2>
+                  </div>
+                  <div className="min-h-[30vh] max-h-[55vh] overflow-y-auto p-3 space-y-3">
+                    {commandesEnPreparation.map((c) => <OrderCard key={c._id} commande={c} onAdvance={advanceStatut} />)}
+                    {commandesEnPreparation.length === 0 && <p className="text-xs text-gray-400 italic text-center mt-4">Aucune.</p>}
+                  </div>
+                </div>
 
-            <section className="flex flex-col p-5 h-full overflow-hidden">
-              <h2 className="text-sm font-semibold text-amber-700 uppercase tracking-wider mb-3 shrink-0">
-                En préparation ({commandesEnPreparation.length})
-              </h2>
-              <div className="space-y-3 overflow-y-auto flex-1 pr-1 pb-4">
-                {commandesEnPreparation.map((c) => <CommandeRow key={c._id} commande={c} onAdvance={advanceStatut} />)}
-                {commandesEnPreparation.length === 0 && <p className="text-xs text-gray-400 italic">Aucune.</p>}
+                {/* Prêtes */}
+                <div className="flex flex-col rounded-xl overflow-hidden border border-green-100">
+                  <div className="bg-green-50 px-4 py-2.5 border-b border-green-100 shrink-0">
+                    <h2 className="text-sm font-semibold text-green-700 uppercase tracking-wider flex items-center gap-2">
+                      Prêtes
+                      <span className="bg-green-100 text-green-700 text-xs font-bold px-1.5 py-0.5 rounded-full">{commandesPrêtes.length}</span>
+                    </h2>
+                  </div>
+                  <div className="min-h-[30vh] max-h-[55vh] overflow-y-auto p-3 space-y-3">
+                    {commandesPrêtes.map((c) => <OrderCard key={c._id} commande={c} onAdvance={advanceStatut} />)}
+                    {commandesPrêtes.length === 0 && <p className="text-xs text-gray-400 italic text-center mt-4">Aucune.</p>}
+                  </div>
+                </div>
               </div>
-            </section>
-
-            <section className="flex flex-col p-5 h-full overflow-hidden">
-              <h2 className="text-sm font-semibold text-green-700 uppercase tracking-wider mb-3 shrink-0">
-                Prêtes ({commandesPrêtes.length})
-              </h2>
-              <div className="space-y-3 overflow-y-auto flex-1 pr-1 pb-4">
-                {commandesPrêtes.map((c) => <CommandeRow key={c._id} commande={c} onAdvance={advanceStatut} />)}
-                {commandesPrêtes.length === 0 && <p className="text-xs text-gray-400 italic">Aucune.</p>}
-              </div>
-            </section>
-          </div>}
+          </div>
 
           {/* Récupérées aujourd'hui — TICK-104, TICK-121 */}
-          <hr className="border-gray-100" />
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-5">
           <section className="flex flex-col overflow-hidden" style={{ height: '35vh' }}>
             <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3 shrink-0">
               Récupérées aujourd&apos;hui ({commandesRecupereesAujourdHui.length})
@@ -642,6 +663,7 @@ export default function AdminCommandesPage() {
               </div>
             )}
           </section>
+          </div>
         </div>
       )}
 

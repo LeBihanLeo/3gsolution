@@ -23,6 +23,8 @@ export interface CommandeData {
   commentaire?: string;
   total: number; // centimes
   createdAt: string;
+  enPreparationAt?: string;
+  preteAt?: string;
   recupereeAt?: string;
 }
 

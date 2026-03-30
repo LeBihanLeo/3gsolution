@@ -55,9 +55,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     commande.statut = newStatut;
-    if (newStatut === 'recuperee') {
-      commande.recupereeAt = new Date();
-    }
+    const now = new Date();
+    if (newStatut === 'en_preparation') commande.enPreparationAt = now;
+    if (newStatut === 'prete') commande.preteAt = now;
+    if (newStatut === 'recuperee') commande.recupereeAt = now;
     await commande.save();
 
     return NextResponse.json({ data: commande });
