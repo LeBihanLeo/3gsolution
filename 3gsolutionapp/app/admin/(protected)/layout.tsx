@@ -13,7 +13,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
       <AdminNav />
       {/* TICK-117 — overflow-x-auto pour tablette, min-w pour éviter le scroll horizontal sur le nav */}
       <div className="overflow-x-auto">
-        <main className="min-w-[768px] max-w-5xl mx-auto px-4 py-6">
+        <main className="min-w-[768px] w-[85%] mx-auto px-4 py-6">
           {children}
         </main>
       </div>

@@ -285,9 +285,10 @@ export default function AdminCommandesPage() {
 
   const today = startOfTodayParis();
 
-  const commandesEnAttente = commandes.filter((c) => c.statut === 'payee');
-  const commandesEnPreparation = commandes.filter((c) => c.statut === 'en_preparation');
-  const commandesPrêtes = commandes.filter((c) => c.statut === 'prete');
+  const sortByDate = (a: CommandeData, b: CommandeData) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  const commandesEnAttente = commandes.filter((c) => c.statut === 'payee').sort(sortByDate);
+  const commandesEnPreparation = commandes.filter((c) => c.statut === 'en_preparation').sort(sortByDate);
+  const commandesPrêtes = commandes.filter((c) => c.statut === 'prete').sort(sortByDate);
 
   // Commandes du jour (createdAt aujourd'hui) avec statut recuperee
   const commandesRecupereesAujourdHui = commandes.filter((c) => {
@@ -556,7 +557,7 @@ export default function AdminCommandesPage() {
 
       {/* ── Onglet "En cours" ─────────────────────────────────────────────── */}
       {!loading && !error && onglet === 'en_cours' && (
-        <>
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-5 space-y-6">
           {nbEnCours === 0 && (
             <div className="text-center py-16">
               <div className="text-5xl mb-3">🍽️</div>
@@ -564,8 +565,8 @@ export default function AdminCommandesPage() {
             </div>
           )}
 
-          {nbEnCours > 0 && <div className="grid grid-cols-3 divide-x divide-gray-200 bg-white rounded-xl shadow-md mb-8 max-h-[80vh]">
-            <section className="flex flex-col p-5 overflow-hidden">
+          {nbEnCours > 0 && <div className="grid grid-cols-3 divide-x divide-gray-200 rounded-xl h-[55vh] overflow-hidden">
+            <section className="flex flex-col p-5 h-full overflow-hidden">
               <h2 className="text-sm font-semibold text-blue-700 uppercase tracking-wider mb-3 shrink-0">
                 À préparer ({commandesEnAttente.length})
               </h2>
@@ -575,7 +576,7 @@ export default function AdminCommandesPage() {
               </div>
             </section>
 
-            <section className="flex flex-col p-5 overflow-hidden">
+            <section className="flex flex-col p-5 h-full overflow-hidden">
               <h2 className="text-sm font-semibold text-amber-700 uppercase tracking-wider mb-3 shrink-0">
                 En préparation ({commandesEnPreparation.length})
               </h2>
@@ -585,7 +586,7 @@ export default function AdminCommandesPage() {
               </div>
             </section>
 
-            <section className="flex flex-col p-5 overflow-hidden">
+            <section className="flex flex-col p-5 h-full overflow-hidden">
               <h2 className="text-sm font-semibold text-green-700 uppercase tracking-wider mb-3 shrink-0">
                 Prêtes ({commandesPrêtes.length})
               </h2>
@@ -597,17 +598,18 @@ export default function AdminCommandesPage() {
           </div>}
 
           {/* Récupérées aujourd'hui — TICK-104, TICK-121 */}
-          <section className="border-t pt-6">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
+          <hr className="border-gray-100" />
+          <section className="flex flex-col overflow-hidden" style={{ height: '35vh' }}>
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3 shrink-0">
               Récupérées aujourd&apos;hui ({commandesRecupereesAujourdHui.length})
             </h2>
             {commandesRecupereesAujourdHui.length === 0 ? (
               <p className="text-xs text-gray-400 italic">Aucune commande récupérée aujourd&apos;hui.</p>
             ) : (
-              <div className="overflow-x-auto rounded-xl bg-white shadow-md">
+              <div className="overflow-auto rounded-xl bg-white shadow-md flex-1">
                 <table className="w-full text-sm border-collapse">
                   <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <tr className="sticky top-0 bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                       <th className="px-4 py-3 text-left">#</th>
                       <th className="px-4 py-3 text-left">Heure</th>
                       <th className="px-4 py-3 text-left">Client</th>
@@ -640,7 +642,7 @@ export default function AdminCommandesPage() {
               </div>
             )}
           </section>
-        </>
+        </div>
       )}
 
       {/* ── Onglet "Passées" ──────────────────────────────────────────────── */}
