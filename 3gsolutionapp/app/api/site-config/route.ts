@@ -20,7 +20,7 @@ const DEFAULT_CONFIG = {
 const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 const SiteConfigZod = z.object({
-  nomRestaurant: z.string().min(1).max(80),
+  nomRestaurant: z.string().min(1).max(80).optional(),
   banniereUrl: z
     .string()
     .optional()
@@ -32,21 +32,18 @@ const SiteConfigZod = z.object({
   horaireOuverture: z
     .string()
     .regex(timeRegex, 'Format attendu HH:MM')
-    .optional()
-    .default('11:30'),
+    .optional(),
   horaireFermeture: z
     .string()
     .regex(timeRegex, 'Format attendu HH:MM')
-    .optional()
-    .default('14:00'),
+    .optional(),
   // TICK-105 — Fermeture manuelle
-  fermeeAujourdhui: z.boolean().optional().default(false),
+  fermeeAujourdhui: z.boolean().optional(),
   // TICK-122 — couleur principale hex
   couleurPrincipale: z
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/, 'Format attendu #RRGGBB')
-    .optional()
-    .default(DEFAULT_COULEUR),
+    .optional(),
 }).refine(
   (data) => {
     if (data.horaireOuverture && data.horaireFermeture) {
@@ -75,7 +72,8 @@ export async function GET() {
     }
     const couleur = (config as { couleurPrincipale?: string }).couleurPrincipale ?? DEFAULT_COULEUR;
     const palette = generatePalette(couleur);
-    return NextResponse.json({ data: { ...config, palette } }, { headers: NO_STORE });
+    // Merge defaults pour les anciens documents sans horaireOuverture/horaireFermeture
+    return NextResponse.json({ data: { ...DEFAULT_CONFIG, ...config, palette } }, { headers: NO_STORE });
   } catch {
     return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 });
   }
@@ -97,9 +95,10 @@ export async function PUT(request: NextRequest) {
     }
 
     await connectDB();
+    // $set : mise à jour partielle (ne supprime pas les champs non envoyés)
     const config = await SiteConfig.findOneAndUpdate(
       {},
-      { ...parsed.data, updatedAt: new Date() },
+      { $set: parsed.data },
       { upsert: true, new: true, select: '-__v -_id' }
     ).lean();
 

@@ -28,7 +28,7 @@ const { mockProduitFind, mockSiteConfigFindOne } = vi.hoisted(() => ({
 vi.mock('@/models/Produit', () => ({
   default: { find: mockProduitFind },
 }));
-// TICK-105 — SiteConfig mock pour vérifier fermeeAujourdhui
+// TICK-105 — SiteConfig mock pour vérifier fermeeAujourdhui + horaires
 vi.mock('@/models/SiteConfig', () => ({
   default: { findOne: mockSiteConfigFindOne },
 }));
@@ -37,9 +37,10 @@ import { POST } from '@/app/api/checkout/route';
 
 // Note : `prix` et `nom` sont ignorés par le schéma Zod côté serveur (TICK-050),
 // les tests en-dessous valident que le prix vient de la BDD mockée (850 centimes).
+// Retrait toujours de type 'creneau' (option 'Dès que possible' supprimée)
 const validBody = {
   client: { nom: 'Jean Dupont', telephone: '0612345678', email: 'jean@example.com' },
-  retrait: { type: 'immediat' },
+  retrait: { type: 'creneau', creneau: '12:00 – 12:15' },
   produits: [{ produitId: 'p1', quantite: 1, options: [] }],
 };
 
@@ -60,18 +61,28 @@ const mockProduitDB = {
   options: [],
 };
 
+// SiteConfig ouvert toute la journée pour que les tests passent à n'importe quelle heure
+const openConfig = {
+  fermeeAujourdhui: false,
+  horaireOuverture: '00:00',
+  horaireFermeture: '23:59',
+};
+
 describe('POST /api/checkout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_fake');
     vi.stubEnv('NEXTAUTH_URL', 'http://localhost:3000');
-    // Par défaut : boutique ouverte
-    mockSiteConfigFindOne.mockReturnValue({ lean: vi.fn().mockResolvedValue({ fermeeAujourdhui: false }) });
+    // Par défaut : boutique ouverte toute la journée
+    mockSiteConfigFindOne.mockReturnValue({ lean: vi.fn().mockResolvedValue(openConfig) });
     // Par défaut : la BDD retourne le produit valide
     mockProduitFind.mockReturnValue({ lean: vi.fn().mockResolvedValue([mockProduitDB]) });
   });
 
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
 
   it('produits vides → 400', async () => {
     const res = await POST(makeReq({ ...validBody, produits: [] }));
@@ -83,9 +94,33 @@ describe('POST /api/checkout', () => {
     expect(res.status).toBe(400);
   });
 
+  it('retrait sans créneau → 400', async () => {
+    const res = await POST(makeReq({ ...validBody, retrait: { type: 'creneau', creneau: '' } }));
+    expect(res.status).toBe(400);
+  });
+
   // TICK-105 — Boutique fermée → 503
   it('boutique fermée (fermeeAujourdhui: true) → 503', async () => {
-    mockSiteConfigFindOne.mockReturnValueOnce({ lean: vi.fn().mockResolvedValue({ fermeeAujourdhui: true }) });
+    mockSiteConfigFindOne.mockReturnValueOnce({
+      lean: vi.fn().mockResolvedValue({ ...openConfig, fermeeAujourdhui: true }),
+    });
+    const res = await POST(makeReq(validBody));
+    expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error).toMatch(/fermée/i);
+  });
+
+  it('heure hors plage d\'ouverture → 503', async () => {
+    vi.useFakeTimers();
+    // Fixer l'heure à 10:00, boutique ouvre à 11:30
+    vi.setSystemTime(new Date('2025-01-01T10:00:00'));
+    mockSiteConfigFindOne.mockReturnValueOnce({
+      lean: vi.fn().mockResolvedValue({
+        fermeeAujourdhui: false,
+        horaireOuverture: '11:30',
+        horaireFermeture: '14:00',
+      }),
+    });
     const res = await POST(makeReq(validBody));
     expect(res.status).toBe(503);
     const json = await res.json();

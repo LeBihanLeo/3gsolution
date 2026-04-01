@@ -61,6 +61,23 @@ describe('GET /api/site-config', () => {
     expect(json.data.horaireFermeture).toBe('15:00');
     expect(json.data.fermeeAujourdhui).toBe(true);
   });
+
+  it('document ancien sans horaires → merge defaults HH:MM', async () => {
+    mockSiteConfigModel.findOne.mockReturnValueOnce({
+      select: vi.fn().mockReturnThis(),
+      lean: vi.fn().mockResolvedValue({
+        nomRestaurant: 'Ancien Restaurant',
+        fermeeAujourdhui: false,
+        // horaireOuverture et horaireFermeture absents (vieux document)
+      }),
+    });
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data.nomRestaurant).toBe('Ancien Restaurant');
+    expect(json.data.horaireOuverture).toBe('11:30');
+    expect(json.data.horaireFermeture).toBe('14:00');
+  });
 });
 
 describe('PUT /api/site-config', () => {
@@ -124,6 +141,17 @@ describe('PUT /api/site-config', () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data.fermeeAujourdhui).toBe(true);
+  });
+
+  // Toggle fermeeAujourdhui sans les autres champs (mise à jour partielle)
+  it('fermeeAujourdhui seul (sans nomRestaurant) → 200 update partiel', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    const updated = { nomRestaurant: 'Existant', fermeeAujourdhui: false };
+    mockSiteConfigModel.findOneAndUpdate.mockReturnValueOnce({
+      lean: vi.fn().mockResolvedValue(updated),
+    });
+    const res = await PUT(makeReq({ fermeeAujourdhui: false }));
+    expect(res.status).toBe(200);
   });
 
   it('banniereUrl avec chemin relatif (/images/...) → 200', async () => {

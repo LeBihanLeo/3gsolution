@@ -36,8 +36,8 @@ const CheckoutSchema = z.object({
     email: z.string().email().optional().or(z.literal('')),
   }),
   retrait: z.object({
-    type: z.enum(['immediat', 'creneau']),
-    creneau: z.string().optional(),
+    type: z.literal('creneau'),
+    creneau: z.string().min(1, 'Un créneau est requis'),
   }),
   commentaire: z.string().max(500).optional(),
   produits: z.array(ProduitCheckoutSchema).min(1, 'Le panier est vide').max(50),
@@ -49,10 +49,29 @@ export async function POST(request: NextRequest) {
   try {
     // TICK-105 — Vérifier si la boutique est fermée pour aujourd'hui
     await connectDB();
-    const siteConfig = await SiteConfig.findOne().lean();
+    const siteConfig = await SiteConfig.findOne().lean() as {
+      fermeeAujourdhui?: boolean;
+      horaireOuverture?: string;
+      horaireFermeture?: string;
+    } | null;
+
     if (siteConfig?.fermeeAujourdhui) {
       return NextResponse.json(
         { error: 'La boutique est fermée pour aujourd\'hui.' },
+        { status: 503 }
+      );
+    }
+
+    // Vérifier si la commande est passée pendant les heures d'ouverture
+    const ouvertureStr = siteConfig?.horaireOuverture ?? '11:30';
+    const fermetureStr = siteConfig?.horaireFermeture ?? '14:00';
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const [hO, mO] = ouvertureStr.split(':').map(Number);
+    const [hF, mF] = fermetureStr.split(':').map(Number);
+    if (nowMin < hO * 60 + mO || nowMin >= hF * 60 + mF) {
+      return NextResponse.json(
+        { error: `La boutique est fermée. Commandes acceptées de ${ouvertureStr} à ${fermetureStr}.` },
         { status: 503 }
       );
     }

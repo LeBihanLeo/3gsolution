@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { genererCreneaux } from '@/lib/creneaux';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { genererCreneaux, estDansPlageOuverture } from '@/lib/creneaux';
 import { filtrerCreneauxDisponibles } from '@/components/client/FormulaireCommande';
 
 describe('genererCreneaux', () => {
@@ -45,26 +45,66 @@ describe('genererCreneaux', () => {
   });
 });
 
-// TICK-101 — filtrerCreneauxDisponibles
+// TICK-101 — filtrerCreneauxDisponibles (buffer 30 min)
 describe('filtrerCreneauxDisponibles', () => {
   it('filtre les créneaux dont le début est dans le passé', () => {
     // Créneaux fictifs dans le futur lointain → tous conservés
     const future = ['23:00 – 23:15', '23:15 – 23:30'];
-    expect(filtrerCreneauxDisponibles(future, 10)).toHaveLength(2);
+    expect(filtrerCreneauxDisponibles(future, 30)).toHaveLength(2);
   });
 
   it('exclut les créneaux trop proches (buffer)', () => {
     // Créneaux dont le début est 00:00 → passé garanti → filtrés
     const past = ['00:00 – 00:15', '00:15 – 00:30'];
-    const result = filtrerCreneauxDisponibles(past, 10);
+    const result = filtrerCreneauxDisponibles(past, 30);
     expect(result).toHaveLength(0);
   });
 
   it('retourne tableau vide si input vide', () => {
-    expect(filtrerCreneauxDisponibles([], 10)).toHaveLength(0);
+    expect(filtrerCreneauxDisponibles([], 30)).toHaveLength(0);
   });
 
   it('ignore les créneaux au format invalide', () => {
-    expect(filtrerCreneauxDisponibles(['invalide'], 10)).toHaveLength(0);
+    expect(filtrerCreneauxDisponibles(['invalide'], 30)).toHaveLength(0);
+  });
+});
+
+// estDansPlageOuverture
+describe('estDansPlageOuverture', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('retourne false si fermeeAujourdhui = true', () => {
+    expect(estDansPlageOuverture('08:00', '22:00', true)).toBe(false);
+  });
+
+  it('retourne true si heure courante est dans la plage', () => {
+    // Fixer l'heure à 12:00
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T12:00:00'));
+    expect(estDansPlageOuverture('11:30', '14:00', false)).toBe(true);
+  });
+
+  it('retourne false si heure courante est avant ouverture', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T10:00:00'));
+    expect(estDansPlageOuverture('11:30', '14:00', false)).toBe(false);
+  });
+
+  it('retourne false si heure courante est après fermeture', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T15:00:00'));
+    expect(estDansPlageOuverture('11:30', '14:00', false)).toBe(false);
+  });
+
+  it('retourne false exactement à l\'heure de fermeture (borne exclue)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T14:00:00'));
+    expect(estDansPlageOuverture('11:30', '14:00', false)).toBe(false);
+  });
+
+  it('retourne true exactement à l\'heure d\'ouverture (borne incluse)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T11:30:00'));
+    expect(estDansPlageOuverture('11:30', '14:00', false)).toBe(true);
   });
 });

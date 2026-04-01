@@ -34,3 +34,22 @@ export function creneauxDepuisEnv(): string[] {
   const pas = parseInt(process.env.NEXT_PUBLIC_RESTAURANT_PAS_MINUTES ?? '15', 10);
   return genererCreneaux(ouverture, fermeture, pas);
 }
+
+/**
+ * Vérifie si le restaurant est actuellement dans sa plage d'ouverture.
+ * @param ouverture        Heure d'ouverture "HH:MM"
+ * @param fermeture        Heure de fermeture "HH:MM"
+ * @param fermeeAujourdhui Flag de fermeture manuelle
+ */
+export function estDansPlageOuverture(
+  ouverture: string,
+  fermeture: string,
+  fermeeAujourdhui: boolean
+): boolean {
+  if (fermeeAujourdhui) return false;
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const [hO, mO] = ouverture.split(':').map(Number);
+  const [hF, mF] = fermeture.split(':').map(Number);
+  return nowMin >= hO * 60 + mO && nowMin < hF * 60 + mF;
+}
