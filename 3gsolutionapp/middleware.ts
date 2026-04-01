@@ -62,8 +62,8 @@ export default withAuth(
       pathname.startsWith('/admin/') ||
       // /api/commandes/suivi est public — on exclut explicitement ce chemin
       (pathname.startsWith('/api/commandes') && pathname !== '/api/commandes/suivi') ||
-      pathname === '/api/upload' ||
-      pathname === '/api/site-config';
+      pathname === '/api/upload';
+      // /api/site-config retiré : GET est public, PUT protégé par getServerSession dans le handler
 
     if (isAdminRoute && token && token.role !== 'admin') {
       // Connecté mais pas admin → 403
@@ -137,7 +137,7 @@ export const config = {
     '/api/commandes/:id',
     // API admin (défense en profondeur)
     '/api/upload',
-    '/api/site-config',
+    // '/api/site-config' retiré : GET public, PUT protégé dans le handler par getServerSession
     // Rate limiting login admin
     '/api/auth/callback/credentials',
     // Routes client protégées (TICK-071)

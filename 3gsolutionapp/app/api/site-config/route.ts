@@ -70,10 +70,21 @@ export async function GET() {
         { headers: NO_STORE }
       );
     }
-    const couleur = (config as { couleurPrincipale?: string }).couleurPrincipale ?? DEFAULT_COULEUR;
+    const c = config as Record<string, unknown>;
+    const couleur = (typeof c.couleurPrincipale === 'string' && c.couleurPrincipale) ? c.couleurPrincipale : DEFAULT_COULEUR;
     const palette = generatePalette(couleur);
-    // Merge defaults pour les anciens documents sans horaireOuverture/horaireFermeture
-    return NextResponse.json({ data: { ...DEFAULT_CONFIG, ...config, palette } }, { headers: NO_STORE });
+    // ?? explicite : protège contre les champs null dans les anciens documents MongoDB
+    return NextResponse.json({
+      data: {
+        nomRestaurant: (typeof c.nomRestaurant === 'string' && c.nomRestaurant) ? c.nomRestaurant : DEFAULT_CONFIG.nomRestaurant,
+        banniereUrl: typeof c.banniereUrl === 'string' ? c.banniereUrl : undefined,
+        horaireOuverture: (typeof c.horaireOuverture === 'string' && c.horaireOuverture) ? c.horaireOuverture : DEFAULT_CONFIG.horaireOuverture,
+        horaireFermeture: (typeof c.horaireFermeture === 'string' && c.horaireFermeture) ? c.horaireFermeture : DEFAULT_CONFIG.horaireFermeture,
+        fermeeAujourdhui: typeof c.fermeeAujourdhui === 'boolean' ? c.fermeeAujourdhui : DEFAULT_CONFIG.fermeeAujourdhui,
+        couleurPrincipale: couleur,
+        palette,
+      },
+    }, { headers: NO_STORE });
   } catch {
     return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 });
   }

@@ -3,8 +3,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { CartProvider } from '@/lib/cartContext';
 import CookieBanner from '@/components/client/CookieBanner';
-import HeaderAuth from '@/components/client/HeaderAuth';
-import ProfilButton from '@/components/client/ProfilButton';
+import UserNavButton from '@/components/client/UserNavButton';
+import BannerConditional from '@/components/client/BannerConditional';
 import { connectDB } from '@/lib/mongodb';
 import SiteConfig from '@/models/SiteConfig';
 import { generatePalette, SitePalette } from '@/lib/palette';
@@ -15,11 +15,17 @@ interface SiteConfigData {
   nomRestaurant: string;
   banniereUrl?: string;
   palette: SitePalette;
+  horaireOuverture: string;
+  horaireFermeture: string;
+  fermeeAujourdhui: boolean;
 }
 
 const DEFAULT_CONFIG: SiteConfigData = {
   nomRestaurant: 'Mon Restaurant',
   palette: generatePalette(DEFAULT_COULEUR),
+  horaireOuverture: '11:30',
+  horaireFermeture: '14:00',
+  fermeeAujourdhui: false,
 };
 
 // TICK-123 — no-store : palette fraîche à chaque requête
@@ -33,6 +39,9 @@ async function getSiteConfig(): Promise<SiteConfigData> {
       nomRestaurant: config.nomRestaurant,
       banniereUrl: config.banniereUrl,
       palette: generatePalette(couleur),
+      horaireOuverture: config.horaireOuverture ?? '11:30',
+      horaireFermeture: config.horaireFermeture ?? '14:00',
+      fermeeAujourdhui: config.fermeeAujourdhui ?? false,
     };
   } catch {
     return DEFAULT_CONFIG;
@@ -61,61 +70,60 @@ export default async function ClientLayout({ children }: { children: ReactNode }
     <CartProvider>
       <div className="min-h-screen flex flex-col bg-stone-50" style={cssVars}>
 
-        {config.banniereUrl ? (
-          /* ── Hero bannière ── */
-          <header className="w-full">
+        {/* ── Top bar blanche (commune aux deux cas) ── */}
+        <header className="bg-white border-b border-gray-100 sticky top-0 z-40">
+          <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
+            <Link
+              href="/"
+              className="font-bold text-gray-900 text-base uppercase tracking-widest hover:text-orange-600 transition-colors"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              {config.nomRestaurant}
+            </Link>
+            <UserNavButton variant="onWhite" />
+          </div>
+        </header>
+
+        {config.banniereUrl && (
+          /* ── Bannière image sous la top bar (menu uniquement) ── */
+          <BannerConditional>
             <div
-              className="w-full flex items-center justify-center relative"
+              className="w-full relative"
               style={{
                 backgroundImage: `url(${config.banniereUrl})`,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
-                minHeight: '200px',
+                minHeight: '220px',
               }}
             >
-              {/* Gradient overlay for readability */}
-              <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/20 to-black/40" />
-              <div className="relative flex items-center gap-5 w-full px-8 max-w-2xl mx-auto">
-                <div className="flex-1 h-px bg-white/60" />
-                <Link
-                  href="/"
-                  className="text-white text-2xl whitespace-nowrap shrink-0 uppercase tracking-widest drop-shadow-lg"
-                  style={{
-                    fontFamily: 'var(--font-display)',
-                    fontWeight: 700,
-                  }}
-                >
-                  {config.nomRestaurant}
-                </Link>
-                <div className="flex-1 h-px bg-white/60" />
+              {/* Gradient fondu vers stone-50 en bas */}
+              <div className="absolute bottom-0 left-0 right-0 h-28 bg-gradient-to-b from-transparent to-stone-50" />
+
+              {/* Horaires bas gauche — tag pill */}
+              <div className="absolute bottom-4 left-4 z-10">
+                {config.fermeeAujourdhui ? (
+                  <span className="inline-flex items-center gap-1.5 bg-white rounded-full px-3 py-1.5 text-xs font-semibold text-red-600 shadow-sm">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    Fermé aujourd&apos;hui
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 bg-white rounded-full px-3 py-1.5 text-xs font-semibold text-gray-800 shadow-sm">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#EA580C" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    {config.horaireOuverture} – {config.horaireFermeture}
+                  </span>
+                )}
               </div>
             </div>
-          
-          </header>
-        ) : (
-          /* ── Header fallback ── */
-          <header className="bg-white border-b border-gray-100 sticky top-0 z-40">
-            <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-orange-600 flex items-center justify-center shrink-0">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 11l19-9-9 19-2-8-8-2z" />
-                </svg>
-              </div>
-              <Link
-                href="/"
-                className="font-semibold text-gray-900 text-base hover:text-orange-600 transition-colors flex-1"
-                style={{ fontFamily: 'var(--font-display)' }}
-              >
-                {config.nomRestaurant}
-              </Link>
-              <HeaderAuth />
-            </div>
-          </header>
+          </BannerConditional>
         )}
 
-        {/* TICK-116 — relative pour que ProfilButton (absolute top-4 right-4) se positionne ici */}
-        <main className="relative flex-1 max-w-2xl mx-auto w-full px-4 py-6">
-          <ProfilButton />
+        <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6">
           {children}
         </main>
 
