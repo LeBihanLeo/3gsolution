@@ -39,6 +39,7 @@ export async function GET() {
       compte: {
         email: client.email,
         nom: client.nom,
+        telephone: client.telephone ?? null,
         provider: client.provider,
         createdAt: client.createdAt,
       },

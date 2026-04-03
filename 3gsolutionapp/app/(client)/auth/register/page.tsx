@@ -30,6 +30,7 @@ export default function RegisterPage() {
 
   const [nom, setNom] = useState('');
   const [email, setEmail] = useState('');
+  const [telephone, setTelephone] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [confirm, setConfirm] = useState('');
@@ -64,7 +65,7 @@ export default function RegisterPage() {
     const res = await fetch('/api/client/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, nom }),
+      body: JSON.stringify({ email, password, nom, telephone }),
     });
 
     const data = await res.json();
@@ -142,6 +143,23 @@ export default function RegisterPage() {
               className={inputClass}
             />
             {errors.email?.map((e) => <p key={e} className="text-red-600 text-xs mt-1">{e}</p>)}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Téléphone <span className="text-gray-400 font-normal">(optionnel)</span>
+            </label>
+            <input
+              type="tel"
+              inputMode="numeric"
+              value={telephone}
+              onChange={(e) => setTelephone(e.target.value.replace(/\D/g, ''))}
+              maxLength={10}
+              placeholder="0612345678"
+              autoComplete="tel"
+              className={inputClass}
+            />
+            {errors.telephone?.map((e) => <p key={e} className="text-red-600 text-xs mt-1">{e}</p>)}
           </div>
 
           <div>

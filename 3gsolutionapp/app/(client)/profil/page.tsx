@@ -5,7 +5,7 @@
 // TICK-088 — BackLink retour vers le menu
 // TICK-089 — Section "Mes données" retirée (mise de côté — voir ARCHITECTURE.md > Éléments mis de côté)
 // TICK-115 — cursor-default sur bouton Enregistrer désactivé
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { BackLink, Button } from '@/components/ui';
@@ -16,9 +16,22 @@ export default function ProfilPage() {
   const router = useRouter();
 
   const [nom, setNom] = useState('');
+  const [telephone, setTelephone] = useState('');
   const [nomLoading, setNomLoading] = useState(false);
   const [nomSuccess, setNomSuccess] = useState('');
   const [nomError, setNomError] = useState('');
+
+  // Charger nom + téléphone depuis la base (source de vérité)
+  useEffect(() => {
+    if (status !== 'authenticated') return;
+    fetch('/api/client/profil')
+      .then((r) => r.json())
+      .then(({ client }) => {
+        if (client?.nom) setNom(client.nom);
+        if (client?.telephone) setTelephone(client.telephone);
+      })
+      .catch(() => {});
+  }, [status]);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -38,27 +51,37 @@ export default function ProfilPage() {
 
   const provider = (session.user as { provider?: string }).provider;
 
-  async function handleUpdateNom(e: React.FormEvent) {
+  async function handleUpdateProfil(e: React.FormEvent) {
     e.preventDefault();
     setNomError('');
     setNomSuccess('');
-    if (!nom.trim()) return;
+    if (!nom.trim() && telephone === undefined) return;
     setNomLoading(true);
+
+    const body: Record<string, string> = {};
+    if (nom.trim()) body.nom = nom.trim();
+    body.telephone = telephone;
 
     const res = await fetch('/api/client/profil', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nom }),
+      body: JSON.stringify(body),
     });
 
     setNomLoading(false);
 
     if (res.ok) {
-      setNomSuccess('Nom mis à jour.');
+      setNomSuccess('Profil mis à jour.');
       await update();
     } else {
       const data = await res.json();
-      setNomError(data.error ?? 'Erreur lors de la mise à jour.');
+      // data.errors = objet Zod (champs), data.error = message générique
+      if (data.errors) {
+        const first = Object.values(data.errors as Record<string, string[]>).flat()[0];
+        setNomError(first ?? 'Données invalides.');
+      } else {
+        setNomError(data.error ?? 'Erreur lors de la mise à jour.');
+      }
     }
   }
 
@@ -90,18 +113,33 @@ export default function ProfilPage() {
         <p className="text-sm text-gray-500">{session.user.email}</p>
       </div>
 
-      {/* ── Nom affiché ── */}
+      {/* ── Informations personnelles ── */}
       <div className="bg-white rounded-2xl shadow-sm p-6">
-        <h2 className="text-base font-semibold text-gray-800 mb-4">Nom affiché</h2>
-        <form onSubmit={handleUpdateNom} className="space-y-3">
-          <input
-            type="text"
-            value={nom}
-            onChange={(e) => setNom(e.target.value)}
-            placeholder={session.user.name ?? 'Votre nom'}
-            maxLength={50}
-            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
-          />
+        <h2 className="text-base font-semibold text-gray-800 mb-4">Informations personnelles</h2>
+        <form onSubmit={handleUpdateProfil} className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Nom</label>
+            <input
+              type="text"
+              value={nom}
+              onChange={(e) => setNom(e.target.value)}
+              maxLength={50}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Téléphone</label>
+            <input
+              type="tel"
+              inputMode="numeric"
+              value={telephone}
+              onChange={(e) => setTelephone(e.target.value.replace(/\D/g, ''))}
+              maxLength={10}
+              placeholder="0612345678"
+              autoComplete="tel"
+              className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
+            />
+          </div>
           {nomError && <p className="text-red-600 text-sm">{nomError}</p>}
           {nomSuccess && <p className="text-green-600 text-sm">{nomSuccess}</p>}
           <Button
@@ -109,7 +147,7 @@ export default function ProfilPage() {
             variant="primary"
             size="md"
             loading={nomLoading}
-            disabled={nomLoading || !nom.trim()}
+            disabled={nomLoading}
             className="disabled:cursor-default"
           >
             Enregistrer

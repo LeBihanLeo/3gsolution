@@ -5,6 +5,7 @@ export interface IClient extends Document {
   _id: mongoose.Types.ObjectId;
   email: string;
   nom: string; // TICK-087 — obligatoire
+  telephone?: string;
   passwordHash?: string;
   provider: 'credentials' | 'google';
   emailVerified: boolean;
@@ -28,6 +29,7 @@ const ClientSchema = new Schema<IClient>(
       index: true,
     },
     nom: { type: String, required: true, trim: true }, // TICK-087 — obligatoire
+    telephone: { type: String, trim: true },
     passwordHash: { type: String },
     provider: {
       type: String,

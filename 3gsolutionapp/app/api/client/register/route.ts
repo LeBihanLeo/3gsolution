@@ -12,6 +12,10 @@ const RegisterSchema = z.object({
   email: z.string().email('Email invalide'),
   // TICK-087 — nom obligatoire
   nom: z.string().min(1, 'Le nom est requis').max(50),
+  telephone: z.union([
+    z.string().regex(/^0[1-9]\d{8}$/, 'Numéro invalide (10 chiffres, ex : 0612345678)'),
+    z.literal(''),
+  ]).optional(),
   password: z
     .string()
     .min(8, 'Minimum 8 caractères')
@@ -37,7 +41,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { email, nom, password } = parsed.data; // nom est désormais obligatoire (TICK-087)
+  const { email, nom, telephone, password } = parsed.data; // nom est désormais obligatoire (TICK-087)
   const normalizedEmail = email.toLowerCase();
 
   logger.info('client_register_attempt', { email: normalizedEmail });
@@ -59,6 +63,7 @@ export async function POST(request: NextRequest) {
   await Client.create({
     email: normalizedEmail,
     nom,
+    ...(telephone ? { telephone } : {}),
     passwordHash,
     provider: 'credentials',
     emailVerified: false,

@@ -3,6 +3,7 @@
 // TICK-040 — Cache client RGPD (email + téléphone)
 // TICK-101 — Créneaux filtrés depuis SiteConfig (horaireOuverture / horaireFermeture) + buffer +30 min
 import { useState, useEffect, useRef } from 'react';
+import { useSession } from 'next-auth/react';
 import { z } from 'zod';
 import { useCart, CartItem } from '@/lib/cartContext';
 import { genererCreneaux } from '@/lib/creneaux';
@@ -40,12 +41,7 @@ function clearCache() {
 
 const formSchema = z.object({
   nom: z.string().min(2, 'Le nom doit contenir au moins 2 caractères'),
-  telephone: z
-    .string()
-    .regex(
-      /^(\+33|0)[1-9](\d{8})$/,
-      'Numéro de téléphone invalide (ex : 0612345678)'
-    ),
+  telephone: z.string().regex(/^0[1-9]\d{8}$/, 'Numéro invalide (10 chiffres, ex : 0612345678)'),
   email: z
     .string()
     .email('Adresse email invalide')
@@ -88,6 +84,9 @@ const inputCls =
 
 export default function FormulaireCommande() {
   const { items, totalPrice } = useCart();
+  const { data: session, status } = useSession();
+  const isAuthenticated = status === 'authenticated';
+
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -121,17 +120,33 @@ export default function FormulaireCommande() {
       .finally(() => setLoadingConfig(false));
   }, []);
 
-  // Pré-remplir les champs si un cache existe
+  // Pré-remplir les champs selon le contexte (connecté vs invité)
   useEffect(() => {
-    const cache = readCache();
-    if (cache) {
-      setCacheExists(true);
-      setMemoriser(true);
-      if (nomRef.current) nomRef.current.value = cache.nom;
-      if (telRef.current) telRef.current.value = cache.telephone;
-      if (emailRef.current) emailRef.current.value = cache.email ?? '';
+    if (status === 'loading') return;
+
+    if (isAuthenticated && session?.user) {
+      // Utilisateur connecté : pré-remplir depuis la session (nom + email)
+      if (nomRef.current) nomRef.current.value = session.user.name ?? '';
+      if (emailRef.current) emailRef.current.value = session.user.email ?? '';
+      // Téléphone depuis la base (non exposé dans le JWT)
+      fetch('/api/client/profil')
+        .then((r) => r.json())
+        .then(({ client }) => {
+          if (client?.telephone && telRef.current) telRef.current.value = client.telephone;
+        })
+        .catch(() => {});
+    } else {
+      // Mode invité : pré-remplir depuis le cache localStorage si présent
+      const cache = readCache();
+      if (cache) {
+        setCacheExists(true);
+        setMemoriser(true);
+        if (nomRef.current) nomRef.current.value = cache.nom;
+        if (telRef.current) telRef.current.value = cache.telephone;
+        if (emailRef.current) emailRef.current.value = cache.email ?? '';
+      }
     }
-  }, []);
+  }, [status, isAuthenticated, session]);
 
   function handleEffacerCache() {
     clearCache();
@@ -282,9 +297,15 @@ export default function FormulaireCommande() {
             ref={telRef}
             name="telephone"
             type="tel"
+            inputMode="numeric"
             required
             placeholder="0612345678"
             autoComplete="tel"
+            maxLength={10}
+            onInput={(e) => {
+              const el = e.currentTarget;
+              el.value = el.value.replace(/\D/g, '');
+            }}
             className={inputCls}
           />
           {fieldErrors.telephone && (
@@ -343,8 +364,8 @@ export default function FormulaireCommande() {
           />
         </div>
 
-        {/* ─── TICK-040 : Cache RGPD ─────────────────────────────────────── */}
-        <div className="border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50">
+        {/* ─── TICK-040 : Cache RGPD — masqué si connecté ────────────────── */}
+        {!isAuthenticated && <div className="border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50">
           <label
             htmlFor="memoriser-checkbox"
             className="flex items-start gap-2.5 cursor-pointer"
@@ -373,7 +394,7 @@ export default function FormulaireCommande() {
               Effacer mes informations
             </button>
           )}
-        </div>
+        </div>}
 
         {serverError && (
           <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
