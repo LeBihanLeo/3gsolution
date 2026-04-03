@@ -83,7 +83,7 @@ export default withAuth(
     // Un client connecté ne peut pas accéder aux routes admin
     const token = request.nextauth?.token;
     const isAdminRoute =
-      pathname.startsWith('/admin/') ||
+      (pathname.startsWith('/admin/') && pathname !== '/admin/login') ||
       // /api/commandes/suivi est public — on exclut explicitement ce chemin
       (pathname.startsWith('/api/commandes') && pathname !== '/api/commandes/suivi') ||
       // CVE-02 — routes admin dédiées
@@ -169,7 +169,10 @@ export default withAuth(
         if (clientProtected) return !!token;
 
         // Routes admin dans le matcher : token requis
+        // /admin/login exclu : c'est la page de connexion elle-même (sinon boucle infinie)
         // /api/produits exclu : public en GET, les handlers POST/PUT/DELETE appellent requireAdmin()
+        if (pathname === '/admin/login') return true;
+
         const adminRoute =
           pathname.startsWith('/admin/') ||
           (pathname.startsWith('/api/commandes') && pathname !== '/api/commandes/suivi') ||

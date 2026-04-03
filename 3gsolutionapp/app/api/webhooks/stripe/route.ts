@@ -129,10 +129,24 @@ export async function POST(request: NextRequest) {
       ...(clientId ? { clientId } : {}),
     });
 
+    // Récupérer la receipt_url Stripe depuis la charge liée au PaymentIntent
+    let receiptUrl: string | undefined;
+    try {
+      if (session.payment_intent) {
+        const pi = await getStripe().paymentIntents.retrieve(
+          session.payment_intent as string,
+          { expand: ['latest_charge'] }
+        );
+        receiptUrl = (pi.latest_charge as Stripe.Charge)?.receipt_url ?? undefined;
+      }
+    } catch {
+      // non-bloquant — l'email s'envoie sans lien si l'appel échoue
+    }
+
     // Envoi email de confirmation (erreur silencieuse pour ne pas bloquer)
     if (metadata.client_email) {
       try {
-        await sendConfirmationEmail(commande);
+        await sendConfirmationEmail(commande, receiptUrl);
       } catch (emailErr) {
         logger.error('webhook_email_failed', { stripeSessionId: session.id }, emailErr);
       }

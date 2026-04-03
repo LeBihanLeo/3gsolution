@@ -90,7 +90,7 @@ export async function sendPasswordResetEmail(email: string, token: string): Prom
   });
 }
 
-export async function sendConfirmationEmail(commande: ICommande): Promise<void> {
+export async function sendConfirmationEmail(commande: ICommande, receiptUrl?: string): Promise<void> {
   if (!commande.client.email) return;
 
   const ref = idCourt(commande._id.toString());
@@ -181,6 +181,14 @@ export async function sendConfirmationEmail(commande: ICommande): Promise<void> 
       ${
         commande.commentaire
           ? `<p style="color:#6b7280;font-size:13px;font-style:italic">Note : ${commande.commentaire}</p>`
+          : ''
+      }
+
+      ${
+        receiptUrl
+          ? `<p style="margin:0 0 0;font-size:14px">
+              <a href="${receiptUrl}" style="color:#2563eb;text-decoration:none">Voir le reçu Stripe →</a>
+             </p>`
           : ''
       }
 
