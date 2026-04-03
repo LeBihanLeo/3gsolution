@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Montserrat } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 import SwRegister from "@/components/SwRegister";
+import PwaInstallBanner from "@/components/PwaInstallBanner";
 import SessionProviderWrapper from "@/components/SessionProviderWrapper";
 
 const geistSans = Geist({
@@ -25,6 +26,18 @@ export const metadata: Metadata = {
   title: "3G Solution — Commandes en ligne",
   description: "Commandez en ligne facilement",
   manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "3G Solution",
+  },
+  other: {
+    "mobile-web-app-capable": "yes",
+  },
+};
+
+export const viewport = {
+  themeColor: "#2563eb",
 };
 
 export default async function RootLayout({
@@ -42,6 +55,8 @@ export default async function RootLayout({
       <head>
         {/* Permet aux scripts inline de Next.js (hydratation) d'utiliser le nonce */}
         {nonce && <meta name="csp-nonce" content={nonce} />}
+        {/* iOS PWA */}
+        <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${montserrat.variable} antialiased`}
@@ -49,6 +64,7 @@ export default async function RootLayout({
         <SessionProviderWrapper>
           {children}
         </SessionProviderWrapper>
+        <PwaInstallBanner />
         <SwRegister />
       </body>
     </html>
