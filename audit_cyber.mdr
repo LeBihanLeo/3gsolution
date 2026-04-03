@@ -1,0 +1,359 @@
+# Audit de Sécurité — 3G Solution Next.js App
+**Date** : 2026-04-03
+**Auditeur** : Winston (Senior Security Expert)
+**Périmètre** : Application Next.js (App Router) — `3gsolutionapp/`
+**Version Next.js** : 16.1.7 | **Auth** : NextAuth v4 | **DB** : MongoDB/Mongoose
+
+---
+
+## Résumé Exécutif
+
+L'application présente une base de sécurité solide avec plusieurs mécanismes de défense correctement implémentés (rate limiting, validation Zod, magic bytes MIME, server-side price validation, Stripe webhook signature). Cependant, **une vulnérabilité critique d'escalade de privilège** et **plusieurs routes API admin non protégées par vérification de rôle** représentent des risques immédiats qui doivent être corrigés avant toute mise en production.
+
+---
+
+## Points Forts (Acquis)
+
+- Validation des prix côté serveur — les prix client sont ignorés, seuls les prix BDD sont utilisés (TICK-050)
+- Signature Stripe vérifiée avec le corps brut avant parsing (TICK-064)
+- Validation MIME par magic bytes — résistant au spoofing `Content-Type` (TICK-053)
+- Rate limiting login/register/forgot-password avec fallback in-memory fail-safe (TICK-052, TICK-078, TICK-063)
+- Filenames UUID pour les uploads — path traversal impossible (TICK-034)
+- BCrypt cost factor 12 pour les mots de passe
+- CSP sans `unsafe-eval` en production (TICK-061)
+- Protection email enumeration sur forgot-password (réponse identique 200)
+- Idempotence Stripe webhook — pas de double commande
+- RGPD : purgeAt 12 mois, anonymisation PII, export JSON portabilité
+- Mock endpoint bloqué en production (double guard NODE_ENV + STRIPE_SECRET_KEY)
+- ObjectId MongoDB validé par regex avant usage dans le webhook
+- Validation Zod structurée sur toutes les entrées utilisateur
+
+---
+
+## Vulnérabilités Identifiées
+
+---
+
+### [CRITIQUE] CVE-01 — Escalade de privilège Google OAuth → rôle `admin`
+
+**Fichier** : `lib/auth.ts` — lignes 127–158
+**OWASP** : A01:2021 — Broken Access Control
+**Impact** : Un utilisateur Google peut obtenir le rôle `admin` si la connexion MongoDB échoue au moment du login
+
+**Analyse** :
+```typescript
+// jwt callback — lib/auth.ts:129
+token.role = (user as { role?: string }).role ?? 'admin';  // ← fallback 'admin' !
+
+// Bloc Google — lib/auth.ts:144
+if (account?.provider === 'google' && user?.email) {
+  try {
+    const client = await Client.findOne(...)
+    if (client) {
+      token.role = 'client';  // ← correction, mais dans un try/catch
+    }
+    // Si client non trouvé : token.role reste 'admin' !
+  } catch {
+    // Exception silencieuse : token.role reste 'admin' !
+  }
+}
+```
+
+Scénario d'attaque :
+1. Attaquant crée un compte Google quelconque.
+2. Connexion au moment d'une panne MongoDB transitoire (ou race condition).
+3. Le `try/catch` absorbe l'erreur, `token.role` n'est jamais écrasé par `'client'`.
+4. L'utilisateur Google obtient `role: 'admin'` dans son JWT.
+5. Il accède à toutes les routes admin.
+
+**Recommandation** :
+- Changer le fallback par défaut : `token.role = (user as { role?: string }).role ?? 'client'`
+- Ne jamais utiliser `'admin'` comme valeur par défaut — le rôle admin doit être explicitement assigné
+- Ajouter une vérification explicite du rôle dans le bloc Google avant de retourner le token
+
+---
+
+### [ÉLEVÉ] CVE-02 — Routes API admin sans vérification de rôle
+
+**Fichiers concernés** :
+- `app/api/produits/route.ts` — POST (créer produit) : ligne 57
+- `app/api/produits/[id]/route.ts` — PUT/PATCH/DELETE (modifier/supprimer produit) : lignes 34, 66, 99
+- `app/api/site-config/route.ts` — PUT (modifier config site) : ligne 94
+- `app/api/admin/commandes/export/route.ts` — GET (exporter CSV toutes commandes) : ligne 35
+- `app/api/commandes/route.ts` — GET (lister toutes commandes) : ligne 8
+- `app/api/commandes/[id]/route.ts` — DELETE (anonymiser commande) : ligne 18
+- `app/api/commandes/[id]/statut/route.ts` — PATCH (changer statut) : ligne 22
+
+**OWASP** : A01:2021 — Broken Access Control
+**Impact** : Un client connecté peut créer/modifier/supprimer des produits, modifier la configuration du restaurant, et exporter toutes les commandes avec les données personnelles (noms, téléphones, emails)
+
+**Analyse** :
+
+Tous ces handlers vérifient uniquement `if (!session)` (authentifié ou non), sans vérifier `session.user.role === 'admin'`.
+
+```typescript
+// Exemple — app/api/produits/route.ts:57-59
+const session = await getServerSession(authOptions);
+if (!session) {                    // ← vérifie seulement l'authentification
+  return NextResponse.json(...)    // ← n'importe quel rôle passe
+}
+```
+
+Le middleware (`middleware.ts`) protège partiellement ces routes, mais :
+- `/api/produits` et `/api/produits/[id]` sont **absents du matcher middleware**
+- `/api/site-config` a été **explicitement retiré** du matcher (commentaire ligne 66)
+- `/api/admin/commandes/export` est **absent du matcher middleware**
+
+Un client authentifié peut donc atteindre ces endpoints directement **sans passer par le middleware**.
+
+**Cas le plus grave** : `/api/admin/commandes/export` — un client connecté peut télécharger un CSV de TOUTES les commandes de TOUS les clients (noms, créneaux, produits commandés, montants). Violation RGPD Art. 5(1)(f) et Art. 32.
+
+**Recommandation** :
+- Ajouter `session.user.role !== 'admin'` dans chaque handler admin (défense en profondeur)
+- Ajouter `/api/produits`, `/api/produits/:id`, `/api/admin/:path*` au matcher middleware
+
+---
+
+### [MOYEN] CVE-03 — Horaires d'ouverture vérifiés en UTC (bug timezone)
+
+**Fichier** : `app/api/checkout/route.ts` — lignes 68–77
+**OWASP** : A04:2021 — Insecure Design
+
+**Analyse** :
+```typescript
+const now = new Date();
+const nowMin = now.getHours() * 60 + now.getMinutes();  // ← UTC !
+```
+
+`Date.getHours()` retourne l'heure UTC. Les serveurs Vercel opèrent en UTC. Les horaires d'ouverture (11:30–14:00) sont en heure française (UTC+1 hiver, UTC+2 été).
+
+- En hiver : une commande à 11:00 UTC = 12:00 Paris → passe la vérification, correct.
+- En hiver : une commande à 10:30 UTC = 11:30 Paris → `nowMin = 630`, `hO*60+mO = 690`, **rejetée à tort**.
+- En été (UTC+2) : décalage encore plus grand.
+
+Résultat : les commandes sont bloquées 1 à 2 heures trop tôt selon la saison.
+
+**Recommandation** :
+```typescript
+const nowMin = now.toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' })
+```
+Ou utiliser `Intl.DateTimeFormat` pour extraire heures/minutes en heure locale Paris.
+
+---
+
+### [MOYEN] CVE-04 — Injection de formule CSV (CSV Injection)
+
+**Fichier** : `app/api/admin/commandes/export/route.ts` — lignes 22–28, 128
+**OWASP** : A03:2021 — Injection
+**CWE** : CWE-1236
+
+**Analyse** :
+```typescript
+function escapeCsv(value: string): string {
+  if (/[;";\n\r]/.test(value)) {
+    return '"' + value.replace(/"/g, '""') + '"';
+  }
+  return value;  // ← aucune protection contre = + - @ \t
+}
+
+// Utilisation :
+escapeCsv(c.client.nom)  // ← si nom = "=HYPERLINK(\"http://evil.com\",\"Click\")"
+```
+
+La fonction `escapeCsv` protège contre les injections via `;`, `"`, et sauts de ligne, mais **ne protège pas contre les caractères de formule** Excel/LibreOffice : `=`, `+`, `-`, `@`, `\t`.
+
+Un client malveillant dont le nom commence par `=HYPERLINK(...)` pourrait exécuter du code arbitraire quand l'admin ouvre le CSV dans Excel.
+
+**Recommandation** :
+Préfixer avec `'` les valeurs commençant par `=`, `+`, `-`, `@`, ou `\t` :
+```typescript
+const FORMULA_CHARS = /^[=+\-@\t]/;
+if (FORMULA_CHARS.test(value)) value = "'" + value;
+```
+
+---
+
+### [MOYEN] CVE-05 — Header HSTS absent
+
+**Fichier** : `next.config.ts`
+**OWASP** : A05:2021 — Security Misconfiguration
+
+L'en-tête `Strict-Transport-Security` (HSTS) n'est pas configuré. Sans HSTS, les navigateurs acceptent des connexions HTTP non chiffrées, ouvrant la porte à des attaques de downgrade (MITM, SSL stripping).
+
+**Recommandation** :
+Ajouter dans `next.config.ts` :
+```typescript
+{ key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' }
+```
+Note : à n'activer qu'en production (`!isDev`).
+
+---
+
+### [MOYEN] CVE-06 — `unsafe-inline` dans script-src CSP en production
+
+**Fichier** : `next.config.ts` — ligne 27
+**OWASP** : A05:2021 — Security Misconfiguration
+
+```typescript
+"script-src 'self' 'unsafe-inline'"  // Production
+```
+
+`'unsafe-inline'` permet l'exécution de scripts inline, ce qui rend la CSP inefficace contre les XSS classiques. Bien que Tailwind génère des styles inline (et non des scripts), la présence d'`unsafe-inline` en `script-src` annule la protection CSP contre XSS.
+
+**Recommandation** :
+- À court terme : documenter l'acceptation de ce risque si Next.js génère des inline scripts.
+- À long terme : migrer vers des nonces ou hashes CSP (compatible Next.js App Router avec `experimental.nonce`).
+
+---
+
+### [FAIBLE] CVE-07 — Pas de validation de longueur/format sur `session_id` (suivi commande)
+
+**Fichier** : `app/api/commandes/suivi/route.ts` — ligne 12
+**OWASP** : A03:2021 — Injection
+
+```typescript
+const sessionId = req.nextUrl.searchParams.get('session_id');
+if (!sessionId || sessionId.trim() === '') { ... }
+// Pas de validation de longueur ni de format
+await Commande.findOne({ stripeSessionId: sessionId })
+```
+
+Un attaquant peut envoyer un `session_id` de longueur arbitraire (ex : 10 MB), causant potentiellement une surcharge MongoDB lors du scan d'index. Aucun rate limiting sur cet endpoint.
+
+**Recommandation** :
+- Valider la longueur max (`sessionId.length > 200 → 400`)
+- Valider le format Stripe (`cs_live_` ou `cs_test_` prefix, ou `mock_` + UUID)
+- Envisager un rate limiting sur cet endpoint public
+
+---
+
+### [FAIBLE] CVE-08 — Injection de valeur dans Content-Disposition (export CSV)
+
+**Fichier** : `app/api/admin/commandes/export/route.ts` — ligne 156
+
+```typescript
+'Content-Disposition': `attachment; filename="commandes-${fromStr}-${toStr}.csv"`
+```
+
+`fromStr` et `toStr` viennent de query params utilisateur. Bien que la validation de date (`isNaN`) réduise le risque, une valeur comme `2024-01-01".csv; x-custom-header="evil` n'est pas explicitement rejetée avant construction du header. Préférer sanitiser le nom de fichier.
+
+**Recommandation** :
+```typescript
+const safeFrom = fromStr.replace(/[^0-9\-]/g, '');
+const safeTo = toStr.replace(/[^0-9\-]/g, '');
+```
+
+---
+
+### [FAIBLE] CVE-09 — Logs exposant des informations en développement
+
+**Fichier** : `app/api/client/forgot-password/route.ts` — ligne 27
+
+```typescript
+logger.info('password_reset_requested', {
+  ...(process.env.NODE_ENV !== 'production' && { email: normalizedEmail }),
+});
+```
+
+L'email est loggé en clair en développement et staging. Si les logs de staging sont centralisés (Datadog, Sentry), des données personnelles pourraient être enregistrées sans consentement.
+
+**Recommandation** : Ne jamais logger d'email en clair, même en développement. Utiliser un hash (SHA-256 tronqué) pour la corrélation.
+
+---
+
+### [FAIBLE] CVE-10 — Absence de vérification `NEXTAUTH_SECRET`
+
+**Fichier** : `lib/auth.ts`
+
+NextAuth utilise `NEXTAUTH_SECRET` pour signer les JWT. Si la variable est absente, NextAuth utilise une clé dérivée qui peut être faible ou prévisible. Aucune vérification explicite au démarrage.
+
+**Recommandation** : Ajouter une vérification au boot :
+```typescript
+if (!process.env.NEXTAUTH_SECRET) throw new Error('NEXTAUTH_SECRET manquant');
+```
+
+---
+
+## Tableau de Synthèse
+
+| ID | Sévérité | Titre | Fichier | OWASP |
+|----|----------|-------|---------|-------|
+| CVE-01 | **CRITIQUE** | Escalade de privilège Google OAuth → admin | `lib/auth.ts:129` | A01 |
+| CVE-02 | **ÉLEVÉ** | Routes admin sans vérification de rôle | Multiples | A01 |
+| CVE-03 | **MOYEN** | Horaires UTC vs Paris (timezone bug) | `api/checkout/route.ts:68` | A04 |
+| CVE-04 | **MOYEN** | CSV Injection formules Excel | `api/admin/commandes/export:22` | A03 |
+| CVE-05 | **MOYEN** | Header HSTS absent | `next.config.ts` | A05 |
+| CVE-06 | **MOYEN** | `unsafe-inline` script-src CSP | `next.config.ts:27` | A05 |
+| CVE-07 | **FAIBLE** | session_id non validé (suivi public) | `api/commandes/suivi:12` | A03 |
+| CVE-08 | **FAIBLE** | Content-Disposition depuis input utilisateur | `api/admin/commandes/export:156` | A03 |
+| CVE-09 | **FAIBLE** | Email loggé en clair (dev/staging) | `api/client/forgot-password:27` | A09 |
+| CVE-10 | **FAIBLE** | NEXTAUTH_SECRET non vérifié au boot | `lib/auth.ts` | A05 |
+
+---
+
+## Plan de Remédiation Prioritaire
+
+### Phase 1 — Immédiat (avant mise en production)
+
+1. **CVE-01** : Corriger le fallback `'admin'` → `'client'` dans le jwt callback (lib/auth.ts:129)
+2. **CVE-02** : Ajouter `session.user.role !== 'admin'` dans tous les handlers admin ; ajouter `/api/produits`, `/api/produits/:id`, `/api/admin/:path*` au matcher middleware
+
+### Phase 2 — Court terme (< 2 semaines)
+
+3. **CVE-03** : Corriger la comparaison d'horaires avec timezone `Europe/Paris`
+4. **CVE-04** : Ajouter la protection contre les formules dans `escapeCsv()`
+5. **CVE-05** : Ajouter HSTS en production dans `next.config.ts`
+
+### Phase 3 — Moyen terme (< 1 mois)
+
+6. **CVE-06** : Migrer la CSP vers des nonces (Next.js App Router + `nonce` middleware)
+7. **CVE-07** : Ajouter validation de longueur/format + rate limiting sur `/api/commandes/suivi`
+8. **CVE-08** : Sanitiser le nom de fichier dans Content-Disposition
+9. **CVE-09** : Supprimer le log d'email en clair
+10. **CVE-10** : Ajouter assertion `NEXTAUTH_SECRET` au démarrage
+
+---
+
+## Recommandations Architecturales
+
+### 1. Principe de défense en profondeur pour les routes admin
+
+Le middleware assure une protection au niveau Edge, mais les handlers individuels ne doivent PAS faire confiance uniquement au middleware. Chaque handler admin doit vérifier `role === 'admin'` indépendamment. Créer un helper partagé :
+
+```typescript
+// lib/assertAdmin.ts
+export async function assertAdmin() {
+  const session = await getServerSession(authOptions);
+  if (!session || session.user?.role !== 'admin') {
+    throw new UnauthorizedError();
+  }
+  return session;
+}
+```
+
+### 2. Séparation des routes admin dans un sous-groupe protégé
+
+Placer toutes les routes admin sous `/api/admin/` (actuellement dispersées entre `/api/commandes`, `/api/produits`, `/api/site-config`) et les couvrir avec un matcher unique :
+```
+'/api/admin/:path*'
+```
+
+Cela simplifie l'audit, réduit les erreurs d'omission, et clarifie la surface d'attaque.
+
+### 3. Audit log centralisé
+
+Les actions sensibles (anonymisation, export, changement de statut) sont bien loggées. Envisager de centraliser dans un système externe (ex : Axiom, Datadog) avec alertes sur :
+- Exports CSV répétés depuis la même IP
+- Tentatives d'accès admin refusées (403)
+- Changements de configuration site
+
+### 4. npm audit
+
+```bash
+cd 3gsolutionapp && npm audit
+```
+À exécuter régulièrement et intégrer en CI. Les packages `nodemailer`, `mongoose`, et `next-auth` doivent être maintenus à jour.
+
+---
+
+*Rapport généré par Winston — 3G Solution Security Audit v1.0 — 2026-04-03*
