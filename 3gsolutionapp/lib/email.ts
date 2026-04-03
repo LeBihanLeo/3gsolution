@@ -1,6 +1,7 @@
 import { Resend } from 'resend';
 import nodemailer from 'nodemailer';
 import { ICommande } from '@/models/Commande';
+import SiteConfig from '@/models/SiteConfig';
 
 // ── Transport abstrait : MailDev (SMTP) en dev, Resend en prod ────────────────
 interface SendPayload {
@@ -98,6 +99,19 @@ export async function sendConfirmationEmail(commande: ICommande): Promise<void> 
       ? 'Dès que possible'
       : `À ${commande.retrait.creneau}`;
 
+  // Récupérer la config du restaurant (nom + bannière)
+  const config = await SiteConfig.findOne().lean();
+  const nomRestaurant = config?.nomRestaurant ?? '3G Solution';
+  const rawBanniereUrl = config?.banniereUrl ?? '';
+
+  // Rendre l'URL absolue (les URLs Vercel Blob sont déjà absolues ; les URLs locales /uploads/... ne le sont pas)
+  const baseUrl = (process.env.NEXTAUTH_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+  const banniereUrl = rawBanniereUrl.startsWith('http')
+    ? rawBanniereUrl
+    : rawBanniereUrl
+    ? `${baseUrl}${rawBanniereUrl}`
+    : '';
+
   const lignesProduits = commande.produits
     .map((p) => {
       const optionsTexte =
@@ -117,6 +131,35 @@ export async function sendConfirmationEmail(commande: ICommande): Promise<void> 
     })
     .join('');
 
+  // Header : bannière image avec fondue bas + nom restaurant en overlay
+  // Sinon : bandeau sobre gris clair
+  const headerHtml = banniereUrl
+    ? `
+    <div style="position:relative;height:200px;overflow:hidden;border-radius:12px 12px 0 0">
+      <img src="${banniereUrl}" alt="${nomRestaurant}"
+        style="width:100%;height:200px;object-fit:cover;display:block;border:0">
+      <!-- Gradient fade vers le blanc -->
+      <div style="position:absolute;bottom:0;left:0;right:0;height:120px;
+        background:linear-gradient(to bottom,transparent 0%,#ffffff 100%)"></div>
+      <!-- Nom du restaurant -->
+      <div style="position:absolute;top:18px;left:24px;
+        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        font-size:20px;font-weight:800;color:#ffffff;letter-spacing:.3px;
+        text-shadow:0 1px 6px rgba(0,0,0,.55)">
+        ${nomRestaurant}
+      </div>
+    </div>
+    <div style="padding:20px 32px 0">
+      <h1 style="margin:0 0 4px;color:#111827;font-size:20px;font-weight:700">Commande confirmée ✅</h1>
+      <p style="margin:0;color:#6b7280;font-size:13px">Commande #${ref}</p>
+    </div>`
+    : `
+    <div style="padding:28px 32px 20px;border-bottom:1px solid #f3f4f6">
+      <p style="margin:0 0 6px;color:#6b7280;font-size:13px;font-weight:600">${nomRestaurant}</p>
+      <h1 style="margin:0 0 4px;color:#111827;font-size:20px;font-weight:700">Commande confirmée ✅</h1>
+      <p style="margin:0;color:#6b7280;font-size:13px">Commande #${ref}</p>
+    </div>`;
+
   const html = `
 <!DOCTYPE html>
 <html lang="fr">
@@ -124,12 +167,9 @@ export async function sendConfirmationEmail(commande: ICommande): Promise<void> 
 <body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
   <div style="max-width:600px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)">
 
-    <div style="background:#2563eb;padding:28px 32px">
-      <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700">Commande confirmée ✅</h1>
-      <p style="margin:6px 0 0;color:#bfdbfe;font-size:14px">Commande #${ref}</p>
-    </div>
+    ${headerHtml}
 
-    <div style="padding:28px 32px">
+    <div style="padding:${banniereUrl ? '20px' : '28px'} 32px 28px">
       <p style="margin:0 0 16px;color:#374151;font-size:15px">
         Bonjour <strong>${commande.client.nom}</strong>,
       </p>
@@ -160,7 +200,7 @@ export async function sendConfirmationEmail(commande: ICommande): Promise<void> 
 
       <hr style="border:none;border-top:1px solid #f3f4f6;margin:24px 0">
       <p style="margin:0;color:#9ca3af;font-size:12px">
-        3G Solution — Réf. commande #${ref}
+        ${nomRestaurant} — Réf. commande #${ref}
       </p>
     </div>
   </div>
@@ -169,7 +209,7 @@ export async function sendConfirmationEmail(commande: ICommande): Promise<void> 
 
   await sendEmail({
     to: commande.client.email,
-    subject: `Votre commande #${ref} est confirmée — 3G Solution`,
+    subject: `Votre commande #${ref} est confirmée — ${nomRestaurant}`,
     html,
   });
 }
