@@ -131,34 +131,15 @@ export async function sendConfirmationEmail(commande: ICommande): Promise<void> 
     })
     .join('');
 
-  // Header : bannière image avec fondue bas + nom restaurant en overlay
-  // Sinon : bandeau sobre gris clair
-  const headerHtml = banniereUrl
+  const bannerHtml = banniereUrl
     ? `
-    <div style="position:relative;height:200px;overflow:hidden;border-radius:12px 12px 0 0">
-      <img src="${banniereUrl}" alt="${nomRestaurant}"
+    <div style="position:relative;height:200px;overflow:hidden">
+      <img src="${banniereUrl}" alt=""
         style="width:100%;height:200px;object-fit:cover;display:block;border:0">
-      <!-- Gradient fade vers le blanc -->
       <div style="position:absolute;bottom:0;left:0;right:0;height:120px;
         background:linear-gradient(to bottom,transparent 0%,#ffffff 100%)"></div>
-      <!-- Nom du restaurant -->
-      <div style="position:absolute;top:18px;left:24px;
-        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-        font-size:20px;font-weight:800;color:#ffffff;letter-spacing:.3px;
-        text-shadow:0 1px 6px rgba(0,0,0,.55)">
-        ${nomRestaurant}
-      </div>
-    </div>
-    <div style="padding:20px 32px 0">
-      <h1 style="margin:0 0 4px;color:#111827;font-size:20px;font-weight:700">Commande confirmée ✅</h1>
-      <p style="margin:0;color:#6b7280;font-size:13px">Commande #${ref}</p>
     </div>`
-    : `
-    <div style="padding:28px 32px 20px;border-bottom:1px solid #f3f4f6">
-      <p style="margin:0 0 6px;color:#6b7280;font-size:13px;font-weight:600">${nomRestaurant}</p>
-      <h1 style="margin:0 0 4px;color:#111827;font-size:20px;font-weight:700">Commande confirmée ✅</h1>
-      <p style="margin:0;color:#6b7280;font-size:13px">Commande #${ref}</p>
-    </div>`;
+    : '';
 
   const html = `
 <!DOCTYPE html>
@@ -167,9 +148,14 @@ export async function sendConfirmationEmail(commande: ICommande): Promise<void> 
 <body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
   <div style="max-width:600px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)">
 
-    ${headerHtml}
+    ${bannerHtml}
 
-    <div style="padding:${banniereUrl ? '20px' : '28px'} 32px 28px">
+    <div style="padding:${banniereUrl ? '12px' : '28px'} 32px 28px">
+      <h1 style="margin:0 0 4px;color:#111827;font-size:20px;font-weight:700">
+        Commande confirmée chez ${nomRestaurant} ✅
+      </h1>
+      <p style="margin:0 0 24px;color:#6b7280;font-size:13px">Commande #${ref}</p>
+
       <p style="margin:0 0 16px;color:#374151;font-size:15px">
         Bonjour <strong>${commande.client.nom}</strong>,
       </p>
