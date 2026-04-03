@@ -7,6 +7,19 @@ import bcrypt from 'bcryptjs';
 import { connectDB } from '@/lib/mongodb';
 import Client from '@/models/Client';
 
+// CVE-10 — Vérifier la présence de NEXTAUTH_SECRET au démarrage.
+// Sans cette variable, NextAuth dérive une clé faible pour signer les JWT,
+// ce qui peut permettre la falsification de tokens en environnement prévisible.
+// Cette assertion lève une erreur au démarrage du serveur plutôt qu'à la première
+// requête, ce qui rend le problème visible immédiatement en CI/CD.
+if (!process.env.NEXTAUTH_SECRET) {
+  throw new Error(
+    '[auth] NEXTAUTH_SECRET est manquant. Définissez cette variable dans .env.local ' +
+    '(dev) ou dans les variables d\'environnement de déploiement (production). ' +
+    'Générez une valeur sécurisée avec : openssl rand -base64 32'
+  );
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     // ── Provider admin (credentials) ────────────────────────────────────────
@@ -97,25 +110,28 @@ export const authOptions: NextAuthOptions = {
           const email = (user.email ?? '').toLowerCase();
           const existing = await Client.findOne({ email });
 
-          // Email déjà enregistré en credentials → conflit explicite, pas de fusion
           if (existing && existing.provider === 'credentials') {
-            return '/auth/login?error=OAuthAccountNotLinked';
-          }
-
-          // Upsert : créer ou mettre à jour le client Google
-          await Client.findOneAndUpdate(
-            { email },
-            {
-              $set: {
-                email,
-                nom: user.name ?? undefined,
-                provider: 'google',
-                emailVerified: true,
-                role: 'client',
+            // Compte credentials existant → liaison Google (garde le passwordHash)
+            await Client.findOneAndUpdate(
+              { email },
+              { $set: { provider: 'both', emailVerified: true } }
+            );
+          } else {
+            // Nouveau compte Google ou compte Google déjà connu → upsert
+            await Client.findOneAndUpdate(
+              { email },
+              {
+                $set: {
+                  email,
+                  nom: existing?.nom ?? user.name ?? undefined,
+                  provider: existing?.provider ?? 'google',
+                  emailVerified: true,
+                  role: 'client',
+                },
               },
-            },
-            { upsert: true, new: true }
-          );
+              { upsert: true, new: true }
+            );
+          }
         } catch {
           return false;
         }
@@ -126,7 +142,12 @@ export const authOptions: NextAuthOptions = {
     // ── jwt : injecte role + id + expiry ───────────────────────────────────
     async jwt({ token, user, account }) {
       if (user) {
-        token.role = (user as { role?: string }).role ?? 'admin';
+        // CVE-01 — Le fallback 'client' est délibéré : le rôle 'admin' est
+        // assigné uniquement par le CredentialsProvider admin (qui retourne
+        // explicitement { role: 'admin' }). Utiliser 'admin' comme fallback
+        // exposerait tous les utilisateurs Google à une escalade de privilège
+        // si MongoDB est indisponible lors du callback signIn.
+        token.role = (user as { role?: string }).role ?? 'client';
         token.id = user.id;
 
         // Expiry dynamique selon rôle / rememberMe
@@ -141,6 +162,8 @@ export const authOptions: NextAuthOptions = {
       }
 
       // Pour la connexion Google : résoudre l'ID MongoDB depuis la base
+      // CVE-01 — En cas d'échec DB, on invalide le token plutôt que de laisser
+      // passer l'utilisateur avec un rôle incorrect (fail-closed).
       if (account?.provider === 'google' && user?.email) {
         try {
           await connectDB();
@@ -149,9 +172,14 @@ export const authOptions: NextAuthOptions = {
             token.id = client._id.toString();
             token.role = 'client';
             token.exp = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
+          } else {
+            // Compte Google introuvable en base (ne devrait pas arriver après signIn)
+            return { ...token, error: 'AccountNotFound' };
           }
         } catch {
-          // token reste valide avec l'ID Google sub comme fallback
+          // CVE-01 — Fail-closed : si MongoDB est indisponible, invalider le token
+          // plutôt que de risquer une escalade de privilège.
+          return { ...token, error: 'DatabaseUnavailable' };
         }
       }
 

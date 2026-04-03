@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
-import { authOptions } from '@/lib/auth';
+import { requireAdmin } from '@/lib/assertAdmin';
 import Commande from '@/models/Commande';
 
 // TICK-099 — Transitions valides admin
@@ -20,10 +19,9 @@ type RouteParams = { params: Promise<{ id: string }> };
 
 // PATCH /api/commandes/[id]/statut — admin : faire avancer le statut d'une commande
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
-  }
+  // CVE-02 — vérification de rôle 'admin'
+  const check = await requireAdmin();
+  if (check.error) return check.error;
 
   try {
     const { id } = await params;

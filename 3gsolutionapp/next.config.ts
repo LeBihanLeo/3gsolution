@@ -1,4 +1,5 @@
 // TICK-051 — SEC-02 : Headers de sécurité HTTP (OWASP A05:2021)
+// CVE-06  — CSP retirée d'ici et gérée dynamiquement dans middleware.ts (nonce par requête)
 import type { NextConfig } from "next";
 
 // Note : next-pwa n'est pas compatible avec Turbopack (Next.js 16).
@@ -15,23 +16,7 @@ const nextConfig: NextConfig = {
     ],
   },
   async headers() {
-    // TICK-061 — NEW-02 : unsafe-eval retiré de la CSP de production
-    // Turbopack (HMR) nécessite unsafe-eval uniquement en développement.
-    // Le build statique Next.js n'utilise pas eval() — l'inclure en prod affaiblit la CSP inutilement.
     const isDev = process.env.NODE_ENV === 'development';
-
-    const csp = [
-      "default-src 'self'",
-      isDev
-        ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" // Turbopack HMR en dev
-        : "script-src 'self' 'unsafe-inline'",              // Production : eval() interdit
-      "style-src 'self' 'unsafe-inline'",                   // Tailwind inline styles
-      "img-src 'self' data: blob: https://*.public.blob.vercel-storage.com",
-      "font-src 'self'",
-      "connect-src 'self' https://api.stripe.com",
-      "frame-src https://js.stripe.com https://hooks.stripe.com",
-      "worker-src 'self' blob:",                            // Service worker PWA
-    ].join('; ');
 
     return [
       {
@@ -45,7 +30,14 @@ const nextConfig: NextConfig = {
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           // Désactive les fonctionnalités sensibles non utilisées
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
-          { key: 'Content-Security-Policy', value: csp },
+          // CVE-05 — HSTS : force HTTPS et protège contre le SSL stripping
+          // max-age=1 an | includeSubDomains | preload (soumission à la liste HSTS navigateurs)
+          // Uniquement en production — en dev, HTTPS n'est pas toujours disponible
+          ...(!isDev
+            ? [{ key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains; preload' }]
+            : []),
+          // Note : Content-Security-Policy est géré dynamiquement dans middleware.ts
+          // avec un nonce par requête pour supprimer unsafe-inline (CVE-06).
         ],
       },
     ];

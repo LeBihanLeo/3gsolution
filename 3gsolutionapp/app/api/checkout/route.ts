@@ -62,11 +62,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Vérifier si la commande est passée pendant les heures d'ouverture
+    // CVE-03 — Vérifier les heures d'ouverture en heure locale Paris (pas UTC)
+    // Les serveurs Vercel opèrent en UTC. Date.getHours() retourne l'heure UTC,
+    // ce qui cause un décalage de 1h (hiver) à 2h (été) par rapport à l'heure française.
     const ouvertureStr = siteConfig?.horaireOuverture ?? '11:30';
     const fermetureStr = siteConfig?.horaireFermeture ?? '14:00';
     const now = new Date();
-    const nowMin = now.getHours() * 60 + now.getMinutes();
+    // Extraire heure et minutes dans le fuseau Europe/Paris via Intl
+    const parisFormatter = new Intl.DateTimeFormat('fr-FR', {
+      timeZone: 'Europe/Paris',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const parisParts = parisFormatter.formatToParts(now);
+    const parisHour = parseInt(parisParts.find((p) => p.type === 'hour')?.value ?? '0', 10);
+    const parisMinute = parseInt(parisParts.find((p) => p.type === 'minute')?.value ?? '0', 10);
+    const nowMin = parisHour * 60 + parisMinute;
     const [hO, mO] = ouvertureStr.split(':').map(Number);
     const [hF, mF] = fermetureStr.split(':').map(Number);
     if (nowMin < hO * 60 + mO || nowMin >= hF * 60 + mF) {

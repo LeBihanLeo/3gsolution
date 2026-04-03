@@ -22,10 +22,17 @@ export async function POST(request: NextRequest) {
 
   const normalizedEmail = email.toLowerCase();
 
-  // Log sans exposer l'email en production
-  logger.info('password_reset_requested', {
-    ...(process.env.NODE_ENV !== 'production' && { email: normalizedEmail }),
-  });
+  // CVE-09 — Ne jamais logger d'email en clair, même en dev/staging.
+  // Un hash SHA-256 tronqué permet la corrélation sans exposer de données personnelles.
+  const emailHash = await crypto.subtle
+    .digest('SHA-256', new TextEncoder().encode(normalizedEmail))
+    .then((buf) =>
+      Array.from(new Uint8Array(buf))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+        .slice(0, 12)
+    );
+  logger.info('password_reset_requested', { emailHash });
 
   await connectDB();
 

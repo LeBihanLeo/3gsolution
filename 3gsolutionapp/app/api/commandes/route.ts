@@ -1,15 +1,13 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { connectDB } from '@/lib/mongodb';
-import { authOptions } from '@/lib/auth';
+import { requireAdmin } from '@/lib/assertAdmin';
 import Commande from '@/models/Commande';
 
 // GET /api/commandes — admin : liste toutes les commandes triées par date DESC
 export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
-  }
+  // CVE-02 — vérification de rôle 'admin' (pas seulement "authentifié")
+  const check = await requireAdmin();
+  if (check.error) return check.error;
 
   try {
     await connectDB();

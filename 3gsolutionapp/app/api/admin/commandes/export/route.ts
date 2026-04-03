@@ -5,9 +5,8 @@
 // Format CSV : UTF-8 BOM, séparateur point-virgule, TVA 10%
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
+import { requireAdmin } from '@/lib/assertAdmin';
 import Commande, { ICommande, IProduitSnapshot } from '@/models/Commande';
 import { logger } from '@/lib/logger';
 
@@ -20,11 +19,19 @@ function formatEur(centimes: number): string {
 }
 
 function escapeCsv(value: string): string {
-  // Entourer de guillemets si contient ; " ou saut de ligne
-  if (/[;";\n\r]/.test(value)) {
-    return '"' + value.replace(/"/g, '""') + '"';
+  // CVE-04 — Protection contre CSV Injection (CWE-1236)
+  // Les caractères = + - @ \t en début de valeur sont interprétés comme
+  // des formules par Excel/LibreOffice et peuvent exécuter du code arbitraire.
+  // On préfixe avec ' pour les neutraliser (convention OWASP recommandée).
+  let sanitized = value;
+  if (/^[=+\-@\t\r]/.test(sanitized)) {
+    sanitized = "'" + sanitized;
   }
-  return value;
+  // Entourer de guillemets si contient ; " ou saut de ligne
+  if (/[;";\n\r]/.test(sanitized)) {
+    return '"' + sanitized.replace(/"/g, '""') + '"';
+  }
+  return sanitized;
 }
 
 function idCourt(id: string): string {
@@ -32,15 +39,20 @@ function idCourt(id: string): string {
 }
 
 export async function GET(request: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
-  }
+  // CVE-02 — vérification de rôle 'admin' (cette route n'est pas dans le matcher middleware)
+  const check = await requireAdmin();
+  if (check.error) return check.error;
+  const { session } = check;
 
   const { searchParams } = new URL(request.url);
   const todayStr = toDateStr(new Date());
-  const fromStr = searchParams.get('from') ?? todayStr;
-  const toStr = searchParams.get('to') ?? todayStr;
+  const fromRaw = searchParams.get('from') ?? todayStr;
+  const toRaw = searchParams.get('to') ?? todayStr;
+  // CVE-08 — Sanitiser les dates pour le nom de fichier Content-Disposition.
+  // Ne conserver que les chiffres et tirets (format YYYY-MM-DD) pour éviter
+  // toute injection dans l'en-tête HTTP (header injection, path traversal).
+  const fromStr = fromRaw.replace(/[^0-9\-]/g, '').slice(0, 10);
+  const toStr = toRaw.replace(/[^0-9\-]/g, '').slice(0, 10);
   // TICK-125 — filtre statut optionnel : 'recuperee' pour l'export comptabilité passées
   const statutFilter = searchParams.get('statut');
   const STATUTS_VALIDES = ['payee', 'en_preparation', 'prete', 'recuperee'];

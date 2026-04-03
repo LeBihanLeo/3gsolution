@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
-import { authOptions } from '@/lib/auth';
+import { requireAdmin } from '@/lib/assertAdmin';
 import Produit from '@/models/Produit';
 
 const OptionSchema = z.object({
@@ -32,10 +31,9 @@ type RouteParams = { params: Promise<{ id: string }> };
 
 // PUT /api/produits/[id] — admin : modifier un produit complet
 export async function PUT(request: NextRequest, { params }: RouteParams) {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
-  }
+  // CVE-02 — vérification de rôle 'admin'
+  const check = await requireAdmin();
+  if (check.error) return check.error;
 
   try {
     const { id } = await params;
@@ -64,10 +62,9 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
 // PATCH /api/produits/[id] — admin : toggle actif/inactif
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
-  }
+  // CVE-02 — vérification de rôle 'admin'
+  const check = await requireAdmin();
+  if (check.error) return check.error;
 
   try {
     const { id } = await params;
@@ -97,10 +94,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
 // DELETE /api/produits/[id] — admin : supprimer un produit
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
-  }
+  // CVE-02 — vérification de rôle 'admin'
+  const check = await requireAdmin();
+  if (check.error) return check.error;
 
   try {
     const { id } = await params;

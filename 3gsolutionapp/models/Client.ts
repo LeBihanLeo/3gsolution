@@ -7,7 +7,7 @@ export interface IClient extends Document {
   nom: string; // TICK-087 — obligatoire
   telephone?: string;
   passwordHash?: string;
-  provider: 'credentials' | 'google';
+  provider: 'credentials' | 'google' | 'both';
   emailVerified: boolean;
   emailVerifyToken?: string;
   emailVerifyTokenExpiry?: Date;
@@ -33,7 +33,7 @@ const ClientSchema = new Schema<IClient>(
     passwordHash: { type: String },
     provider: {
       type: String,
-      enum: ['credentials', 'google'],
+      enum: ['credentials', 'google', 'both'],
       required: true,
     },
     emailVerified: { type: Boolean, default: false, required: true },

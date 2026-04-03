@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Montserrat } from "next/font/google";
+import { headers } from "next/headers";
 import "./globals.css";
 import SwRegister from "@/components/SwRegister";
 import SessionProviderWrapper from "@/components/SessionProviderWrapper";
@@ -26,16 +27,25 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // CVE-06 — Lire le nonce injecté par le middleware pour le passer à Next.js.
+  // Next.js utilise ce nonce sur ses scripts de hydratation inline,
+  // ce qui permet de supprimer 'unsafe-inline' de la CSP.
+  const nonce = (await headers()).get('x-nonce') ?? undefined;
+
   return (
     <html lang="fr" suppressHydrationWarning>
+      <head>
+        {/* Permet aux scripts inline de Next.js (hydratation) d'utiliser le nonce */}
+        {nonce && <meta name="csp-nonce" content={nonce} />}
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${montserrat.variable} antialiased`}
-      >   
+      >
         <SessionProviderWrapper>
           {children}
         </SessionProviderWrapper>

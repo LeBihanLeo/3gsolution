@@ -4,9 +4,8 @@
 // La commande reste en base pour la traçabilité comptable.
 // Seules les commandes au statut "prete" peuvent être anonymisées.
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
+import { requireAdmin } from '@/lib/assertAdmin';
 import Commande from '@/models/Commande';
 import { logger } from '@/lib/logger';
 import mongoose from 'mongoose';
@@ -15,10 +14,9 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
-  }
+  // CVE-02 — vérification de rôle 'admin'
+  const check = await requireAdmin();
+  if (check.error) return check.error;
 
   const { id } = await params;
 

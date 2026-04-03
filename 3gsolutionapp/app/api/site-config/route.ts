@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
-import { authOptions } from '@/lib/auth';
+import { requireAdmin } from '@/lib/assertAdmin';
 import SiteConfig from '@/models/SiteConfig';
 import { generatePalette } from '@/lib/palette';
 
@@ -92,10 +91,9 @@ export async function GET() {
 
 // PUT /api/site-config — admin
 export async function PUT(request: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
-  }
+  // CVE-02 — vérification de rôle 'admin' (cette route est exclue du middleware)
+  const check = await requireAdmin();
+  if (check.error) return check.error;
 
   try {
     const body = await request.json();
