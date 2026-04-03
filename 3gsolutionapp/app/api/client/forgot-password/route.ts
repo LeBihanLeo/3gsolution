@@ -5,6 +5,7 @@ import { connectDB } from '@/lib/mongodb';
 import Client from '@/models/Client';
 import { sendPasswordResetEmail } from '@/lib/email';
 import { logger } from '@/lib/logger';
+import { verifyTurnstile } from '@/lib/turnstile';
 
 export async function POST(request: NextRequest) {
   let body: unknown;
@@ -15,8 +16,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'Si ce compte existe, un email a été envoyé.' });
   }
 
-  const email = (body as { email?: unknown }).email;
+  const { email, turnstileToken } = body as { email?: unknown; turnstileToken?: unknown };
   if (!email || typeof email !== 'string') {
+    return NextResponse.json({ message: 'Si ce compte existe, un email a été envoyé.' });
+  }
+
+  const turnstileOk = await verifyTurnstile(typeof turnstileToken === 'string' ? turnstileToken : null);
+  if (!turnstileOk) {
+    // Réponse identique pour éviter l'énumération
     return NextResponse.json({ message: 'Si ce compte existe, un email a été envoyé.' });
   }
 

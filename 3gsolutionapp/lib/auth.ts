@@ -6,6 +6,7 @@ import GoogleProvider from 'next-auth/providers/google';
 import bcrypt from 'bcryptjs';
 import { connectDB } from '@/lib/mongodb';
 import Client from '@/models/Client';
+import { verifyTurnstile } from '@/lib/turnstile';
 
 // CVE-10 — Vérifier la présence de NEXTAUTH_SECRET au démarrage.
 // Sans cette variable, NextAuth dérive une clé faible pour signer les JWT,
@@ -29,9 +30,13 @@ export const authOptions: NextAuthOptions = {
       credentials: {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Mot de passe', type: 'password' },
+        turnstileToken: { label: 'Turnstile', type: 'text' },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
+
+        const turnstileOk = await verifyTurnstile(credentials.turnstileToken);
+        if (!turnstileOk) return null;
 
         const adminEmail = process.env.ADMIN_EMAIL;
         const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
@@ -58,9 +63,13 @@ export const authOptions: NextAuthOptions = {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Mot de passe', type: 'password' },
         rememberMe: { label: 'Se souvenir de moi', type: 'text' },
+        turnstileToken: { label: 'Turnstile', type: 'text' },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
+
+        const turnstileOk = await verifyTurnstile(credentials.turnstileToken);
+        if (!turnstileOk) return null;
 
         await connectDB();
         const client = await Client.findOne({ email: credentials.email.toLowerCase() });

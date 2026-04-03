@@ -8,6 +8,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { BackLink } from '@/components/ui';
+import { TurnstileWidget } from '@/components/TurnstileWidget';
 
 function passwordStrength(pwd: string): { label: string; color: string; width: string } {
   let score = 0;
@@ -39,6 +40,7 @@ export default function RegisterPage() {
   const [generalError, setGeneralError] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
 
   useEffect(() => {
     if (status === 'authenticated') {
@@ -65,7 +67,7 @@ export default function RegisterPage() {
     const res = await fetch('/api/client/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, nom, telephone }),
+      body: JSON.stringify({ email, password, nom, telephone, turnstileToken }),
     });
 
     const data = await res.json();
@@ -237,6 +239,8 @@ export default function RegisterPage() {
             </div>
             {errors.confirm?.map((e) => <p key={e} className="text-red-600 text-xs mt-1">{e}</p>)}
           </div>
+
+          <TurnstileWidget onToken={setTurnstileToken} />
 
           <button
             type="submit"

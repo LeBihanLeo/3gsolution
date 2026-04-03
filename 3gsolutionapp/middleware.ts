@@ -50,8 +50,8 @@ function generateCsp(nonce: string): string {
     "style-src 'self' 'unsafe-inline'",  // Tailwind inline styles
     "img-src 'self' data: blob: https://*.public.blob.vercel-storage.com",
     "font-src 'self'",
-    "connect-src 'self' https://api.stripe.com",
-    "frame-src https://js.stripe.com https://hooks.stripe.com",
+    "connect-src 'self' https://api.stripe.com https://challenges.cloudflare.com",
+    "frame-src https://js.stripe.com https://hooks.stripe.com https://challenges.cloudflare.com",
     "worker-src 'self' blob:", // Service worker PWA
   ].join('; ');
 }

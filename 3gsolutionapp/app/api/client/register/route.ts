@@ -7,8 +7,10 @@ import { connectDB } from '@/lib/mongodb';
 import Client from '@/models/Client';
 import { sendVerificationEmail } from '@/lib/email';
 import { logger } from '@/lib/logger';
+import { verifyTurnstile } from '@/lib/turnstile';
 
 const RegisterSchema = z.object({
+  turnstileToken: z.string().optional(),
   email: z.string().email('Email invalide'),
   // TICK-087 — nom obligatoire
   nom: z.string().min(1, 'Le nom est requis').max(50),
@@ -41,7 +43,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { email, nom, telephone, password } = parsed.data; // nom est désormais obligatoire (TICK-087)
+  const { email, nom, telephone, password, turnstileToken } = parsed.data; // nom est désormais obligatoire (TICK-087)
+
+  const turnstileOk = await verifyTurnstile(turnstileToken);
+  if (!turnstileOk) {
+    return NextResponse.json({ error: 'Vérification anti-bot échouée.' }, { status: 400 });
+  }
   const normalizedEmail = email.toLowerCase();
 
   logger.info('client_register_attempt', { email: normalizedEmail });

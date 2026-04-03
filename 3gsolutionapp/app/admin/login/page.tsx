@@ -3,11 +3,13 @@
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useState, FormEvent } from 'react';
+import { TurnstileWidget } from '@/components/TurnstileWidget';
 
 export default function LoginPage() {
   const router = useRouter();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -21,6 +23,7 @@ export default function LoginPage() {
     const result = await signIn('credentials', {
       email,
       password,
+      turnstileToken: turnstileToken ?? '',
       redirect: false,
     });
 
@@ -80,6 +83,8 @@ export default function LoginPage() {
               {error}
             </p>
           )}
+
+          <TurnstileWidget onToken={setTurnstileToken} />
 
           <button
             type="submit"

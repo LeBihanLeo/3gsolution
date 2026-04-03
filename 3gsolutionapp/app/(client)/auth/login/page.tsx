@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { signIn, useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { TurnstileWidget } from '@/components/TurnstileWidget';
 
 export default function LoginPage() {
   const { data: session, status } = useSession();
@@ -16,6 +17,7 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
 
   // TICK-110 — Rediriger tout utilisateur authentifié (admin → dashboard, sinon → /)
   useEffect(() => {
@@ -47,6 +49,7 @@ export default function LoginPage() {
       email,
       password,
       rememberMe: String(rememberMe),
+      turnstileToken: turnstileToken ?? '',
       redirect: false,
     });
 
@@ -169,6 +172,8 @@ export default function LoginPage() {
               Vos informations resteront mémorisées 30 jours sur cet appareil.
             </p>
           )}
+
+          <TurnstileWidget onToken={setTurnstileToken} />
 
           <button
             type="submit"
