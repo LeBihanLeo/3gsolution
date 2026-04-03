@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { CartProvider } from '@/lib/cartContext';
 import CookieBanner from '@/components/client/CookieBanner';
 import UserNavButton from '@/components/client/UserNavButton';
-import BannerConditional from '@/components/client/BannerConditional';
+import DesktopMenuShell from '@/components/client/DesktopMenuShell';
 import { connectDB } from '@/lib/mongodb';
 import SiteConfig from '@/models/SiteConfig';
 import { generatePalette, SitePalette } from '@/lib/palette';
@@ -72,7 +72,7 @@ export default async function ClientLayout({ children }: { children: ReactNode }
 
         {/* ── Top bar blanche (commune aux deux cas) ── */}
         <header className="bg-white border-b border-gray-100 sticky top-0 z-40">
-          <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="max-w-2xl lg:max-w-7xl mx-auto px-4 lg:px-6 h-14 flex items-center justify-between">
             <Link
               href="/"
               className="font-bold text-gray-900 text-base uppercase tracking-widest hover:text-orange-600 transition-colors"
@@ -84,48 +84,14 @@ export default async function ClientLayout({ children }: { children: ReactNode }
           </div>
         </header>
 
-        {config.banniereUrl && (
-          /* ── Bannière image sous la top bar (menu uniquement) ── */
-          <BannerConditional>
-            <div
-              className="w-full relative"
-              style={{
-                backgroundImage: `url(${config.banniereUrl})`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-                minHeight: '220px',
-              }}
-            >
-              {/* Gradient fondu vers stone-50 en bas */}
-              <div className="absolute bottom-0 left-0 right-0 h-28 bg-gradient-to-b from-transparent to-stone-50" />
-
-              {/* Horaires bas gauche — tag pill */}
-              <div className="absolute bottom-4 left-4 z-10">
-                {config.fermeeAujourdhui ? (
-                  <span className="inline-flex items-center gap-1.5 bg-white rounded-full px-3 py-1.5 text-xs font-semibold text-red-600 shadow-sm">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <circle cx="12" cy="12" r="10" />
-                      <polyline points="12 6 12 12 16 14" />
-                    </svg>
-                    Fermé aujourd&apos;hui
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 bg-white rounded-full px-3 py-1.5 text-xs font-semibold text-gray-800 shadow-sm">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#EA580C" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <circle cx="12" cy="12" r="10" />
-                      <polyline points="12 6 12 12 16 14" />
-                    </svg>
-                    {config.horaireOuverture} – {config.horaireFermeture}
-                  </span>
-                )}
-              </div>
-            </div>
-          </BannerConditional>
-        )}
-
-        <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6">
+        <DesktopMenuShell
+          banniereUrl={config.banniereUrl}
+          horaireOuverture={config.horaireOuverture}
+          horaireFermeture={config.horaireFermeture}
+          fermeeAujourdhui={config.fermeeAujourdhui}
+        >
           {children}
-        </main>
+        </DesktopMenuShell>
 
         <footer className="bg-white border-t border-gray-100 text-center text-xs text-gray-400 py-4">
           <Link href="/mentions-legales" className="hover:text-orange-600 transition-colors">

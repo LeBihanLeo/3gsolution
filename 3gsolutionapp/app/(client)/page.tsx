@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import MenuCard from '@/components/client/MenuCard';
 import { Button } from '@/components/ui';
@@ -84,10 +84,23 @@ function Menu() {
   const [produits, setProduits] = useState<Produit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [activeCategory, setActiveCategory] = useState('Tout');
   // TICK-105 — Fermeture boutique
   const [fermeeAujourdhui, setFermeeAujourdhui] = useState(false);
   const { totalItems } = useCart();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeCategory = searchParams.get('cat') ?? 'Tout';
+
+  const handleCategoryChange = (cat: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (cat === 'Tout') {
+      params.delete('cat');
+    } else {
+      params.set('cat', cat);
+    }
+    const query = params.toString();
+    router.push(query ? `/?${query}` : '/', { scroll: false });
+  };
 
   useEffect(() => {
     fetch('/api/produits')
@@ -126,13 +139,13 @@ function Menu() {
         </div>
       )}
 
-      {/* Tabs catégories */}
+      {/* Tabs catégories — mobiles uniquement (sidebar sur desktop) */}
       {!loading && !error && produits.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-1 mb-5 scrollbar-hide -mx-4 px-4">
           {tabs.map((tab) => (
             <button
               key={tab}
-              onClick={() => setActiveCategory(tab)}
+              onClick={() => handleCategoryChange(tab)}
               className={`shrink-0 px-4 py-1.5 rounded-full text-sm font-medium transition-colors duration-150 ${
                 activeCategory === tab
                   ? 'bg-orange-500 text-white'
@@ -205,7 +218,7 @@ function Menu() {
 
 // ─── Page principale ──────────────────────────────────────────────────────
 
-export default function MenuPage() {
+function MenuPage() {
   const { data: session, status } = useSession();
   const [showMenu, setShowMenu] = useState(false);
 
@@ -218,7 +231,11 @@ export default function MenuPage() {
   }, []);
 
   if (status === 'authenticated') {
-    return <Menu />;
+    return (
+      <Suspense fallback={<MenuSkeleton />}>
+        <Menu />
+      </Suspense>
+    );
   }
 
   if (status === 'loading') {
@@ -226,7 +243,11 @@ export default function MenuPage() {
   }
 
   if (showMenu) {
-    return <Menu />;
+    return (
+      <Suspense fallback={<MenuSkeleton />}>
+        <Menu />
+      </Suspense>
+    );
   }
 
   return (
@@ -240,3 +261,5 @@ export default function MenuPage() {
     />
   );
 }
+
+export default MenuPage;
