@@ -1,6 +1,6 @@
 // TICK-034 — API Upload d'images
 // TICK-053 — SEC-04 : Validation MIME par magic bytes (OWASP A03:2021, CWE-434)
-// Vercel Blob en production, fallback local (public/uploads/) si BLOB_READ_WRITE_TOKEN absent
+// Cloudflare R2 en production, fallback local (public/uploads/) si CLOUDFLARE_R2_ACCOUNT_ID absent
 //
 // Sécurité :
 // - Le type MIME est détecté depuis les magic bytes du fichier (pas depuis file.type)
@@ -76,11 +76,27 @@ export async function POST(request: NextRequest) {
     const ext = MIME_TO_EXT[detected.mime] ?? 'bin';
     const safeFilename = `${randomUUID()}.${ext}`;
 
-    // ── Mode production : Vercel Blob ────────────────────────────────────────
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
-      const { put } = await import('@vercel/blob');
-      const blob = await put(safeFilename, buffer, { access: 'public' });
-      return NextResponse.json({ url: blob.url });
+    // ── Mode production : Cloudflare R2 ──────────────────────────────────────
+    if (process.env.CLOUDFLARE_R2_ACCOUNT_ID) {
+      const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
+      const client = new S3Client({
+        region: 'auto',
+        endpoint: `https://${process.env.CLOUDFLARE_R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+        credentials: {
+          accessKeyId: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID!,
+          secretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY!,
+        },
+      });
+      await client.send(
+        new PutObjectCommand({
+          Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME!,
+          Key: safeFilename,
+          Body: buffer,
+          ContentType: detected.mime,
+        })
+      );
+      const publicUrl = (process.env.CLOUDFLARE_R2_PUBLIC_URL ?? '').replace(/\/$/, '');
+      return NextResponse.json({ url: `${publicUrl}/${safeFilename}` });
     }
 
     // ── Mode développement : stockage local dans public/uploads/ ─────────────

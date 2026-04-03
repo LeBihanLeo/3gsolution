@@ -3,9 +3,14 @@ import { NextRequest } from 'next/server';
 
 vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }));
-vi.mock('@vercel/blob', () => ({
-  put: vi.fn().mockResolvedValue({ url: 'https://blob.vercel-storage.com/test.jpg' }),
-}));
+const mockS3Send = vi.fn().mockResolvedValue({});
+vi.mock('@aws-sdk/client-s3', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function S3Client(this: any) { this.send = mockS3Send; }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function PutObjectCommand(this: any, input: unknown) { Object.assign(this, input); }
+  return { S3Client, PutObjectCommand };
+});
 
 // TICK-053 — fileTypeFromBuffer est une dépendance ESM (file-type v19+) et ne peut pas
 // analyser les fichiers de test synthétiques (bytes nuls sans magic bytes réels).
@@ -72,17 +77,18 @@ describe('POST /api/upload', () => {
     expect(res.status).toBe(413);
   });
 
-  it('image JPEG valide avec BLOB_READ_WRITE_TOKEN → retourne URL Vercel Blob', async () => {
-    vi.stubEnv('BLOB_READ_WRITE_TOKEN', 'vercel_blob_rw_fake');
+  it('image JPEG valide avec CLOUDFLARE_R2_ACCOUNT_ID → retourne URL R2', async () => {
+    vi.stubEnv('CLOUDFLARE_R2_ACCOUNT_ID', 'fake-account-id');
+    vi.stubEnv('CLOUDFLARE_R2_ACCESS_KEY_ID', 'fake-key');
+    vi.stubEnv('CLOUDFLARE_R2_SECRET_ACCESS_KEY', 'fake-secret');
+    vi.stubEnv('CLOUDFLARE_R2_BUCKET_NAME', 'my-bucket');
+    vi.stubEnv('CLOUDFLARE_R2_PUBLIC_URL', 'https://cdn.example.com');
     vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as ReturnType<typeof getServerSession> extends Promise<infer T> ? T : never);
-    // fileTypeFromBuffer retourne image/jpeg → passe la validation
     vi.mocked(fileTypeFromBuffer).mockResolvedValueOnce({ mime: 'image/jpeg', ext: 'jpg' });
-    const { put } = await import('@vercel/blob');
-    vi.mocked(put).mockResolvedValueOnce({ url: 'https://blob.vercel-storage.com/test.jpg' } as ReturnType<typeof put> extends Promise<infer T> ? T : never);
     const res = await POST(makeReq(makeFile('img.jpg', 'image/jpeg')));
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.url).toContain('blob.vercel-storage.com');
+    expect(json.url).toMatch(/^https:\/\/cdn\.example\.com\/.+\.jpg$/);
   });
 
   it('image JPEG sans BLOB_READ_WRITE_TOKEN → fallback local, retourne /uploads/...', async () => {
