@@ -216,7 +216,9 @@ export async function POST(request: NextRequest) {
       payment_method_types: ['card'],
       line_items: lineItems,
       success_url: `${baseUrl}/confirmation?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${baseUrl}/commande?payment=cancelled`,
+      // {CHECKOUT_SESSION_ID} est un template Stripe remplacé automatiquement.
+      // Permet à la page commande de récupérer la raison de refus si disponible.
+      cancel_url: `${baseUrl}/commande?payment=cancelled&session_id={CHECKOUT_SESSION_ID}`,
       // Pré-remplit le champ email sur la page de paiement Stripe si fourni
       ...(client.email ? { customer_email: client.email } : {}),
       // Session expire après 30 min — adapté aux créneaux horaires restaurant

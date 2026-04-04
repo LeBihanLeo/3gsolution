@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
-export type StatutCommande = 'en_attente_paiement' | 'payee' | 'en_preparation' | 'prete' | 'recuperee' | 'remboursee' | 'partiellement_remboursee' | 'dispute';
+export type StatutCommande = 'en_attente_paiement' | 'payee' | 'en_preparation' | 'prete' | 'recuperee' | 'remboursee' | 'partiellement_remboursee' | 'dispute' | 'charge_echouee';
 
 export interface IProduitSnapshot {
   produitId: mongoose.Types.ObjectId;
@@ -44,6 +44,11 @@ export interface ICommande extends Document {
   montantRembourse?: number;
   // Horodatage de création de la dispute (posé par le webhook charge.dispute.created)
   disputeAt?: Date;
+  // URL du reçu Stripe (charge.receipt_url) — stocké à la création de la commande
+  receiptUrl?: string;
+  // Charge.failed : capture échouée après session complétée (cas rare mais critique)
+  chargeEchoueeAt?: Date;
+  chargeEchoueeRaison?: string;
   createdAt: Date;
 }
 
@@ -74,7 +79,7 @@ const CommandeSchema = new Schema<ICommande>(
     stripePaymentIntentId: { type: String, index: true, sparse: true },
     statut: {
       type: String,
-      enum: ['en_attente_paiement', 'payee', 'en_preparation', 'prete', 'recuperee', 'remboursee', 'partiellement_remboursee', 'dispute'] as StatutCommande[],
+      enum: ['en_attente_paiement', 'payee', 'en_preparation', 'prete', 'recuperee', 'remboursee', 'partiellement_remboursee', 'dispute', 'charge_echouee'] as StatutCommande[],
       default: 'en_attente_paiement',
     },
     client: {
@@ -104,6 +109,9 @@ const CommandeSchema = new Schema<ICommande>(
     montantRembourse: { type: Number },
     stripeDisputeId: { type: String, index: true, sparse: true },
     disputeAt: { type: Date },
+    receiptUrl: { type: String },
+    chargeEchoueeAt: { type: Date },
+    chargeEchoueeRaison: { type: String },
     purgeAt: {
       type: Date,
       // TTL index : MongoDB supprime automatiquement le document après cette date

@@ -90,6 +90,98 @@ export async function sendPasswordResetEmail(email: string, token: string): Prom
   });
 }
 
+// ── Alertes admin internes ─────────────────────────────────────────────────
+
+/**
+ * Envoie un email d'alerte à l'admin lors d'une dispute/chargeback Stripe.
+ * Destinataire : ADMIN_ALERT_EMAIL (env), fallback ADMIN_EMAIL.
+ */
+export async function sendDisputeAlert(opts: {
+  commandeId: string;
+  disputeId: string;
+  amount: number; // en centimes
+  reason: string;
+  status: string;
+}): Promise<void> {
+  const dest = process.env.ADMIN_ALERT_EMAIL ?? process.env.ADMIN_EMAIL;
+  if (!dest) return;
+
+  const montant = (opts.amount / 100).toFixed(2).replace('.', ',') + ' €';
+
+  await sendEmail({
+    to: dest,
+    subject: `⚠️ Dispute Stripe ouverte — Commande #${opts.commandeId.slice(-6).toUpperCase()}`,
+    html: `
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,sans-serif;background:#f9fafb;padding:32px">
+  <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,.1);border-top:4px solid #ef4444">
+    <h1 style="color:#b91c1c;font-size:18px;margin:0 0 16px">Dispute Stripe ouverte</h1>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;color:#374151">
+      <tr><td style="padding:6px 0;font-weight:600;width:40%">Commande</td><td>#${opts.commandeId.slice(-6).toUpperCase()}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:600">Dispute ID</td><td style="font-family:monospace">${opts.disputeId}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:600">Montant contesté</td><td style="color:#b91c1c;font-weight:700">${montant}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:600">Raison</td><td>${opts.reason}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:600">Statut</td><td>${opts.status}</td></tr>
+    </table>
+    <div style="margin:24px 0 0;padding:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px">
+      <p style="margin:0;font-size:13px;color:#991b1b">
+        Vous avez généralement <strong>7 à 21 jours</strong> pour soumettre des preuves sur le Dashboard Stripe.
+        Connectez-vous à <a href="https://dashboard.stripe.com/disputes" style="color:#b91c1c">dashboard.stripe.com/disputes</a> pour répondre.
+      </p>
+    </div>
+  </div>
+</body>
+</html>`,
+  });
+}
+
+/**
+ * Envoie une alerte admin quand une capture de charge échoue
+ * (paiement validé mais non encaissé — cas rare mais critique).
+ */
+export async function sendChargeFailedAlert(opts: {
+  commandeId: string;
+  paymentIntentId: string;
+  chargeId: string;
+  raison: string;
+}): Promise<void> {
+  const dest = process.env.ADMIN_ALERT_EMAIL ?? process.env.ADMIN_EMAIL;
+  if (!dest) return;
+
+  await sendEmail({
+    to: dest,
+    subject: `🚨 Charge échouée — Commande #${opts.commandeId.slice(-6).toUpperCase()}`,
+    html: `
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,sans-serif;background:#f9fafb;padding:32px">
+  <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,.1);border-top:4px solid #dc2626">
+    <h1 style="color:#dc2626;font-size:18px;margin:0 0 16px">Capture de charge échouée</h1>
+    <p style="color:#6b7280;font-size:14px;margin:0 0 20px">
+      La commande a été confirmée mais le paiement n'a pas pu être capturé. Action requise.
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;color:#374151">
+      <tr><td style="padding:6px 0;font-weight:600;width:40%">Commande</td><td>#${opts.commandeId.slice(-6).toUpperCase()}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:600">PaymentIntent</td><td style="font-family:monospace;font-size:12px">${opts.paymentIntentId}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:600">Charge ID</td><td style="font-family:monospace;font-size:12px">${opts.chargeId}</td></tr>
+      <tr><td style="padding:6px 0;font-weight:600">Raison</td><td style="color:#dc2626">${opts.raison}</td></tr>
+    </table>
+    <div style="margin:24px 0 0;padding:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px">
+      <p style="margin:0;font-size:13px;color:#991b1b">
+        Le statut de la commande a été mis à jour en <strong>charge_echouee</strong>.
+        Vérifiez sur <a href="https://dashboard.stripe.com/payments/${opts.paymentIntentId}" style="color:#b91c1c">Stripe Dashboard</a>
+        et contactez le client si nécessaire.
+      </p>
+    </div>
+  </div>
+</body>
+</html>`,
+  });
+}
+
 export async function sendConfirmationEmail(commande: ICommande, receiptUrl?: string): Promise<void> {
   if (!commande.client.email) return;
 

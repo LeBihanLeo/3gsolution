@@ -14,6 +14,7 @@ const PROJECTION = {
   total: 1,
   retrait: 1,
   createdAt: 1,
+  receiptUrl: 1,
 } as const;
 
 export async function GET() {

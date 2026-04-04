@@ -164,6 +164,8 @@ export default withAuth(
         if (pathname === '/api/client/forgot-password') return true;
         // Suivi de commande public (page /confirmation — pas d'auth requise)
         if (pathname === '/api/commandes/suivi') return true;
+        // Raison de refus Stripe (page commande annulée — pas d'auth requise)
+        if (pathname === '/api/commandes/raison-echec') return true;
         // GET /api/produits sans ?all=true est public (menu client)
         // La vérification admin est faite dans le handler pour ?all=true
 

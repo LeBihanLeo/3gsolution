@@ -20,6 +20,7 @@ interface CommandeHistorique {
   total: number;
   retrait: { type: 'immediat' | 'creneau'; creneau?: string };
   createdAt: string;
+  receiptUrl?: string;
 }
 
 function idCourt(id: string) {
@@ -160,7 +161,7 @@ export default function HistoriqueCompletPage() {
                       ))}
                     </ul>
 
-                    {/* Créneau + total */}
+                    {/* Créneau + total + reçu */}
                     <div className="flex items-center justify-between pt-2 border-t border-gray-50">
                       <span className="text-xs text-gray-500">
                         Retrait :{' '}
@@ -168,6 +169,21 @@ export default function HistoriqueCompletPage() {
                       </span>
                       <span className="font-bold text-gray-900 text-sm">{formatPrix(c.total)}</span>
                     </div>
+
+                    {/* Lien reçu PDF Stripe */}
+                    {c.receiptUrl && (
+                      <a
+                        href={c.receiptUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+                        </svg>
+                        Voir le reçu
+                      </a>
+                    )}
                   </div>
                 ))}
               </div>
