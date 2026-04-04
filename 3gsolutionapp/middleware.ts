@@ -9,6 +9,7 @@ import {
   checkLoginRateLimit,
   checkRegisterRateLimit,
   checkForgotPasswordRateLimit,
+  checkCheckoutRateLimit,
 } from '@/lib/ratelimit';
 
 // ── Extraction IP (Vercel Edge, non spoofable) ─────────────────────────────
@@ -76,6 +77,14 @@ export default withAuth(
     // ── Rate limiting forgot-password (TICK-078) ──────────────────────────
     if (pathname === '/api/client/forgot-password' && request.method === 'POST') {
       const { success, reset } = await checkForgotPasswordRateLimit(ip);
+      if (!success) return rateLimitResponse(reset);
+    }
+
+    // ── Rate limiting checkout — protège le quota Stripe API ──────────────
+    // 10 sessions max / 15 min par IP : couvre les retries légitimes tout en
+    // bloquant les bots qui créeraient des sessions en masse.
+    if (pathname === '/api/checkout' && request.method === 'POST') {
+      const { success, reset } = await checkCheckoutRateLimit(ip);
       if (!success) return rateLimitResponse(reset);
     }
 

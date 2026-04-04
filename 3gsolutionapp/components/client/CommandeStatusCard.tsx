@@ -21,6 +21,7 @@ const STATUT_DESCRIPTION: Record<string, string> = {
   en_preparation: 'Votre commande est en cours de préparation.',
   prete:          'Votre commande est prête, vous pouvez venir la récupérer.',
   recuperee:      'Merci pour votre commande, bon appétit !',
+  remboursee:     'Cette commande a été remboursée. Le montant sera recrédité sous 5 à 10 jours ouvrés.',
 };
 
 function idCourt(id: string) {

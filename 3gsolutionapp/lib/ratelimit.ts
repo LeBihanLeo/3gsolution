@@ -57,14 +57,17 @@ function inMemoryRateLimit(ip: string): RateLimitResult {
 
 const REGISTER_MAX = 5;
 const FORGOT_MAX = 3;
+const CHECKOUT_MAX = 10; // 10 sessions Stripe max / 15 min par IP
 
 const globalWithRL2 = global as typeof globalThis & {
   _registerAttempts?: Map<string, InMemoryEntry>;
   _forgotAttempts?: Map<string, InMemoryEntry>;
+  _checkoutAttempts?: Map<string, InMemoryEntry>;
 };
 
 if (!globalWithRL2._registerAttempts) globalWithRL2._registerAttempts = new Map();
 if (!globalWithRL2._forgotAttempts) globalWithRL2._forgotAttempts = new Map();
+if (!globalWithRL2._checkoutAttempts) globalWithRL2._checkoutAttempts = new Map();
 
 function inMemoryGenericLimit(
   map: Map<string, InMemoryEntry>,
@@ -108,6 +111,15 @@ async function checkUpstashLimit(
     }
   }
   return fallback();
+}
+
+export async function checkCheckoutRateLimit(ip: string): Promise<RateLimitResult> {
+  return checkUpstashLimit(
+    ip,
+    'rl:checkout',
+    CHECKOUT_MAX,
+    () => inMemoryGenericLimit(globalWithRL2._checkoutAttempts!, ip, CHECKOUT_MAX)
+  );
 }
 
 export async function checkRegisterRateLimit(ip: string): Promise<RateLimitResult> {

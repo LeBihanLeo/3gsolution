@@ -21,6 +21,8 @@ const ORDER: Record<string, number> = {
   en_preparation:      1,
   prete:               2,
   recuperee:           3,
+  // Remboursée : affiche le stepper au niveau "payée" (commande confirmée puis annulée)
+  remboursee:          0,
 };
 
 interface CommandeStepperProps {

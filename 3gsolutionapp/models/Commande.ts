@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
-export type StatutCommande = 'en_attente_paiement' | 'payee' | 'en_preparation' | 'prete' | 'recuperee';
+export type StatutCommande = 'en_attente_paiement' | 'payee' | 'en_preparation' | 'prete' | 'recuperee' | 'remboursee' | 'partiellement_remboursee' | 'dispute';
 
 export interface IProduitSnapshot {
   produitId: mongoose.Types.ObjectId;
@@ -13,6 +13,9 @@ export interface IProduitSnapshot {
 
 export interface ICommande extends Document {
   stripeSessionId: string;
+  // Lien vers le PaymentIntent — utilisé pour relier un remboursement/dispute Stripe à la commande
+  stripePaymentIntentId?: string;
+  stripeDisputeId?: string;
   statut: StatutCommande;
   client: {
     nom: string;
@@ -35,6 +38,12 @@ export interface ICommande extends Document {
   preteAt?: Date;
   // Horodatage de récupération effective (posé par le PATCH statut → recuperee)
   recupereeAt?: Date;
+  // Horodatage de remboursement (posé par le webhook charge.refunded)
+  rembourseAt?: Date;
+  // Montant remboursé en centimes (remboursement partiel ou total)
+  montantRembourse?: number;
+  // Horodatage de création de la dispute (posé par le webhook charge.dispute.created)
+  disputeAt?: Date;
   createdAt: Date;
 }
 
@@ -62,9 +71,10 @@ const ProduitSnapshotSchema = new Schema<IProduitSnapshot>(
 const CommandeSchema = new Schema<ICommande>(
   {
     stripeSessionId: { type: String, required: true, unique: true },
+    stripePaymentIntentId: { type: String, index: true, sparse: true },
     statut: {
       type: String,
-      enum: ['en_attente_paiement', 'payee', 'en_preparation', 'prete', 'recuperee'] as StatutCommande[],
+      enum: ['en_attente_paiement', 'payee', 'en_preparation', 'prete', 'recuperee', 'remboursee', 'partiellement_remboursee', 'dispute'] as StatutCommande[],
       default: 'en_attente_paiement',
     },
     client: {
@@ -90,6 +100,10 @@ const CommandeSchema = new Schema<ICommande>(
     enPreparationAt: { type: Date },
     preteAt: { type: Date },
     recupereeAt: { type: Date, index: true },
+    rembourseAt: { type: Date },
+    montantRembourse: { type: Number },
+    stripeDisputeId: { type: String, index: true, sparse: true },
+    disputeAt: { type: Date },
     purgeAt: {
       type: Date,
       // TTL index : MongoDB supprime automatiquement le document après cette date

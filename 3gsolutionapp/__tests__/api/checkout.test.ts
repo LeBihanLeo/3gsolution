@@ -21,9 +21,10 @@ vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 vi.mock('next-auth', () => ({ getServerSession: vi.fn().mockResolvedValue(null) }));
 
 // vi.hoisted() garantit que la variable est initialisée avant le hoist de vi.mock
-const { mockProduitFind, mockSiteConfigFindOne } = vi.hoisted(() => ({
+const { mockProduitFind, mockSiteConfigFindOne, mockPendingOrderCreate } = vi.hoisted(() => ({
   mockProduitFind: vi.fn(),
   mockSiteConfigFindOne: vi.fn(),
+  mockPendingOrderCreate: vi.fn(),
 }));
 vi.mock('@/models/Produit', () => ({
   default: { find: mockProduitFind },
@@ -31,6 +32,10 @@ vi.mock('@/models/Produit', () => ({
 // TICK-105 — SiteConfig mock pour vérifier fermeeAujourdhui + horaires
 vi.mock('@/models/SiteConfig', () => ({
   default: { findOne: mockSiteConfigFindOne },
+}));
+// PendingOrder mock — stockage snapshot produits (évite la limite 500 chars metadata Stripe)
+vi.mock('@/models/PendingOrder', () => ({
+  default: { create: mockPendingOrderCreate },
 }));
 
 import { POST } from '@/app/api/checkout/route';
@@ -68,6 +73,9 @@ const openConfig = {
   horaireFermeture: '23:59',
 };
 
+// PendingOrder retourné par create() (simule le document MongoDB créé)
+const mockPendingOrderDoc = { _id: { toString: () => 'pending123' } };
+
 describe('POST /api/checkout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -77,6 +85,8 @@ describe('POST /api/checkout', () => {
     mockSiteConfigFindOne.mockReturnValue({ lean: vi.fn().mockResolvedValue(openConfig) });
     // Par défaut : la BDD retourne le produit valide
     mockProduitFind.mockReturnValue({ lean: vi.fn().mockResolvedValue([mockProduitDB]) });
+    // Par défaut : PendingOrder créé avec succès
+    mockPendingOrderCreate.mockResolvedValue(mockPendingOrderDoc);
   });
 
   afterEach(() => {
@@ -137,12 +147,47 @@ describe('POST /api/checkout', () => {
     expect(call.line_items[0].price_data.unit_amount).toBe(850);
   });
 
-  it('les metadata client sont incluses', async () => {
+  it('metadata contient pending_order_id (snapshot produits stocké en BDD)', async () => {
     mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
     await POST(makeReq(validBody));
     const call = mockCreateSession.mock.calls[0][0];
-    expect(call.metadata.client_nom).toBe('Jean Dupont');
-    expect(call.metadata.client_telephone).toBe('0612345678');
+    expect(call.metadata.pending_order_id).toBe('pending123');
+    // Les données sensibles ne sont plus dans les metadata Stripe
+    expect(call.metadata.produits).toBeUndefined();
+    expect(call.metadata.client_nom).toBeUndefined();
+  });
+
+  it('customer_email pré-remplit le formulaire Stripe quand fourni', async () => {
+    mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
+    await POST(makeReq(validBody));
+    const call = mockCreateSession.mock.calls[0][0];
+    expect(call.customer_email).toBe('jean@example.com');
+  });
+
+  it('customer_email absent quand pas d\'email client', async () => {
+    mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
+    await POST(makeReq({ ...validBody, client: { nom: 'Jean', telephone: '0612345678' } }));
+    const call = mockCreateSession.mock.calls[0][0];
+    expect(call.customer_email).toBeUndefined();
+  });
+
+  it('expires_at défini à ~30 min dans le futur', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T12:00:00Z'));
+    mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
+    await POST(makeReq(validBody));
+    const call = mockCreateSession.mock.calls[0][0];
+    const expectedExpiresAt = Math.floor(Date.now() / 1000) + 30 * 60;
+    expect(call.expires_at).toBe(expectedExpiresAt);
+  });
+
+  it('PendingOrder créé avec le snapshot produits BDD', async () => {
+    mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
+    await POST(makeReq(validBody));
+    expect(mockPendingOrderCreate).toHaveBeenCalledOnce();
+    const pendingArg = mockPendingOrderCreate.mock.calls[0][0];
+    expect(pendingArg.produits[0].nom).toBe('Burger');
+    expect(pendingArg.produits[0].prix).toBe(850);
   });
 
   it('retourne { url } vers Stripe', async () => {
@@ -158,15 +203,14 @@ describe('POST /api/checkout', () => {
     expect(res.status).toBe(500);
   });
 
-  // TICK-129 — taux_tva inclus dans metadata produits
-  it('taux_tva du produit BDD est inclus dans metadata.produits', async () => {
+  // TICK-129 — taux_tva inclus dans le snapshot PendingOrder
+  it('taux_tva du produit BDD est inclus dans le snapshot PendingOrder', async () => {
     mockProduitFind.mockReturnValueOnce({
       lean: vi.fn().mockResolvedValue([{ ...mockProduitDB, taux_tva: 20 }]),
     });
     mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
     await POST(makeReq(validBody));
-    const call = mockCreateSession.mock.calls[0][0];
-    const produitsSnapshot = JSON.parse(call.metadata.produits);
-    expect(produitsSnapshot[0].taux_tva).toBe(20);
+    const pendingArg = mockPendingOrderCreate.mock.calls[0][0];
+    expect(pendingArg.produits[0].taux_tva).toBe(20);
   });
 });

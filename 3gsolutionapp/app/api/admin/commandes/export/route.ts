@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
   const toStr = toRaw.replace(/[^0-9\-]/g, '').slice(0, 10);
   // TICK-125 — filtre statut optionnel : 'recuperee' pour l'export comptabilité passées
   const statutFilter = searchParams.get('statut');
-  const STATUTS_VALIDES = ['payee', 'en_preparation', 'prete', 'recuperee'];
+  const STATUTS_VALIDES = ['payee', 'en_preparation', 'prete', 'recuperee', 'remboursee'];
 
   // Construire les bornes de date (inclusive)
   const from = new Date(`${fromStr}T00:00:00.000Z`);
@@ -131,6 +131,7 @@ export async function GET(request: NextRequest) {
         en_preparation: 'En préparation',
         prete: 'Prête',
         recuperee: 'Récupérée',
+        remboursee: 'Remboursée',
       };
 
       return [

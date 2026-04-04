@@ -2,6 +2,11 @@
 // Les prix des produits et options sont systématiquement récupérés depuis MongoDB.
 // Les valeurs `prix` envoyées par le client sont ignorées.
 // TICK-075 — clientId injecté dans metadata si client connecté
+//
+// Stripe best practices appliquées :
+//   - PendingOrder (MongoDB TTL 1h) : évite la limite 500 chars/valeur metadata Stripe
+//   - customer_email : pré-remplit le formulaire Stripe si l'email est fourni
+//   - expires_at : session Stripe expire après 30 min (créneaux restaurant)
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getServerSession } from 'next-auth';
@@ -11,6 +16,7 @@ import { mockSessions } from '@/lib/mockStore';
 import { connectDB } from '@/lib/mongodb';
 import Produit from '@/models/Produit';
 import SiteConfig from '@/models/SiteConfig';
+import PendingOrder from '@/models/PendingOrder';
 import { randomUUID } from 'crypto';
 import { logger } from '@/lib/logger';
 
@@ -167,6 +173,23 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Mode réel (Stripe) — avec prix vérifiés BDD ───────────────────────────
+
+    // Stocker le snapshot complet en BDD avant de créer la session Stripe.
+    // Stripe limite chaque valeur de métadonnée à 500 chars : le JSON de 4+ items
+    // avec options dépasserait la limite, causant une troncature silencieuse et
+    // l'échec du parse dans le webhook. On ne passe que l'ID (24 chars) en metadata.
+    const pendingOrder = await PendingOrder.create({
+      client: {
+        nom: client.nom,
+        telephone: client.telephone,
+        ...(client.email ? { email: client.email } : {}),
+      },
+      retrait,
+      ...(commentaire ? { commentaire } : {}),
+      produits: produitsVerifies,
+      ...(clientId ? { clientId } : {}),
+    });
+
     const lineItems = produitsVerifies.map((p) => {
       const prixUnitaire = p.prix + p.options.reduce((s, o) => s + o.prix, 0);
       const nomComplet =
@@ -186,20 +209,21 @@ export async function POST(request: NextRequest) {
     const stripe = getStripe();
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
+      // Restreindre aux méthodes de paiement synchrones uniquement.
+      // Exclut tout ce qui est delayed/async (SEPA, BACS, ACH, Sofort…) —
+      // incompatible avec un restaurant où la commande doit être confirmée immédiatement.
+      // `card` inclut automatiquement Apple Pay et Google Pay via Stripe Checkout.
+      payment_method_types: ['card'],
       line_items: lineItems,
       success_url: `${baseUrl}/confirmation?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${baseUrl}/commande`,
+      cancel_url: `${baseUrl}/commande?payment=cancelled`,
+      // Pré-remplit le champ email sur la page de paiement Stripe si fourni
+      ...(client.email ? { customer_email: client.email } : {}),
+      // Session expire après 30 min — adapté aux créneaux horaires restaurant
+      expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
       metadata: {
-        client_nom: client.nom,
-        client_telephone: client.telephone,
-        // RGPD minimisation : email transmis uniquement s'il est fourni
-        client_email: client.email ?? '',
-        retrait_type: retrait.type,
-        retrait_creneau: retrait.creneau ?? '',
-        commentaire: commentaire ?? '',
-        produits: JSON.stringify(produitsVerifies), // snapshot prix BDD
-        // TICK-075 — clientId MongoDB si client connecté (vide = commande invité)
-        clientId: clientId ?? '',
+        // Référence vers le snapshot complet (évite la limite 500 chars/valeur Stripe)
+        pending_order_id: pendingOrder._id.toString(),
       },
     });
 

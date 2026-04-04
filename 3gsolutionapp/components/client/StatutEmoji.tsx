@@ -6,6 +6,7 @@ const STATUT_EMOJI: Record<string, { emoji: string; label: string }> = {
   en_preparation: { emoji: '🍔', label: 'En préparation' },
   prete:          { emoji: '✅', label: 'Prête à récupérer' },
   recuperee:      { emoji: '😋', label: 'Récupérée' },
+  remboursee:     { emoji: '↩️', label: 'Remboursée' },
 };
 
 interface StatutEmojiProps {

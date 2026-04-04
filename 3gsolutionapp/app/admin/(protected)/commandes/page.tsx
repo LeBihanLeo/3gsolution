@@ -214,7 +214,7 @@ export default function AdminCommandesPage() {
   const commandesPassees = useMemo(
     () =>
       commandes
-        .filter((c) => c.statut === 'recuperee')
+        .filter((c) => c.statut === 'recuperee' || c.statut === 'remboursee')
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
     [commandes]
   );
@@ -720,7 +720,7 @@ export default function AdminCommandesPage() {
         <>
           <div className="flex justify-between items-center mb-6">
             <p className="text-sm text-gray-500">
-              {commandesPassees.length} commande{commandesPassees.length !== 1 ? 's' : ''} récupérée{commandesPassees.length !== 1 ? 's' : ''}
+              {commandesPassees.length} commande{commandesPassees.length !== 1 ? 's' : ''} terminée{commandesPassees.length !== 1 ? 's' : ''}
             </p>
             <button
               onClick={() => setShowExportModal(true)}

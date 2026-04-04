@@ -12,7 +12,7 @@ interface ProduitSnapshot {
   options: { nom: string; prix: number }[];
 }
 
-export type StatutCommande = 'en_attente_paiement' | 'payee' | 'en_preparation' | 'prete' | 'recuperee';
+export type StatutCommande = 'en_attente_paiement' | 'payee' | 'en_preparation' | 'prete' | 'recuperee' | 'remboursee';
 
 export interface CommandeData {
   _id: string;
@@ -47,6 +47,7 @@ const STATUT_LABEL: Record<StatutCommande, string> = {
   en_preparation: 'En préparation',
   prete: 'Prête',
   recuperee: 'Récupérée',
+  remboursee: 'Remboursée',
 };
 
 const STATUT_STYLE: Record<StatutCommande, string> = {
@@ -55,6 +56,7 @@ const STATUT_STYLE: Record<StatutCommande, string> = {
   en_preparation: 'bg-amber-100 text-amber-700',
   prete: 'bg-green-100 text-green-700',
   recuperee: 'bg-gray-100 text-gray-500',
+  remboursee: 'bg-red-50 text-red-500',
 };
 
 // Transitions admin — TICK-099
