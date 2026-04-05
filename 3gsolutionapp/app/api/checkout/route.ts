@@ -227,6 +227,11 @@ export async function POST(request: NextRequest) {
         // Référence vers le snapshot complet (évite la limite 500 chars/valeur Stripe)
         pending_order_id: pendingOrder._id.toString(),
       },
+    }, {
+      // Idempotency key : si la requête est répétée (retry réseau, double-clic),
+      // Stripe retourne la même session au lieu d'en créer une nouvelle.
+      // On utilise l'ID du PendingOrder (déjà unique en BDD) comme clé stable.
+      idempotencyKey: `checkout_${pendingOrder._id.toString()}`,
     });
 
     return NextResponse.json({ url: session.url });
