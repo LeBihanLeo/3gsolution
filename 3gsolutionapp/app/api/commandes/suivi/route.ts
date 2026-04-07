@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import Commande from '@/models/Commande';
+import { getTenantId } from '@/lib/tenant';
 
 // CVE-07 — Format attendu pour les session_id Stripe et mock
 // Stripe : cs_live_... ou cs_test_... (longueur ~58-80 chars)
@@ -31,9 +32,18 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // TICK-134 — scope par tenant (restaurantId injecté par middleware)
+  const restaurantId = await getTenantId().catch(() => null);
+
   await connectDB();
 
-  const commande = await Commande.findOne({ stripeSessionId: sessionId }).lean();
+  // Si restaurantId résolu, filtrer par tenant (sécurité cross-tenant).
+  // Si absent (configuration dev sans middleware), fallback sans filtre.
+  const filtre = restaurantId
+    ? { stripeSessionId: sessionId, restaurantId }
+    : { stripeSessionId: sessionId };
+
+  const commande = await Commande.findOne(filtre).lean();
 
   if (!commande) {
     return NextResponse.json(

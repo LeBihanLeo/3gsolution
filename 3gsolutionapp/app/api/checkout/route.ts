@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getStripe } from '@/lib/stripe';
+import { getStripeClient } from '@/lib/stripe';
 import { mockSessions } from '@/lib/mockStore';
 import { connectDB } from '@/lib/mongodb';
 import Produit from '@/models/Produit';
@@ -19,6 +19,7 @@ import SiteConfig from '@/models/SiteConfig';
 import PendingOrder from '@/models/PendingOrder';
 import { randomUUID } from 'crypto';
 import { logger } from '@/lib/logger';
+import { getTenantId } from '@/lib/tenant';
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 // Note : les champs `prix` côté client sont intentionnellement exclus du schéma.
@@ -53,6 +54,12 @@ const CheckoutSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    // TICK-134 — Résolution du tenant courant
+    const restaurantId = await getTenantId().catch(() => null);
+    if (!restaurantId) {
+      return NextResponse.json({ error: 'Tenant non résolu' }, { status: 400 });
+    }
+
     // TICK-105 — Vérifier si la boutique est fermée pour aujourd'hui
     await connectDB();
     const siteConfig = await SiteConfig.findOne().lean() as {
@@ -115,8 +122,10 @@ export async function POST(request: NextRequest) {
     // SEC-01 : on ne fait jamais confiance aux prix envoyés par le client
     const produitIds = produitsClient.map((p) => p.produitId);
     const produitIdsUniques = [...new Set(produitIds)];
+    // TICK-134 — filtrage par restaurantId : empêche de commander des produits d'un autre restaurant
     const produitsDB = await Produit.find({
       _id: { $in: produitIdsUniques },
+      restaurantId,
       actif: true,
     }).lean();
 
@@ -155,10 +164,20 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    // ── Mode mock (STRIPE_SECRET_KEY absent) ──────────────────────────────────
-    if (!process.env.STRIPE_SECRET_KEY) {
+    // ── Résolution du client Stripe pour ce tenant ────────────────────────────
+    // TICK-139 — clé Stripe chargée depuis Restaurant.stripeSecretKey (select:false)
+    // Si non configuré (restaurant sans clé), bascule en mode mock (dev/staging).
+    let stripe: Awaited<ReturnType<typeof getStripeClient>> | null = null;
+    try {
+      stripe = await getStripeClient(restaurantId.toString());
+    } catch {
+      // Mode mock : Stripe non configuré pour ce restaurant
+    }
+
+    if (!stripe) {
       const mockId = `mock_${randomUUID()}`;
       mockSessions.set(mockId, {
+        restaurantId: restaurantId.toString(),
         client: {
           nom: client.nom,
           telephone: client.telephone,
@@ -166,7 +185,7 @@ export async function POST(request: NextRequest) {
         },
         retrait,
         ...(commentaire ? { commentaire } : {}),
-        produits: produitsVerifies, // produits avec prix BDD
+        produits: produitsVerifies,
         ...(clientId ? { clientId } : {}),
       });
       return NextResponse.json({ url: `${baseUrl}/mock-checkout?session_id=${mockId}` });
@@ -179,6 +198,7 @@ export async function POST(request: NextRequest) {
     // avec options dépasserait la limite, causant une troncature silencieuse et
     // l'échec du parse dans le webhook. On ne passe que l'ID (24 chars) en metadata.
     const pendingOrder = await PendingOrder.create({
+      restaurantId, // TICK-134 — transport restaurantId vers le webhook via PendingOrder
       client: {
         nom: client.nom,
         telephone: client.telephone,
@@ -206,7 +226,6 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    const stripe = getStripe();
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       // Restreindre aux méthodes de paiement synchrones uniquement.
@@ -226,6 +245,8 @@ export async function POST(request: NextRequest) {
       metadata: {
         // Référence vers le snapshot complet (évite la limite 500 chars/valeur Stripe)
         pending_order_id: pendingOrder._id.toString(),
+        // TICK-134 — restaurantId pour résolution tenant dans le webhook
+        restaurantId: restaurantId.toString(),
       },
     }, {
       // Idempotency key : si la requête est répétée (retry réseau, double-clic),

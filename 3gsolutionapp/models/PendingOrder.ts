@@ -19,6 +19,7 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
 export interface IPendingOrder extends Document {
+  restaurantId: mongoose.Types.ObjectId; // TICK-134 — transport checkout → webhook
   client: {
     nom: string;
     telephone: string;
@@ -43,6 +44,7 @@ export interface IPendingOrder extends Document {
 
 const PendingOrderSchema = new Schema<IPendingOrder>(
   {
+    restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', required: true },
     client: { type: Schema.Types.Mixed, required: true },
     retrait: { type: Schema.Types.Mixed, required: true },
     commentaire: { type: String },

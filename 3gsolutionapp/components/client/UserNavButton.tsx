@@ -1,6 +1,7 @@
 'use client';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 interface Props {
   variant?: 'onImage' | 'onWhite';
@@ -9,8 +10,16 @@ interface Props {
 export default function UserNavButton({ variant = 'onWhite' }: Props) {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const [guestMode, setGuestMode] = useState(false);
+
+  useEffect(() => {
+    setGuestMode(sessionStorage.getItem('guest_mode') === 'true');
+  }, []);
 
   if (status === 'loading') return <div className="w-9 h-9" aria-hidden />;
+
+  // Masquer pendant l'EcranChoix (non authentifié + pas en mode invité)
+  if (status === 'unauthenticated' && !guestMode) return <div className="w-9 h-9" aria-hidden />;
 
   const isClient = session?.user?.role === 'client';
   const href = isClient ? '/profil' : '/auth/login';

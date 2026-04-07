@@ -1,12 +1,15 @@
-// TICK-076 + TICK-099 — Tests GET /api/client/commandes
+// TICK-076 + TICK-099 + TICK-134 — Tests GET /api/client/commandes
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import mongoose from 'mongoose';
 
-const { mockFind, mockSort, mockLimit, mockLean } = vi.hoisted(() => {
+const FAKE_TENANT_ID = new mongoose.Types.ObjectId('aaaaaaaaaaaaaaaaaaaaaaaa');
+
+const { mockFind, mockSort, mockLimit, mockLean, mockGetTenantId } = vi.hoisted(() => {
   const mockLean = vi.fn();
   const mockLimit = vi.fn(() => ({ lean: mockLean }));
   const mockSort = vi.fn(() => ({ limit: mockLimit }));
   const mockFind = vi.fn(() => ({ sort: mockSort }));
-  return { mockFind, mockSort, mockLimit, mockLean };
+  return { mockFind, mockSort, mockLimit, mockLean, mockGetTenantId: vi.fn() };
 });
 
 vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined) }));
@@ -18,6 +21,7 @@ vi.mock('next-auth', () => ({ getServerSession: vi.fn() }));
 vi.mock('@/models/Commande', () => ({
   default: { find: mockFind },
 }));
+vi.mock('@/lib/tenant', () => ({ getTenantId: mockGetTenantId }));
 
 import { getServerSession } from 'next-auth';
 import { GET } from '@/app/api/client/commandes/route';
@@ -25,45 +29,31 @@ import { GET } from '@/app/api/client/commandes/route';
 const clientSession = { user: { id: 'client123', role: 'client', email: 'test@test.com' } };
 
 const commandePayee = {
-  _id: 'cmd1',
-  statut: 'payee',
+  _id: 'cmd1', statut: 'payee',
   produits: [{ nom: 'Burger', quantite: 1, prix: 850, options: [] }],
-  total: 850,
-  retrait: { type: 'immediat' },
-  createdAt: new Date().toISOString(),
+  total: 850, retrait: { type: 'immediat' }, createdAt: new Date().toISOString(),
 };
-
 const commandeEnPreparation = {
-  _id: 'cmd3',
-  statut: 'en_preparation',
+  _id: 'cmd3', statut: 'en_preparation',
   produits: [{ nom: 'Pizza', quantite: 1, prix: 1200, options: [] }],
-  total: 1200,
-  retrait: { type: 'immediat' },
-  createdAt: new Date().toISOString(),
+  total: 1200, retrait: { type: 'immediat' }, createdAt: new Date().toISOString(),
 };
-
 const commandePrete = {
-  _id: 'cmd4',
-  statut: 'prete',
+  _id: 'cmd4', statut: 'prete',
   produits: [{ nom: 'Salade', quantite: 1, prix: 900, options: [] }],
-  total: 900,
-  retrait: { type: 'immediat' },
-  createdAt: new Date().toISOString(),
+  total: 900, retrait: { type: 'immediat' }, createdAt: new Date().toISOString(),
 };
-
 const commandeRecuperee = {
-  _id: 'cmd2',
-  statut: 'recuperee',
+  _id: 'cmd2', statut: 'recuperee',
   produits: [{ nom: 'Frites', quantite: 2, prix: 350, options: [] }],
-  total: 700,
-  retrait: { type: 'immediat' },
-  createdAt: new Date().toISOString(),
+  total: 700, retrait: { type: 'immediat' }, createdAt: new Date().toISOString(),
 };
 
 describe('GET /api/client/commandes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLean.mockResolvedValue([]);
+    mockGetTenantId.mockResolvedValue(FAKE_TENANT_ID);
   });
 
   it('sans session → 401', async () => {
@@ -88,7 +78,7 @@ describe('GET /api/client/commandes', () => {
     expect(data.passees).toEqual([]);
   });
 
-  it('TICK-099 — sépare correctement enCours (payee/en_preparation/prete) et passees (recuperee)', async () => {
+  it('TICK-099 — sépare correctement enCours et passees', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce(clientSession);
     mockLean.mockResolvedValueOnce([commandePayee, commandeEnPreparation, commandePrete, commandeRecuperee]);
     const res = await GET();
@@ -128,12 +118,12 @@ describe('GET /api/client/commandes', () => {
     expect(projection.total).toBe(1);
   });
 
-  it('requête Commande.find avec clientId', async () => {
+  it('TICK-134 — Commande.find filtré par clientId + restaurantId', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce(clientSession);
     mockLean.mockResolvedValueOnce([]);
     await GET();
     expect(mockFind).toHaveBeenCalledWith(
-      { clientId: 'client123' },
+      { clientId: 'client123', restaurantId: FAKE_TENANT_ID },
       expect.objectContaining({ _id: 1, statut: 1 })
     );
   });

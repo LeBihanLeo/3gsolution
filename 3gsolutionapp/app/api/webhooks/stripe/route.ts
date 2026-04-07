@@ -1,15 +1,18 @@
+// TICK-139 — Webhook Stripe multi-tenant
+// Le webhook est commun (une seule URL). La résolution du tenant se fait via
+// metadata.restaurantId (injecté au checkout — TICK-134).
+// La vérification de signature utilise le stripeWebhookSecret du restaurant concerné.
 import { NextRequest, NextResponse } from 'next/server';
 import type Stripe from 'stripe';
-import { getStripe } from '@/lib/stripe';
+import { getStripeClient, createStripeClient } from '@/lib/stripe';
 import { connectDB } from '@/lib/mongodb';
+import Restaurant from '@/models/Restaurant';
 import Commande from '@/models/Commande';
 import PendingOrder from '@/models/PendingOrder';
 import WebhookFailedEvent from '@/models/WebhookFailedEvent';
 import { sendConfirmationEmail, sendDisputeAlert, sendChargeFailedAlert } from '@/lib/email';
 import { logger } from '@/lib/logger';
 
-// Désactiver le body parsing automatique pour lire le corps brut
-// (requis pour la vérification de signature Stripe)
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
@@ -19,17 +22,58 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Signature manquante' }, { status: 400 });
   }
 
-  if (!process.env.STRIPE_WEBHOOK_SECRET) {
-    logger.error('webhook_config_missing', { route: '/api/webhooks/stripe' });
-    return NextResponse.json({ error: 'Configuration serveur incomplète' }, { status: 500 });
-  }
-
   // Lire le corps brut AVANT toute autre opération (requis par Stripe)
   const body = await request.text();
 
+  // ── Résolution du tenant ──────────────────────────────────────────────────
+  // TICK-139 : on parse le JSON brut (avant vérification) pour extraire le
+  // restaurantId depuis les metadata. L'intégrité du body est ensuite garantie
+  // par la vérification de signature (constructEvent).
+  let rawPayload: Record<string, unknown>;
+  try {
+    rawPayload = JSON.parse(body);
+  } catch {
+    return NextResponse.json({ error: 'Corps invalide' }, { status: 400 });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawObject = (rawPayload?.data as any)?.object ?? {};
+  const restaurantIdStr: string | undefined =
+    rawObject?.metadata?.restaurantId;
+
+  await connectDB();
+
+  let webhookSecret: string;
+  let stripeClient: Awaited<ReturnType<typeof getStripeClient>>;
+
+  if (restaurantIdStr) {
+    // Cas principal (checkout events) — clé par restaurant
+    const restaurant = await Restaurant.findById(restaurantIdStr).select(
+      '+stripeSecretKey +stripeWebhookSecret'
+    );
+    if (!restaurant?.stripeWebhookSecret) {
+      logger.error('webhook_restaurant_not_found', { restaurantId: restaurantIdStr });
+      return NextResponse.json({ error: 'Restaurant introuvable ou webhook non configuré' }, { status: 400 });
+    }
+    webhookSecret = restaurant.stripeWebhookSecret;
+    stripeClient = await getStripeClient(restaurantIdStr);
+  } else {
+    // Fallback — événements sans metadata.restaurantId (charge, dispute…)
+    // Utilise la variable d'env globale si présente (migration / legacy)
+    if (!process.env.STRIPE_WEBHOOK_SECRET) {
+      logger.error('webhook_config_missing', { route: '/api/webhooks/stripe' });
+      return NextResponse.json({ error: 'Configuration serveur incomplète' }, { status: 500 });
+    }
+    webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    // Pour les événements sans tenant résolu, client Stripe générique depuis l'env
+    // (compatibilité migration mono-tenant → multi-tenant)
+    stripeClient = createStripeClient(process.env.STRIPE_SECRET_KEY ?? '');
+  }
+
+  // ── Vérification de la signature ─────────────────────────────────────────
   let event: Stripe.Event;
   try {
-    event = getStripe().webhooks.constructEvent(body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    event = stripeClient.webhooks.constructEvent(body, sig, webhookSecret);
   } catch (err) {
     logger.error('webhook_invalid_signature', { route: '/api/webhooks/stripe' }, err);
     return NextResponse.json({ error: 'Signature invalide' }, { status: 400 });
@@ -40,12 +84,14 @@ export async function POST(request: NextRequest) {
 
       // ── Paiement complété ────────────────────────────────────────────────────
       case 'checkout.session.completed': {
-        await handleSessionCompleted(event.data.object as Stripe.Checkout.Session);
+        await handleSessionCompleted(
+          event.data.object as Stripe.Checkout.Session,
+          stripeClient
+        );
         break;
       }
 
       // ── Session expirée (abandon ou expiration 30 min) ───────────────────────
-      // Nettoyage immédiat du PendingOrder (sinon TTL de 24h le fait)
       case 'checkout.session.expired': {
         await handleSessionExpired(event.data.object as Stripe.Checkout.Session);
         break;
@@ -58,27 +104,24 @@ export async function POST(request: NextRequest) {
       }
 
       // ── Capture de charge échouée ────────────────────────────────────────────
-      // Critique : la session était complétée mais la capture a échoué.
-      // Très rare en paiement synchrone mais doit être traité (alerte admin).
       case 'charge.failed': {
         await handleChargeFailed(event.data.object as Stripe.Charge);
         break;
       }
 
-      // ── Dispute ouverte (contestation client auprès de sa banque) ────────────
+      // ── Dispute ouverte ──────────────────────────────────────────────────────
       case 'charge.dispute.created': {
         await handleDisputeCreated(event.data.object as Stripe.Dispute);
         break;
       }
 
-      // ── Dispute clôturée (gagnée, perdue, ou avertissement fermé) ────────────
+      // ── Dispute clôturée ─────────────────────────────────────────────────────
       case 'charge.dispute.closed': {
         await handleDisputeClosed(event.data.object as Stripe.Dispute);
         break;
       }
 
       // ── Paiement échoué (carte refusée, fonds insuffisants…) ─────────────────
-      // Pas d'action en base — log pour visibilité opérationnelle
       case 'payment_intent.payment_failed': {
         const pi = event.data.object as Stripe.PaymentIntent;
         logger.error('payment_failed', {
@@ -90,13 +133,9 @@ export async function POST(request: NextRequest) {
       }
 
       default:
-        // Événements non gérés : 200 silencieux (évite les retries inutiles)
         break;
     }
   } catch (err) {
-    // ── DLQ : persister l'événement échoué pour replay manuel ────────────────
-    // Log sans crash : Stripe retentera si on renvoie une erreur 5xx.
-    // On stocke quand même en DLQ pour ne pas perdre l'événement après 3 jours.
     logger.error('webhook_handler_failed', { eventType: event.type, eventId: event.id }, err);
 
     try {
@@ -114,27 +153,26 @@ export async function POST(request: NextRequest) {
         { upsert: true }
       );
     } catch (dlqErr) {
-      // Non-bloquant — si MongoDB est down, on ne peut rien faire
       logger.error('webhook_dlq_write_failed', { eventId: event.id }, dlqErr);
     }
   }
 
-  // Répondre rapidement (Stripe timeout = 30s)
   return NextResponse.json({ received: true });
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
-async function handleSessionCompleted(session: Stripe.Checkout.Session) {
+async function handleSessionCompleted(
+  session: Stripe.Checkout.Session,
+  stripe: Awaited<ReturnType<typeof getStripeClient>>
+) {
   const metadata = session.metadata ?? {};
 
   await connectDB();
 
-  // Idempotence : ne pas créer deux fois la même commande
   const existing = await Commande.findOne({ stripeSessionId: session.id });
   if (existing) return;
 
-  // Charger le snapshot depuis MongoDB (évite la limite 500 chars/valeur metadata Stripe)
   const pendingOrderId = metadata.pending_order_id;
   if (!pendingOrderId) {
     logger.error('webhook_missing_pending_order_id', { stripeSessionId: session.id });
@@ -143,7 +181,6 @@ async function handleSessionCompleted(session: Stripe.Checkout.Session) {
 
   const pendingOrder = await PendingOrder.findById(pendingOrderId);
   if (!pendingOrder) {
-    // TTL expiré ou document inexistant (paiement > 24h après création — cas très rare)
     logger.error('webhook_pending_order_not_found', {
       stripeSessionId: session.id,
       pendingOrderId,
@@ -151,7 +188,7 @@ async function handleSessionCompleted(session: Stripe.Checkout.Session) {
     return;
   }
 
-  const { client, retrait, commentaire, produits, clientId } = pendingOrder;
+  const { restaurantId, client, retrait, commentaire, produits, clientId } = pendingOrder;
 
   const total = produits.reduce(
     (sum: number, p: { prix: number; options: { prix: number }[]; quantite: number }) =>
@@ -159,27 +196,25 @@ async function handleSessionCompleted(session: Stripe.Checkout.Session) {
     0
   );
 
-  // TICK-057 — RGPD Art. 5(1)(e) : durée de rétention 12 mois (obligation comptable)
   const purgeAt = new Date();
   purgeAt.setFullYear(purgeAt.getFullYear() + 1);
 
-  // Récupérer la receipt_url Stripe depuis la charge liée au PaymentIntent
   let receiptUrl: string | undefined;
   try {
     if (session.payment_intent) {
-      const pi = await getStripe().paymentIntents.retrieve(
+      const pi = await stripe.paymentIntents.retrieve(
         session.payment_intent as string,
         { expand: ['latest_charge'] }
       );
       receiptUrl = (pi.latest_charge as Stripe.Charge)?.receipt_url ?? undefined;
     }
   } catch {
-    // non-bloquant — la commande est créée sans receiptUrl si l'appel échoue
+    // non-bloquant
   }
 
   const commande = await Commande.create({
+    restaurantId,
     stripeSessionId: session.id,
-    // Stocker le PaymentIntent ID pour pouvoir retrouver la commande lors d'un remboursement/dispute
     ...(session.payment_intent ? { stripePaymentIntentId: session.payment_intent as string } : {}),
     statut: 'payee',
     client,
@@ -189,14 +224,11 @@ async function handleSessionCompleted(session: Stripe.Checkout.Session) {
     total,
     purgeAt,
     ...(clientId ? { clientId } : {}),
-    // Stocker le lien reçu PDF dès la création
     ...(receiptUrl ? { receiptUrl } : {}),
   });
 
-  // Supprimer le PendingOrder maintenant que la commande est créée
   await PendingOrder.findByIdAndDelete(pendingOrderId);
 
-  // Envoi email de confirmation (erreur silencieuse pour ne pas bloquer)
   if (client.email) {
     try {
       await sendConfirmationEmail(commande, receiptUrl);
@@ -230,20 +262,15 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
 
   const commande = await Commande.findOne({ stripePaymentIntentId: paymentIntentId });
   if (!commande) {
-    // Commande introuvable — remboursement d'une transaction hors-app ou TTL purgé
     logger.error('webhook_refund_commande_not_found', { paymentIntentId, chargeId: charge.id });
     return;
   }
 
-  // Remboursement partiel : charge.refunded === false tant que non total
   if (!charge.refunded) {
-    // Ne pas rétrograder un statut déjà terminal (idempotence)
     if (commande.statut === 'remboursee') return;
-
     commande.statut = 'partiellement_remboursee';
     commande.montantRembourse = charge.amount_refunded;
     await commande.save();
-
     logger.info('partial_refund_received', {
       commandeId: commande._id.toString(),
       paymentIntentId,
@@ -254,7 +281,6 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
     return;
   }
 
-  // Remboursement total — ne pas écraser un statut déjà terminal (idempotence)
   if (commande.statut === 'remboursee') return;
 
   commande.statut = 'remboursee';
@@ -270,14 +296,9 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
   });
 }
 
-// ── Capture de charge échouée (critique) ──────────────────────────────────────
-// Scénario : checkout.session.completed a déjà créé la Commande (statut=payee)
-// mais la capture du paiement a ensuite échoué côté Stripe.
-// Très rare en mode auto-capture (carte synchrone), mais doit être géré.
 async function handleChargeFailed(charge: Stripe.Charge) {
   const paymentIntentId = charge.payment_intent as string | null;
   if (!paymentIntentId) {
-    // Pas de PaymentIntent → charge isolée, pas liée à une commande
     logger.error('webhook_charge_failed_no_payment_intent', { chargeId: charge.id });
     return;
   }
@@ -286,8 +307,6 @@ async function handleChargeFailed(charge: Stripe.Charge) {
 
   const commande = await Commande.findOne({ stripePaymentIntentId: paymentIntentId });
   if (!commande) {
-    // Cas normal : charge échouée AVANT que la session soit complétée (carte refusée).
-    // Aucune Commande n'existe encore → pas d'action requise.
     logger.info('charge_failed_no_commande', {
       paymentIntentId,
       chargeId: charge.id,
@@ -296,12 +315,9 @@ async function handleChargeFailed(charge: Stripe.Charge) {
     return;
   }
 
-  // Cas critique : une Commande existe déjà (checkout.session.completed déjà traité)
-  // mais la capture a finalement échoué. Marquer la commande comme échouée.
-  if (commande.statut === 'charge_echouee') return; // idempotence
+  if (commande.statut === 'charge_echouee') return;
 
   const raison = charge.failure_message ?? charge.failure_code ?? 'Capture échouée';
-
   commande.statut = 'charge_echouee';
   commande.chargeEchoueeAt = new Date();
   commande.chargeEchoueeRaison = raison;
@@ -315,7 +331,6 @@ async function handleChargeFailed(charge: Stripe.Charge) {
     failureMessage: charge.failure_message,
   });
 
-  // Alerte admin immédiate — action requise
   try {
     await sendChargeFailedAlert({
       commandeId: commande._id.toString(),
@@ -343,7 +358,6 @@ async function handleDisputeCreated(dispute: Stripe.Dispute) {
     return;
   }
 
-  // Idempotence — ne pas écraser si déjà en dispute
   if (commande.statut === 'dispute') return;
 
   commande.statut = 'dispute';
@@ -359,7 +373,6 @@ async function handleDisputeCreated(dispute: Stripe.Dispute) {
     amount: dispute.amount,
   });
 
-  // ── Alerte admin : délai de réponse limité (7 à 21 jours selon la banque) ──
   try {
     await sendDisputeAlert({
       commandeId: commande._id.toString(),
@@ -386,12 +399,10 @@ async function handleDisputeClosed(dispute: Stripe.Dispute) {
   }
 
   if (dispute.status === 'won') {
-    // Merchant a gagné — l'argent est resté, on revient à payee
     commande.statut = 'payee';
     await commande.save();
     logger.info('dispute_won', { commandeId: commande._id.toString(), disputeId: dispute.id });
   } else if (dispute.status === 'lost') {
-    // Merchant a perdu — l'argent a été retiré (équivalent remboursé)
     commande.statut = 'remboursee';
     commande.rembourseAt = new Date();
     commande.montantRembourse = dispute.amount;
@@ -402,7 +413,6 @@ async function handleDisputeClosed(dispute: Stripe.Dispute) {
       amount: dispute.amount,
     });
   } else {
-    // warning_closed — avertissement fermé, aucun impact financier
     logger.info('dispute_warning_closed', { commandeId: commande._id.toString(), disputeId: dispute.id });
   }
 }

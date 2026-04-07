@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
 import { requireAdmin } from '@/lib/assertAdmin';
 import Produit from '@/models/Produit';
+import { getTenantId, resolveTenantForAdmin } from '@/lib/tenant';
 
 const OptionSchema = z.object({
   nom: z.string().min(1),
@@ -23,7 +24,7 @@ const ProduitUpdateSchema = z.object({
   prix: z.number().int().min(0).optional(),
   taux_tva: TauxTvaSchema.optional(), // TICK-127 — inchangé si absent du body
   options: z.array(OptionSchema).optional(),
-  imageUrl: z.string().min(1).optional().nullable(), // TICK-036 — null pour supprimer l'image
+  imageUrl: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).optional().nullable()), // TICK-036 — null pour supprimer l'image
   actif: z.boolean().optional(),
 });
 
@@ -37,6 +38,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   try {
     const { id } = await params;
+    const restaurantId = await resolveTenantForAdmin(check.session);
+    if (!restaurantId) {
+      return NextResponse.json({ error: 'Tenant non résolu' }, { status: 400 });
+    }
+
     const body = await request.json();
     const parsed = ProduitUpdateSchema.safeParse(body);
 
@@ -45,10 +51,12 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     }
 
     await connectDB();
-    const produit = await Produit.findByIdAndUpdate(id, parsed.data, {
-      new: true,
-      runValidators: true,
-    });
+    // TICK-133 — Sécurité cross-tenant : filtre par restaurantId
+    const produit = await Produit.findOneAndUpdate(
+      { _id: id, restaurantId },
+      parsed.data,
+      { new: true, runValidators: true }
+    );
 
     if (!produit) {
       return NextResponse.json({ error: 'Produit introuvable' }, { status: 404 });
@@ -68,6 +76,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
   try {
     const { id } = await params;
+    const restaurantId = await resolveTenantForAdmin(check.session);
+    if (!restaurantId) {
+      return NextResponse.json({ error: 'Tenant non résolu' }, { status: 400 });
+    }
+
     const body = await request.json();
     const parsed = z.object({ actif: z.boolean() }).safeParse(body);
 
@@ -76,8 +89,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     await connectDB();
-    const produit = await Produit.findByIdAndUpdate(
-      id,
+    // TICK-133 — Sécurité cross-tenant
+    const produit = await Produit.findOneAndUpdate(
+      { _id: id, restaurantId },
       { actif: parsed.data.actif },
       { new: true }
     );
@@ -100,8 +114,14 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
 
   try {
     const { id } = await params;
+    const restaurantId = await resolveTenantForAdmin(check.session);
+    if (!restaurantId) {
+      return NextResponse.json({ error: 'Tenant non résolu' }, { status: 400 });
+    }
+
     await connectDB();
-    const produit = await Produit.findByIdAndDelete(id);
+    // TICK-133 — Sécurité cross-tenant
+    const produit = await Produit.findOneAndDelete({ _id: id, restaurantId });
 
     if (!produit) {
       return NextResponse.json({ error: 'Produit introuvable' }, { status: 404 });

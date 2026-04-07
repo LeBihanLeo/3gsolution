@@ -1,15 +1,28 @@
 'use client';
 
 import { signIn } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
-import { useState, FormEvent } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useState, FormEvent, useEffect, Suspense } from 'react';
 import { TurnstileWidget } from '@/components/TurnstileWidget';
 
-export default function LoginPage() {
+// Erreurs OAuth → renvoyer vers la page client (le social login est réservé aux clients)
+const OAUTH_ERRORS = ['OAuthCallback', 'OAuthSignin', 'OAuthCreateAccount', 'OAuthAccountNotLinked'];
+
+function AdminLoginContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const errorParam = searchParams.get('error');
+    if (errorParam && OAUTH_ERRORS.includes(errorParam)) {
+      // NextAuth redirige ici par défaut pour les erreurs OAuth (pages.signIn),
+      // mais ces erreurs proviennent du social login client → rediriger vers /auth/login
+      router.replace(`/auth/login?error=${encodeURIComponent(errorParam)}`);
+    }
+  }, [searchParams, router]);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -96,5 +109,13 @@ export default function LoginPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <AdminLoginContent />
+    </Suspense>
   );
 }

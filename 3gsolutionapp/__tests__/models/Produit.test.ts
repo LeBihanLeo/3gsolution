@@ -7,14 +7,20 @@ beforeAll(async () => connect());
 afterAll(async () => closeDatabase());
 afterEach(async () => clearDatabase());
 
+// TICK-133 — restaurantId requis sur Produit (scoping multi-tenant)
+const RESTAURANT_ID = new mongoose.Types.ObjectId();
+
+const BASE = {
+  nom: 'Burger Classic',
+  description: 'Un bon burger',
+  categorie: 'Burgers',
+  prix: 850,
+  restaurantId: RESTAURANT_ID,
+};
+
 describe('Modèle Produit', () => {
   it('crée un produit valide avec les champs obligatoires', async () => {
-    const produit = await Produit.create({
-      nom: 'Burger Classic',
-      description: 'Un bon burger',
-      categorie: 'Burgers',
-      prix: 850,
-    });
+    const produit = await Produit.create(BASE);
     expect(produit._id).toBeDefined();
     expect(produit.nom).toBe('Burger Classic');
     expect(produit.actif).toBe(true); // valeur par défaut
@@ -23,29 +29,24 @@ describe('Modèle Produit', () => {
 
   it('rejette un produit avec prix négatif', async () => {
     await expect(
-      Produit.create({ nom: 'Test', description: 'Desc', categorie: 'Cat', prix: -10 })
+      Produit.create({ ...BASE, prix: -10 })
     ).rejects.toThrow(mongoose.Error.ValidationError);
   });
 
   it('rejette un produit sans nom', async () => {
     await expect(
-      Produit.create({ description: 'Desc', categorie: 'Cat', prix: 500 })
+      Produit.create({ description: 'Desc', categorie: 'Cat', prix: 500, restaurantId: RESTAURANT_ID })
     ).rejects.toThrow(mongoose.Error.ValidationError);
   });
 
   it('actif est true par défaut', async () => {
-    const produit = await Produit.create({
-      nom: 'Test', description: 'Desc', categorie: 'Cat', prix: 100,
-    });
+    const produit = await Produit.create({ ...BASE, nom: 'Test' });
     expect(produit.actif).toBe(true);
   });
 
   it('sauvegarde un sous-document option avec nom et prix', async () => {
     const produit = await Produit.create({
-      nom: 'Burger',
-      description: 'Desc',
-      categorie: 'Burgers',
-      prix: 850,
+      ...BASE,
       options: [{ nom: 'Supplément fromage', prix: 50 }],
     });
     expect(produit.options).toHaveLength(1);
@@ -54,18 +55,14 @@ describe('Modèle Produit', () => {
   });
 
   it('imageUrl absent → champ omis dans le document', async () => {
-    const produit = await Produit.create({
-      nom: 'Sans image', description: 'Desc', categorie: 'Cat', prix: 100,
-    });
+    const produit = await Produit.create({ ...BASE, nom: 'Sans image' });
     expect(produit.imageUrl).toBeUndefined();
   });
 
   it('sauvegarde imageUrl si fourni', async () => {
     const produit = await Produit.create({
+      ...BASE,
       nom: 'Avec image',
-      description: 'Desc',
-      categorie: 'Cat',
-      prix: 100,
       imageUrl: 'https://example.com/image.jpg',
     });
     expect(produit.imageUrl).toBe('https://example.com/image.jpg');
@@ -73,24 +70,20 @@ describe('Modèle Produit', () => {
 
   // TICK-126 — taux_tva
   it('taux_tva est 10 par défaut', async () => {
-    const produit = await Produit.create({
-      nom: 'Test TVA', description: 'Desc', categorie: 'Cat', prix: 100,
-    });
+    const produit = await Produit.create({ ...BASE, nom: 'Test TVA' });
     expect(produit.taux_tva).toBe(10);
   });
 
   it('accepte les valeurs autorisées de taux_tva (0, 5.5, 10, 20)', async () => {
     for (const taux of [0, 5.5, 10, 20] as const) {
-      const produit = await Produit.create({
-        nom: `TVA ${taux}`, description: 'Desc', categorie: 'Cat', prix: 100, taux_tva: taux,
-      });
+      const produit = await Produit.create({ ...BASE, nom: `TVA ${taux}`, taux_tva: taux });
       expect(produit.taux_tva).toBe(taux);
     }
   });
 
   it('rejette un taux_tva non autorisé (ex: 7)', async () => {
     await expect(
-      Produit.create({ nom: 'Test', description: 'Desc', categorie: 'Cat', prix: 100, taux_tva: 7 })
+      Produit.create({ ...BASE, taux_tva: 7 })
     ).rejects.toThrow(mongoose.Error.ValidationError);
   });
 });

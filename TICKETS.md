@@ -1,6 +1,7 @@
 # Backlog de développement — Plateforme de commande en ligne
 > Généré le 2026-03-17 · Basé sur ARCHITECTURE.md · Sizing en jours/dev
 > Mis à jour le 2026-03-28 · Sprint 17 ajouté (gestion TVA)
+> Mis à jour le 2026-04-05 · Sprint 18 ajouté (architecture multi-tenant)
 
 ---
 
@@ -27,7 +28,8 @@
 | 15 | Correctifs UX Client — Re-commande, Profil, Navigation | TICK-114 → 116 | 1,0 j |
 | 16 | Refactoring Admin, Palette Couleur & Correctifs | TICK-117 → 125 | 7,0 j |
 | 17 | Gestion des prix et de la TVA | TICK-126 → 130 | 2,0 j |
-| **Total** | | **130 tickets** | **~85,75 j** |
+| 18 | Architecture Multi-Tenant | TICK-131 → 141 | 8,0 j |
+| **Total** | | **141 tickets** | **~93,75 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -3498,6 +3500,477 @@ const totalTVA = sum(lignesTVA);
 - [ ] Commandes avec snapshots anciens (sans `taux_tva`) : utiliser le défaut `10` pour le calcul (Mongoose default)
 - [ ] L'encodage UTF-8 BOM et le `Content-Disposition` existants sont préservés
 - [ ] Aucune régression sur les colonnes existantes de l'export
+
+---
+
+## Sprint 18 — Architecture Multi-Tenant (8,0 j)
+
+> Ajouté le 2026-04-05. Permet à la plateforme de servir plusieurs restaurants simultanément via leurs propres noms de domaine (ex: www.restoA.com, www.restoB.com), tous pointant vers le même déploiement Vercel. Chaque restaurant dispose de sa propre configuration, son propre menu, ses commandes et son admin.
+
+**Principe fondamental :** Le middleware lit le header `Host` de chaque requête, identifie le restaurant correspondant en base, et injecte `x-tenant-id` dans les headers pour tous les handlers en aval.
+
+---
+
+### TICK-131 — Modèle `Restaurant` : document tenant maître
+**Épic :** Modèles de données / Multi-tenant
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,75 j
+**Dépendances :** TICK-001, TICK-002
+
+**Description :**
+Créer `models/Restaurant.ts` — le document central de chaque tenant. Ce modèle absorbe `SiteConfig` (config vitrine), remplace les variables d'env d'auth admin, et stocke les clés Stripe propres à chaque restaurant. `SiteConfig` est conservé temporairement pour la rétrocompatibilité (supprimé en TICK-135).
+
+**Schéma :**
+```typescript
+{
+  _id: ObjectId,
+  slug: string,                  // "resto-a" — identifiant URL interne, unique
+  domaine: string,               // "www.restoA.com" — index unique, résolution tenant
+  domainesAlternatifs?: string[], // ["restoA.com"] — alias www/apex
+
+  // Config vitrine (anciennement SiteConfig)
+  nomRestaurant: string,
+  banniereUrl?: string,
+  couleurPrincipale: string,     // hex, défaut "#E63946"
+  horaireOuverture: string,      // "HH:MM", défaut "11:30"
+  horaireFermeture: string,      // "HH:MM", défaut "14:00"
+  fermeeAujourdhui: boolean,     // défaut false
+
+  // Auth admin (remplace ADMIN_EMAIL / ADMIN_PASSWORD_HASH env)
+  adminEmail: string,            // unique par restaurant
+  adminPasswordHash: string,     // bcrypt hash
+
+  // Stripe (par restaurant)
+  stripeSecretKey: string,           // sk_live_... ou sk_test_...
+  stripeWebhookSecret: string,       // whsec_...
+  stripePublishableKey: string,      // pk_live_... (exposé au client via API)
+
+  // Email (peut être partagé ou par restaurant)
+  emailFrom?: string,            // "commandes@restoA.com" — si absent : variable env globale
+
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+**Critères d'acceptance :**
+- [ ] `models/Restaurant.ts` créé avec tous les champs ci-dessus
+- [ ] Index unique sur `domaine` (résolution rapide par domaine)
+- [ ] Index unique sur `slug`
+- [ ] Index unique sur `adminEmail`
+- [ ] Interface TypeScript `IRestaurant` exportée
+- [ ] `stripeSecretKey`, `stripeWebhookSecret` non exposés dans les réponses API publiques (projection Mongoose)
+- [ ] Guard `mongoose.models.Restaurant || mongoose.model(...)` présent
+- [ ] Script seed `scripts/seed-restaurant.ts` : crée un restaurant par défaut avec le domaine `localhost:3000` (développement)
+
+---
+
+### TICK-132 — Middleware tenant-resolver : détection restaurant via `Host` header
+**Épic :** Infrastructure / Multi-tenant
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,0 j
+**Dépendances :** TICK-131, TICK-054, TICK-062
+
+**Description :**
+Étendre `middleware.ts` pour résoudre le tenant depuis le header `Host` en début de chaque requête. Le `restaurantId` résolu est injecté en header `x-tenant-id` pour être consommé par les Server Components et les API Routes. Cette logique s'exécute **avant** les vérifications d'auth existantes.
+
+**Flux de résolution :**
+```
+Requête entrante
+  ├── Lire Host header (ex: "www.restoA.com")
+  ├── DB lookup : Restaurant.findOne({ $or: [{ domaine }, { domainesAlternatifs: domaine }] })
+  │     ├── Trouvé → injecter x-tenant-id: restaurant._id.toString() dans les request headers
+  │     └── Non trouvé :
+  │           ├── domaine = "localhost:*" ou "*.vercel.app" → fallback restaurant seed (dev/preview)
+  │           └── Sinon → répondre 404 "Restaurant introuvable"
+  └── Continuer vers les middlewares d'auth existants
+```
+
+**Critères d'acceptance :**
+- [ ] `middleware.ts` lit `request.headers.get('host')` (domaine seul, sans port)
+- [ ] Lookup MongoDB `Restaurant` par `domaine` ou `domainesAlternatifs`
+- [ ] Header `x-tenant-id` ajouté sur toutes les requêtes résolues (via `NextResponse.next({ headers: { 'x-tenant-id': id } })`)
+- [ ] En développement (`localhost:3000`) et sur les URLs Vercel preview (`*.vercel.app`) : fallback sur le premier restaurant en base (ordre `createdAt ASC`)
+- [ ] Domaine inconnu en production → `NextResponse.json({ error: 'Restaurant introuvable' }, { status: 404 })`
+- [ ] Les vérifications d'auth existantes (TICK-054, TICK-062, TICK-072) s'exécutent **après** la résolution tenant et ont accès au `x-tenant-id` header
+- [ ] Performance : le lookup est mis en cache en mémoire (Map TTL 60 s) pour éviter une requête DB sur chaque requête HTTP
+- [ ] Test unitaire : `middleware.test.ts` — cas trouvé, cas introuvable, cas localhost
+
+---
+
+### TICK-133 — Scoping `Produit` par `restaurantId`
+**Épic :** Modèles de données / Multi-tenant
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,75 j
+**Dépendances :** TICK-131, TICK-132, TICK-003, TICK-007
+
+**Description :**
+Ajouter le champ `restaurantId` au modèle `Produit` et mettre à jour toutes les routes API pour filtrer systématiquement par tenant. Sans ce champ, tous les restaurants verraient les mêmes produits.
+
+**Modification `models/Produit.ts` :**
+```typescript
+restaurantId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'Restaurant',
+  required: true,
+  index: true,        // performances : filtrage fréquent par tenant
+}
+```
+
+**Routes à mettre à jour :**
+
+| Route | Modification |
+|-------|-------------|
+| `GET /api/produits` | Filtrer `{ restaurantId, actif: true }` |
+| `POST /api/produits` | Injecter `restaurantId` depuis `x-tenant-id` à la création |
+| `PUT /api/produits/[id]` | Ajouter `{ restaurantId }` au filtre de recherche (sécurité cross-tenant) |
+| `PATCH /api/produits/[id]` | Idem |
+| `DELETE /api/produits/[id]` | Idem |
+
+**Helper à créer :** `lib/tenant.ts`
+```typescript
+// Lit x-tenant-id depuis les headers Next.js et retourne un ObjectId
+export function getTenantId(headers: Headers): mongoose.Types.ObjectId
+// Lance une erreur 400 si header absent
+```
+
+**Critères d'acceptance :**
+- [ ] Champ `restaurantId` ajouté à `models/Produit.ts` (requis, indexé)
+- [ ] `lib/tenant.ts` exportant `getTenantId()` créé
+- [ ] Toutes les routes `GET/POST/PUT/PATCH/DELETE /api/produits*` utilisent `getTenantId()` pour filtrer/injecter
+- [ ] Un produit créé pour restoA n'apparaît **pas** dans `GET /api/produits` depuis restoB
+- [ ] `ARCHITECTURE.md` — modèle Produit mis à jour avec `restaurantId`
+- [ ] Migration transparente : les produits existants sans `restaurantId` seront rattachés au restaurant seed via le script `scripts/migrate-tenant.ts` (TICK-135)
+
+---
+
+### TICK-134 — Scoping `Commande` par `restaurantId`
+**Épic :** Modèles de données / Multi-tenant
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,75 j
+**Dépendances :** TICK-131, TICK-132, TICK-004, TICK-133
+
+**Description :**
+Ajouter `restaurantId` au modèle `Commande` et mettre à jour le checkout Stripe, le webhook et toutes les routes admin pour scoper les commandes par tenant.
+
+**Modification `models/Commande.ts` :**
+```typescript
+restaurantId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'Restaurant',
+  required: true,
+  index: true,
+}
+```
+
+**Routes à mettre à jour :**
+
+| Route | Modification |
+|-------|-------------|
+| `POST /api/checkout` | Inclure `restaurantId` dans les metadata Stripe + `Commande` créée |
+| `POST /api/webhooks/stripe` | Lire `restaurantId` depuis metadata + filtrer la clé Stripe webhook par tenant (TICK-139) |
+| `GET /api/commandes` | Filtrer `{ restaurantId }` |
+| `PATCH /api/commandes/[id]/statut` | Ajouter `{ restaurantId }` au filtre |
+| `DELETE /api/commandes/[id]` | Idem |
+| `GET /api/commandes/suivi` | Filtrer `{ restaurantId }` |
+| `GET /api/client/commandes` | Filtrer `{ restaurantId, clientId }` |
+| `GET /api/admin/commandes/export` | Filtrer `{ restaurantId }` |
+
+**Critères d'acceptance :**
+- [ ] Champ `restaurantId` ajouté à `models/Commande.ts` (requis, indexé)
+- [ ] `POST /api/checkout` : injecte `restaurantId` dans `metadata.restaurantId` Stripe et dans le document `Commande`
+- [ ] `POST /api/webhooks/stripe` : valide `metadata.restaurantId` via Zod, attache à la `Commande` créée
+- [ ] Toutes les routes admin filtrent par `restaurantId` du tenant courant
+- [ ] Un admin de restoA ne voit **pas** les commandes de restoB
+- [ ] `ProduitMetadataSchema` Zod (TICK-064) mis à jour pour inclure `restaurantId`
+- [ ] Migration transparente : script `scripts/migrate-tenant.ts` rattache les commandes existantes au restaurant seed
+
+---
+
+### TICK-135 — Migration `SiteConfig` → `Restaurant` et refactoring `/api/site-config`
+**Épic :** Migration / Refactoring
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-131, TICK-132, TICK-133, TICK-134
+
+**Description :**
+Faire pointer `/api/site-config` sur le document `Restaurant` du tenant courant. La route public `GET /api/site-config` renvoie les champs de config vitrine du restaurant résolu. Le modèle `SiteConfig` est conservé comme alias pour les données historiques, puis supprimé.
+
+**Script `scripts/migrate-tenant.ts` :**
+1. Lire le document `SiteConfig` singleton existant
+2. Créer un document `Restaurant` "seed" avec ces données + domaine `localhost:3000`
+3. Rattacher tous les `Produit` et `Commande` sans `restaurantId` à ce restaurant seed
+4. Logger le résultat (nombre de documents migrés)
+5. Supprimer le document `SiteConfig` (optionnel, après validation)
+
+**Refactoring routes :**
+- `GET /api/site-config` → `Restaurant.findById(getTenantId(headers)).select('nomRestaurant banniereUrl couleurPrincipale horaireOuverture horaireFermeture fermeeAujourdhui stripePublishableKey')`
+- `PUT /api/site-config` → `Restaurant.findByIdAndUpdate(getTenantId(headers), { ...body })` (auth admin requise)
+
+**Critères d'acceptance :**
+- [ ] `scripts/migrate-tenant.ts` exécutable sans erreur sur une base existante
+- [ ] Après migration : tous les `Produit` et `Commande` ont un `restaurantId` valide
+- [ ] `GET /api/site-config` retourne les données du restaurant résolu (pas du singleton)
+- [ ] `PUT /api/site-config` modifie uniquement le restaurant du tenant courant (auth admin)
+- [ ] `stripePublishableKey` est inclus dans la réponse publique `GET /api/site-config` (besoin côté client pour Stripe Elements — clé publique uniquement)
+- [ ] `stripeSecretKey` et `stripeWebhookSecret` ne sont **jamais** inclus dans les réponses API
+- [ ] Le modèle `SiteConfig` est marqué `@deprecated` dans le code, suppression planifiée post-validation
+
+---
+
+### TICK-136 — Auth admin multi-tenant : credentials depuis `Restaurant`, JWT enrichi
+**Épic :** Auth / Multi-tenant
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,75 j
+**Dépendances :** TICK-131, TICK-132, TICK-005
+
+**Description :**
+L'auth admin actuelle vérifie `ADMIN_EMAIL` et `ADMIN_PASSWORD_HASH` depuis les variables d'environnement — impossible en multi-tenant. Migrer vers une vérification contre le document `Restaurant` du tenant courant. Le JWT admin inclut désormais `restaurantId`.
+
+**Modification `lib/auth.ts` :**
+```typescript
+// Provider Credentials admin — avant : compare contre process.env.ADMIN_*
+// Après : lookup Restaurant par tenant + bcrypt.compare sur adminPasswordHash
+
+async authorize(credentials, req) {
+  const host = req.headers?.host ?? '';
+  const restaurant = await Restaurant.findOne({ domaine: host });
+  if (!restaurant) return null;
+  const match = await bcrypt.compare(credentials.password, restaurant.adminPasswordHash);
+  if (!match || credentials.email !== restaurant.adminEmail) return null;
+  return { id: restaurant._id.toString(), email: restaurant.adminEmail, role: 'admin', restaurantId: restaurant._id.toString() };
+}
+```
+
+**JWT callback :**
+```typescript
+// Ajouter restaurantId au JWT
+jwt: ({ token, user }) => {
+  if (user?.restaurantId) token.restaurantId = user.restaurantId;
+  return token;
+}
+```
+
+**Critères d'acceptance :**
+- [ ] `lib/auth.ts` : provider Credentials admin lit `Restaurant` par domaine au lieu des variables d'env `ADMIN_*`
+- [ ] Variables d'env `ADMIN_EMAIL` et `ADMIN_PASSWORD_HASH` ne sont **plus requises** (supprimées de `.env.local.example`)
+- [ ] JWT admin contient `restaurantId` (en plus de `role: "admin"`)
+- [ ] Middleware vérifie que `token.restaurantId` correspond au `x-tenant-id` de la requête (protection cross-tenant)
+- [ ] Un admin de restoA avec son token ne peut pas accéder aux routes admin de restoB
+- [ ] Le provider Credentials client (compte client) est **non modifié**
+- [ ] Page `/admin/login` est non modifiée (le formulaire email/password fonctionne identiquement)
+
+---
+
+### TICK-137 — Layouts multi-tenant : injection config par domaine dans Server Components
+**Épic :** Frontend / Multi-tenant
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-132, TICK-135
+
+**Description :**
+Mettre à jour les layouts Next.js pour lire la config du tenant courant (nom, bannière, palette couleur) via le header `x-tenant-id`. Le layout client injecte les CSS variables de palette (TICK-122/TICK-123) depuis le bon restaurant.
+
+**`app/(client)/layout.tsx` (Server Component) :**
+```typescript
+import { headers } from 'next/headers';
+import { getTenantId } from '@/lib/tenant';
+
+// Lecture du restaurant via x-tenant-id (injecté par middleware TICK-132)
+const tenantId = getTenantId(await headers());
+const restaurant = await Restaurant.findById(tenantId)
+  .select('nomRestaurant banniereUrl couleurPrincipale palette');
+
+// Injection palette CSS (TICK-123)
+const cssVars = buildCssVars(restaurant.palette);
+return <html><body style={cssVars}>{children}</body></html>;
+```
+
+**`app/(admin)/layout.tsx` :**
+- Lecture du `restaurantId` depuis le JWT session (via `getServerSession`)
+- Pas de CSS variables : layout admin reste neutre (palette hardcodée)
+
+**Critères d'acceptance :**
+- [ ] `app/(client)/layout.tsx` lit `x-tenant-id` via `headers()` et charge le `Restaurant` correspondant
+- [ ] CSS variables de palette (6 variables TICK-123) injectées avec les couleurs du restaurant courant
+- [ ] `<title>` de la page utilise `nomRestaurant` du restaurant courant (pas une valeur hardcodée)
+- [ ] `app/(admin)/layout.tsx` ne charge pas de config client — layout admin inchangé visuellement
+- [ ] En cas d'erreur de résolution tenant (restaurant supprimé entre-temps) : fallback gracieux (couleurs par défaut, pas de crash)
+- [ ] Aucune régression sur les pages client existantes avec le restaurant seed
+
+---
+
+### TICK-138 — Super-admin : interface de création et gestion des restaurants
+**Épic :** Admin / Multi-tenant / Onboarding
+**Priorité :** 🟠 Haute
+**Sizing :** 1,5 j
+**Dépendances :** TICK-131, TICK-132, TICK-136
+
+**Description :**
+Créer une zone `/superadmin` protégée par des credentials maîtres (variables d'env globales). Cette interface permet à 3G Solution (l'éditeur de la plateforme) d'onboarder de nouveaux restaurants : créer le tenant, configurer le domaine, générer les credentials admin et renseigner les clés Stripe.
+
+**Routes à créer :**
+
+| Route | Description |
+|-------|-------------|
+| `GET /superadmin` | Dashboard : liste des restaurants |
+| `GET /superadmin/nouveau` | Formulaire création restaurant |
+| `GET /superadmin/[id]` | Édition restaurant (domaine, admin, Stripe) |
+| `POST /api/superadmin/restaurants` | Créer un restaurant |
+| `PUT /api/superadmin/restaurants/[id]` | Modifier un restaurant |
+| `DELETE /api/superadmin/restaurants/[id]` | Supprimer un restaurant (+ cascade produits/commandes) |
+
+**Protection :**
+```typescript
+// middleware.ts — routes /superadmin/* et /api/superadmin/*
+// Vérification : Authorization header ou session avec role === "superadmin"
+// Credentials dans env : SUPERADMIN_EMAIL + SUPERADMIN_PASSWORD_HASH
+// JWT séparé des sessions admin/client (audience: "superadmin")
+```
+
+**Formulaire création restaurant — champs :**
+- Nom du restaurant, slug (auto-généré depuis le nom)
+- Domaine principal (ex: `www.monresto.com`)
+- Domaines alternatifs (ex: `monresto.com`)
+- Email admin + mot de passe admin (hashé avant stockage)
+- Stripe : clé secrète, clé publique, webhook secret
+- Horaires ouverture/fermeture, couleur principale
+
+**Critères d'acceptance :**
+- [ ] `/superadmin/*` protégé par `SUPERADMIN_EMAIL` + `SUPERADMIN_PASSWORD_HASH` (variables d'env)
+- [ ] Page `/superadmin` : tableau des restaurants (slug, domaine, nb produits, nb commandes, date création)
+- [ ] Formulaire création : tous les champs requis validés (Zod côté API)
+- [ ] `POST /api/superadmin/restaurants` : crée le document `Restaurant` avec `adminPasswordHash` bcrypt
+- [ ] `PUT /api/superadmin/restaurants/[id]` : modifie tous les champs sauf `_id` — mot de passe re-hashé si fourni
+- [ ] `DELETE /api/superadmin/restaurants/[id]` : supprime le restaurant + `Produit` associés — **refuse** si des `Commande` existent (protection données comptables)
+- [ ] Les clés Stripe sont affichées masquées (`sk_live_****...xxxx`) dans l'UI — jamais en clair
+- [ ] Variables d'env requises : `SUPERADMIN_EMAIL`, `SUPERADMIN_PASSWORD_HASH`, `SUPERADMIN_JWT_SECRET`
+
+---
+
+### TICK-139 — Stripe multi-tenant : clés par restaurant, checkout et webhook tenant-aware
+**Épic :** Paiement / Multi-tenant
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,0 j
+**Dépendances :** TICK-131, TICK-134, TICK-135
+
+**Description :**
+Chaque restaurant ayant ses propres clés Stripe, le client Stripe doit être instancié dynamiquement à partir du `Restaurant` du tenant courant. `lib/stripe.ts` expose un helper `getStripeClient(restaurantId)` en lieu et place du singleton actuel.
+
+**`lib/stripe.ts` — refactoring :**
+```typescript
+// Avant : singleton global
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+
+// Après : factory par tenant (avec cache Map)
+const stripeClients = new Map<string, Stripe>();
+
+export async function getStripeClient(restaurantId: string): Promise<Stripe> {
+  if (stripeClients.has(restaurantId)) return stripeClients.get(restaurantId)!;
+  const restaurant = await Restaurant.findById(restaurantId).select('+stripeSecretKey');
+  if (!restaurant?.stripeSecretKey) throw new Error('Stripe non configuré pour ce restaurant');
+  const client = new Stripe(restaurant.stripeSecretKey);
+  stripeClients.set(restaurantId, client);
+  return client;
+}
+```
+
+**Webhook multi-tenant :**
+```typescript
+// app/api/webhooks/stripe/route.ts
+// Le webhook Stripe est commun à tous les restaurants (une seule URL enregistrée dans Stripe)
+// Résolution du restaurant via metadata.restaurantId (injecté au checkout — TICK-134)
+const restaurantId = event.data.object.metadata?.restaurantId;
+const restaurant = await Restaurant.findById(restaurantId).select('+stripeWebhookSecret');
+// Vérification signature APRÈS résolution du tenant
+stripe.webhooks.constructEvent(body, sig, restaurant.stripeWebhookSecret);
+```
+
+**Critères d'acceptance :**
+- [ ] `lib/stripe.ts` : singleton remplacé par `getStripeClient(restaurantId)` avec cache Map
+- [ ] `app/api/checkout/route.ts` : appel `getStripeClient(tenantId)` — clé Stripe du restaurant courant
+- [ ] `app/api/webhooks/stripe/route.ts` : résolution tenant depuis `metadata.restaurantId`, vérification signature avec `restaurant.stripeWebhookSecret`
+- [ ] `stripeSecretKey` et `stripeWebhookSecret` sélectionnés avec `.select('+stripeSecretKey +stripeWebhookSecret')` (champs marqués `select: false` dans le schéma Mongoose — jamais retournés par défaut)
+- [ ] Variables d'env `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` ne sont **plus requises** (supprimées de `.env.local.example`)
+- [ ] `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` est remplacé par la clé publique du restaurant lue depuis `GET /api/site-config`
+- [ ] Le cache `stripeClients` est invalidé si les clés d'un restaurant sont modifiées (via `PUT /api/superadmin/restaurants/[id]`)
+
+---
+
+### TICK-140 — Client multi-tenant : scope de l'historique commandes et du profil
+**Épic :** Frontend Client / Multi-tenant
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-134, TICK-076, TICK-077
+
+**Description :**
+Les comptes clients sont globaux (un client peut se connecter sur restoA et restoB avec le même compte). Cependant, l'historique des commandes doit être scopé au restaurant courant : un client sur restoA ne voit que ses commandes passées sur restoA.
+
+**Modification `app/api/client/commandes/route.ts` :**
+```typescript
+// Avant
+Commande.find({ clientId: session.user.id })
+
+// Après
+Commande.find({ clientId: session.user.id, restaurantId: getTenantId(headers()) })
+```
+
+**Export RGPD `GET /api/client/export` :**
+- Exporter les commandes de **tous** les restaurants où le client a commandé (pas de scope tenant)
+- Inclure le nom du restaurant dans chaque commande exportée (`nomRestaurant` depuis le snapshot ou lookup)
+
+**Critères d'acceptance :**
+- [ ] `GET /api/client/commandes` filtre par `{ clientId, restaurantId }` — historique scopé au restaurant courant
+- [ ] `GET /api/client/export` (RGPD) exporte les commandes **tous restaurants confondus** — pas de filtre tenant
+- [ ] Profil client (`/profil`) : aucun changement — le composant `HistoriqueCommandes` consomme déjà l'API scopée
+- [ ] Re-commande rapide (TICK-114) : vérifie que les produits à re-commander existent dans le restaurant courant avant d'ajouter au panier
+- [ ] Aucune donnée d'un autre restaurant ne fuite dans le profil client
+
+---
+
+### TICK-141 — Documentation déploiement multi-tenant : Vercel, DNS et onboarding
+**Épic :** Documentation / Infrastructure
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-138, TICK-139
+
+**Description :**
+Documenter le processus complet pour onboarder un nouveau restaurant : configuration Vercel, DNS, création du tenant via le super-admin, et checklist de mise en production.
+
+**Section à ajouter dans `ARCHITECTURE.md` — "Onboarding d'un nouveau restaurant" :**
+
+**Étape 1 — Créer le tenant (super-admin)**
+1. Aller sur `/superadmin/nouveau`
+2. Renseigner : nom, slug, domaine principal (`www.restoA.com`), email admin, mot de passe admin, clés Stripe
+
+**Étape 2 — Ajouter le domaine sur Vercel**
+1. Vercel Dashboard → Project → Settings → Domains
+2. Ajouter `www.restoA.com` et `restoA.com` (redirect vers www)
+3. Vercel génère automatiquement les certificats SSL
+
+**Étape 3 — Configurer le DNS chez le registrar**
+```
+Type    Nom     Valeur
+CNAME   www     cname.vercel-dns.com
+A       @       76.76.21.21  (Vercel IP, vérifier dans le dashboard)
+```
+
+**Étape 4 — Enregistrer le webhook Stripe**
+1. Dans le dashboard Stripe du restaurant
+2. Créer un endpoint webhook : `https://www.restoA.com/api/webhooks/stripe`
+3. Événements à sélectionner : `checkout.session.completed`
+4. Copier le `whsec_...` dans le super-admin
+
+**Étape 5 — Vérification**
+- [ ] `https://www.restoA.com` → affiche le menu du bon restaurant
+- [ ] `https://www.restoA.com/admin/login` → connexion avec les credentials du restaurant
+- [ ] Commande test → email de confirmation reçu → webhook Stripe OK
+
+**Critères d'acceptance :**
+- [ ] Section "Multi-tenant" ajoutée dans `ARCHITECTURE.md` (modèle Restaurant, flux middleware, onboarding)
+- [ ] `.env.local.example` mis à jour : retrait des variables par-restaurant (`STRIPE_*`, `ADMIN_*`), ajout des variables globales (`SUPERADMIN_*`, `MONGODB_URI`, `NEXTAUTH_SECRET`, `RESEND_API_KEY`, `BLOB_READ_WRITE_TOKEN`)
+- [ ] `README.md` ou section ARCHITECTURE.md contient la checklist onboarding ci-dessus
+- [ ] `scripts/seed-restaurant.ts` documenté (usage en développement local)
 
 ---
 

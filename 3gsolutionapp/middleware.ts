@@ -3,14 +3,18 @@
 // TICK-071 — Routes client protégées + vérification de rôle
 // TICK-078 — Rate limiting endpoints auth client
 // CVE-06  — CSP dynamique avec nonce par requête (suppression de unsafe-inline)
+// TICK-132 — Tenant resolver : injection x-tenant-id depuis Host header (multi-tenant)
+// TICK-138 — Protection routes /superadmin/* et /api/superadmin/* (JWT superadmin séparé)
 import { withAuth } from 'next-auth/middleware';
 import { NextRequest, NextResponse } from 'next/server';
+import { verifySuperadminToken } from '@/lib/superadmin-jwt';
 import {
   checkLoginRateLimit,
   checkRegisterRateLimit,
   checkForgotPasswordRateLimit,
   checkCheckoutRateLimit,
 } from '@/lib/ratelimit';
+import { resolveTenantId } from '@/lib/tenant-resolver';
 
 // ── Extraction IP (Vercel Edge, non spoofable) ─────────────────────────────
 function extractIp(request: NextRequest): string {
@@ -35,12 +39,6 @@ function rateLimitResponse(reset: number): NextResponse {
 }
 
 // ── CVE-06 : Génération CSP dynamique avec nonce par requête ───────────────
-// Stratégie nonce (recommandée par OWASP / Google CSP Evaluator) :
-//   • 'nonce-{nonce}'  → seuls les scripts portant ce nonce s'exécutent
-//   • 'strict-dynamic' → les scripts chargés par un script noncé sont aussi autorisés
-//   • 'unsafe-inline'  → ignoré par les navigateurs CSP3 (présence du nonce),
-//                         conservé comme fallback pour les navigateurs CSP2
-//   • 'unsafe-eval'    → uniquement en dev pour Turbopack HMR
 function generateCsp(nonce: string): string {
   const isDev = process.env.NODE_ENV === 'development';
   return [
@@ -58,9 +56,57 @@ function generateCsp(nonce: string): string {
 }
 
 export default withAuth(
-  async function middleware(request: NextRequest & { nextauth?: { token?: { role?: string } } }) {
+  async function middleware(request: NextRequest & { nextauth?: { token?: { role?: string; restaurantId?: string } } }) {
     const { pathname } = request.nextUrl;
     const ip = extractIp(request);
+
+    // ── TICK-132 : Résolution tenant ────────────────────────────────────────
+    // Priorité absolue : injecter x-tenant-id avant toute autre vérification.
+    const host = request.headers.get('host') ?? '';
+    const internalBase = new URL(request.url).origin;
+    let tenantId = await resolveTenantId(host, internalBase);
+
+    // Fallback JWT : si le fetch _tenant échoue (ex. Turbopack dev, réseau, timeout)
+    // et que l'admin est authentifié, son JWT signé contient restaurantId → source de vérité sûre.
+    if (!tenantId) {
+      const jwtToken = request.nextauth?.token;
+      if (jwtToken?.restaurantId && typeof jwtToken.restaurantId === 'string') {
+        tenantId = jwtToken.restaurantId;
+      }
+    }
+
+    if (!tenantId) {
+      // Domaine inconnu en production → 404
+      const isDevOrPreview =
+        host.startsWith('localhost') ||
+        host.startsWith('127.0.0.1') ||
+        host.endsWith('.vercel.app') ||
+        host.split(':')[0].endsWith('.localhost');
+
+      if (!isDevOrPreview && process.env.NODE_ENV === 'production') {
+        return NextResponse.json(
+          { error: 'Restaurant introuvable' },
+          { status: 404 }
+        );
+      }
+    }
+
+    // ── TICK-138 : Protection superadmin ───────────────────────────────────
+    const isSuperadminPage = pathname.startsWith('/superadmin') && pathname !== '/superadmin/login';
+    const isSuperadminApi =
+      pathname.startsWith('/api/superadmin/') && pathname !== '/api/superadmin/auth';
+
+    if (isSuperadminPage || isSuperadminApi) {
+      const token = request.cookies.get('superadmin_token')?.value ?? null;
+      const payload = token ? await verifySuperadminToken(token) : null;
+
+      if (!payload) {
+        if (isSuperadminApi) {
+          return NextResponse.json({ error: 'Non autorisé.' }, { status: 401 });
+        }
+        return NextResponse.redirect(new URL('/superadmin/login', request.url));
+      }
+    }
 
     // ── Rate limiting login admin ──────────────────────────────────────────
     if (pathname === '/api/auth/callback/credentials') {
@@ -81,28 +127,20 @@ export default withAuth(
     }
 
     // ── Rate limiting checkout — protège le quota Stripe API ──────────────
-    // 10 sessions max / 15 min par IP : couvre les retries légitimes tout en
-    // bloquant les bots qui créeraient des sessions en masse.
     if (pathname === '/api/checkout' && request.method === 'POST') {
       const { success, reset } = await checkCheckoutRateLimit(ip);
       if (!success) return rateLimitResponse(reset);
     }
 
     // ── Vérification de rôle : admin requis ───────────────────────────────
-    // Un client connecté ne peut pas accéder aux routes admin
     const token = request.nextauth?.token;
     const isAdminRoute =
       (pathname.startsWith('/admin/') && pathname !== '/admin/login') ||
-      // /api/commandes/suivi est public — on exclut explicitement ce chemin
       (pathname.startsWith('/api/commandes') && pathname !== '/api/commandes/suivi') ||
-      // CVE-02 — routes admin dédiées
-      // /api/produits exclu : GET est public (menu client), POST/PUT/DELETE protégés par requireAdmin() dans les handlers
       pathname.startsWith('/api/admin/') ||
       pathname === '/api/upload';
-      // /api/site-config retiré : GET est public, PUT protégé par requireAdmin() dans le handler
 
     if (isAdminRoute && token && token.role !== 'admin') {
-      // Connecté mais pas admin → 403
       if (pathname.startsWith('/api/')) {
         return new NextResponse(JSON.stringify({ error: 'Accès refusé.' }), {
           status: 403,
@@ -110,6 +148,20 @@ export default withAuth(
         });
       }
       return NextResponse.redirect(new URL('/', request.url));
+    }
+
+    // ── TICK-136 : Protection cross-tenant admin ───────────────────────────
+    // Un admin de restoA avec son token ne peut pas accéder aux routes admin de restoB.
+    if (isAdminRoute && token?.role === 'admin' && tenantId && token.restaurantId) {
+      if (token.restaurantId !== tenantId) {
+        if (pathname.startsWith('/api/')) {
+          return new NextResponse(JSON.stringify({ error: 'Accès refusé : tenant invalide.' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return NextResponse.redirect(new URL('/admin/login', request.url));
+      }
     }
 
     // ── Vérification de rôle : client requis ─────────────────────────────
@@ -131,15 +183,14 @@ export default withAuth(
     }
 
     // ── CVE-06 : Nonce CSP par requête ────────────────────────────────────
-    // Un UUID aléatoire est converti en base64 pour former un nonce imprévisible.
-    // Il est injecté dans l'en-tête CSP de la réponse ET dans x-nonce de la
-    // requête pour que le layout (Server Component) puisse le lire via headers().
     const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
     const csp = generateCsp(nonce);
 
-    // Passer le nonce en avant vers les Server Components
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set('x-nonce', nonce);
+    if (tenantId) {
+      requestHeaders.set('x-tenant-id', tenantId);
+    }
 
     const response = NextResponse.next({ request: { headers: requestHeaders } });
     response.headers.set('Content-Security-Policy', csp);
@@ -158,16 +209,18 @@ export default withAuth(
           pathname.match(/\.(png|jpg|jpeg|gif|webp|svg|ico|css|js|woff2?)$/)
         ) return true;
 
-        // Routes publiques : toujours autorisées (rate limiting géré ci-dessus)
+        // Route interne tenant-resolver : toujours autorisée (appelée par le middleware)
+        if (pathname === '/api/tenant-resolver') return true;
+
+        // Routes superadmin : gèrent leur propre auth (cookie JWT superadmin)
+        if (pathname.startsWith('/superadmin') || pathname.startsWith('/api/superadmin/')) return true;
+
+        // Routes publiques : toujours autorisées
         if (pathname.startsWith('/api/auth/')) return true;
         if (pathname === '/api/client/register') return true;
         if (pathname === '/api/client/forgot-password') return true;
-        // Suivi de commande public (page /confirmation — pas d'auth requise)
         if (pathname === '/api/commandes/suivi') return true;
-        // Raison de refus Stripe (page commande annulée — pas d'auth requise)
         if (pathname === '/api/commandes/raison-echec') return true;
-        // GET /api/produits sans ?all=true est public (menu client)
-        // La vérification admin est faite dans le handler pour ?all=true
 
         // Routes client protégées : token requis
         const clientProtected =
@@ -179,9 +232,7 @@ export default withAuth(
 
         if (clientProtected) return !!token;
 
-        // Routes admin dans le matcher : token requis
-        // /admin/login exclu : c'est la page de connexion elle-même (sinon boucle infinie)
-        // /api/produits exclu : public en GET, les handlers POST/PUT/DELETE appellent requireAdmin()
+        // Routes admin : token requis
         if (pathname === '/admin/login') return true;
 
         const adminRoute =
@@ -193,7 +244,6 @@ export default withAuth(
 
         if (adminRoute) return !!token;
 
-        // Toutes les autres routes (pages publiques) : autorisées sans token
         return true;
       },
     },
@@ -201,10 +251,7 @@ export default withAuth(
 );
 
 export const config = {
-  // CVE-06 — Matcher étendu à toutes les routes pour injecter le nonce CSP
-  // Exclure les assets statiques Next.js (_next/static, _next/image, fichiers publics)
-  // pour éviter de ralentir inutilement la livraison des assets.
   matcher: [
-    '/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|woff2?)$).*)',
+    '/((?!_next/static|_next/image|favicon\\.ico|api/tenant-resolver|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|woff2?)$).*)',
   ],
 };

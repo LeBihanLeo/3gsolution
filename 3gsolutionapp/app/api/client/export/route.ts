@@ -1,10 +1,13 @@
 // TICK-081 — Export de données RGPD (droit à la portabilité — Art. 20 RGPD)
+// TICK-140 — nomRestaurant inclus par commande (tous restaurants confondus — pas de filtre tenant)
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
 import Client from '@/models/Client';
 import Commande from '@/models/Commande';
+// TICK-140 — import nécessaire pour que Mongoose enregistre le modèle Restaurant (utilisé par populate)
+import '@/models/Restaurant';
 import { logger } from '@/lib/logger';
 
 export async function GET() {
@@ -28,9 +31,11 @@ export async function GET() {
       return NextResponse.json({ error: 'Compte introuvable.' }, { status: 404 });
     }
 
-    // Récupérer les commandes liées au compte
+    // TICK-140 — Récupérer les commandes liées au compte, TOUS restaurants confondus (pas de filtre tenant)
+    // populate('restaurantId', 'nomRestaurant') pour inclure le nom du restaurant dans l'export
     const commandes = await Commande.find({ clientId })
-      .select('_id createdAt statut produits total retrait')
+      .select('_id createdAt statut produits total retrait restaurantId')
+      .populate('restaurantId', 'nomRestaurant')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -43,14 +48,19 @@ export async function GET() {
         provider: client.provider,
         createdAt: client.createdAt,
       },
-      commandes: commandes.map((c) => ({
-        id: String(c._id),
-        date: c.createdAt,
-        statut: c.statut,
-        produits: c.produits,
-        total: c.total,
-        retrait: c.retrait,
-      })),
+      // TICK-140 — nomRestaurant inclus depuis le populate (tous restaurants confondus)
+      commandes: commandes.map((c) => {
+        const restaurant = c.restaurantId as { nomRestaurant?: string } | null;
+        return {
+          id: String(c._id),
+          date: c.createdAt,
+          statut: c.statut,
+          nomRestaurant: restaurant?.nomRestaurant ?? 'Restaurant inconnu',
+          produits: c.produits,
+          total: c.total,
+          retrait: c.retrait,
+        };
+      }),
     };
 
     logger.info('client_data_exported', { clientId });

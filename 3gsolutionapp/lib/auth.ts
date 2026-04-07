@@ -1,11 +1,14 @@
 // TICK-005 — Auth admin (credentials)
 // TICK-066 — Extension : Google + client credentials
+// TICK-136 — Auth admin multi-tenant : credentials stockés dans Restaurant, restaurantId dans JWT
 import { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
 import bcrypt from 'bcryptjs';
+import { headers } from 'next/headers';
 import { connectDB } from '@/lib/mongodb';
 import Client from '@/models/Client';
+import Restaurant from '@/models/Restaurant';
 import { verifyTurnstile } from '@/lib/turnstile';
 
 // CVE-10 — Vérifier la présence de NEXTAUTH_SECRET au démarrage.
@@ -38,20 +41,31 @@ export const authOptions: NextAuthOptions = {
         const turnstileOk = await verifyTurnstile(credentials.turnstileToken);
         if (!turnstileOk) return null;
 
-        const adminEmail = process.env.ADMIN_EMAIL;
-        const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+        // TICK-136 — Lecture du Restaurant depuis la DB (remplace ADMIN_EMAIL env)
+        // x-tenant-id injecté par le middleware avant l'appel /api/auth/callback/credentials
+        await connectDB();
 
-        if (!adminEmail || !adminPasswordHash) {
-          console.error('Variables ADMIN_EMAIL ou ADMIN_PASSWORD_HASH manquantes');
-          return null;
-        }
+        const hdrs = await headers();
+        const tenantId = hdrs.get('x-tenant-id');
 
-        if (credentials.email !== adminEmail) return null;
+        // Cherche le restaurant : par tenant si disponible, sinon par email (fallback)
+        const restaurant = await Restaurant.findOne(
+          tenantId ? { _id: tenantId } : { adminEmail: credentials.email.toLowerCase() }
+        ).select('+adminPasswordHash +stripeSecretKey +stripeWebhookSecret');
 
-        const isValid = await bcrypt.compare(credentials.password, adminPasswordHash);
+        if (!restaurant) return null;
+        if (restaurant.adminEmail !== credentials.email.toLowerCase()) return null;
+
+        const isValid = await bcrypt.compare(credentials.password, restaurant.adminPasswordHash);
         if (!isValid) return null;
 
-        return { id: '1', email: adminEmail, name: 'Admin', role: 'admin' };
+        return {
+          id: restaurant._id.toString(),
+          email: restaurant.adminEmail,
+          name: restaurant.nomRestaurant,
+          role: 'admin',
+          restaurantId: restaurant._id.toString(),
+        };
       },
     }),
 
@@ -158,6 +172,11 @@ export const authOptions: NextAuthOptions = {
         // si MongoDB est indisponible lors du callback signIn.
         token.role = (user as { role?: string }).role ?? 'client';
         token.id = user.id;
+        // TICK-136 — restaurantId dans le JWT : permet la protection cross-tenant du middleware
+        const adminUser = user as { restaurantId?: string };
+        if (adminUser.restaurantId) {
+          token.restaurantId = adminUser.restaurantId;
+        }
 
         // Expiry dynamique selon rôle / rememberMe
         const rememberMe = (user as { rememberMe?: boolean }).rememberMe;
@@ -193,6 +212,38 @@ export const authOptions: NextAuthOptions = {
       }
 
       return token;
+    },
+
+    // ── redirect : autorise les domaines tenant enregistrés ───────────────
+    // Par défaut NextAuth bloque tout redirect hors NEXTAUTH_URL (protection open redirect).
+    // En multi-tenant, chaque restaurant a son propre domaine → on valide en DB.
+    async redirect({ url, baseUrl }) {
+      // URL relative → résoudre sur la base courante
+      if (url.startsWith('/')) return `${baseUrl}${url}`;
+
+      try {
+        const target = new URL(url);
+        // Même origine que NEXTAUTH_URL → toujours OK
+        if (target.origin === new URL(baseUrl).origin) return url;
+
+        // Dev : autoriser les domaines *.test et *.local (simulation multi-tenant locale)
+        if (process.env.NODE_ENV !== 'production') {
+          const tld = target.hostname.split('.').pop();
+          if (tld === 'test' || tld === 'local') return url;
+        }
+
+        // Prod : valider que le hostname est un domaine tenant enregistré en DB
+        await connectDB();
+        const hostname = target.hostname;
+        const exists = await Restaurant.exists({
+          $or: [{ domaine: hostname }, { domainesAlternatifs: hostname }],
+        });
+        if (exists) return url;
+      } catch {
+        // URL invalide ou DB indisponible → fallback baseUrl
+      }
+
+      return baseUrl;
     },
 
     // ── session : expose role + id ─────────────────────────────────────────

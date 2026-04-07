@@ -2,9 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import mongoose from 'mongoose';
 
-const { mockFindOne } = vi.hoisted(() => ({ mockFindOne: vi.fn() }));
+const FAKE_TENANT_ID = new mongoose.Types.ObjectId('aaaaaaaaaaaaaaaaaaaaaaaa');
+
+const { mockFindOne, mockGetTenantId } = vi.hoisted(() => ({
+  mockFindOne: vi.fn(),
+  mockGetTenantId: vi.fn(),
+}));
 
 vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/lib/tenant', () => ({ getTenantId: mockGetTenantId }));
 vi.mock('@/models/Commande', () => ({
   default: { findOne: mockFindOne },
 }));
@@ -30,24 +36,35 @@ const mockCommandePayee = {
 };
 
 describe('GET /api/commandes/suivi', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetTenantId.mockResolvedValue(FAKE_TENANT_ID);
+  });
 
   it('session_id absent → 400', async () => {
     const res = await GET(makeReq());
     expect(res.status).toBe(400);
   });
 
-  it('session_id inconnu → 404', async () => {
+  // session_id valide (>= 20 chars après cs_test_) mais absent en base → 404
+  it('session_id valide mais inconnu → 404', async () => {
     mockFindOne.mockReturnValueOnce({ lean: vi.fn().mockResolvedValue(null) });
-    const res = await GET(makeReq('cs_test_inconnu'));
+    const res = await GET(makeReq('cs_test_abcdefghijklmnopqrst'));
     expect(res.status).toBe(404);
+  });
+
+  // session_id trop court → 400 (rejeté par le regex CVE-07)
+  it('session_id trop court → 400', async () => {
+    const res = await GET(makeReq('cs_test_inconnu'));
+    expect(res.status).toBe(400);
   });
 
   it('statut en_attente_paiement → 404', async () => {
     mockFindOne.mockReturnValueOnce({
       lean: vi.fn().mockResolvedValue({ ...mockCommandePayee, statut: 'en_attente_paiement' }),
     });
-    const res = await GET(makeReq('cs_test_123'));
+    // cs_test_123validlongformatxx — 20+ chars après cs_test_
+    const res = await GET(makeReq('cs_test_123validlongformatxx'));
     expect(res.status).toBe(404);
   });
 
@@ -55,7 +72,7 @@ describe('GET /api/commandes/suivi', () => {
     mockFindOne.mockReturnValueOnce({
       lean: vi.fn().mockResolvedValue(mockCommandePayee),
     });
-    const res = await GET(makeReq('cs_test_123'));
+    const res = await GET(makeReq('cs_test_123validlongformatxx'));
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.statut).toBe('payee');
@@ -63,15 +80,18 @@ describe('GET /api/commandes/suivi', () => {
     expect(json.stripeSessionId).toBeUndefined();
     expect(json.produits[0].nom).toBe('Burger');
     expect(json.produits[0].quantite).toBe(2);
+    // TICK-134 — filtrage par restaurantId + stripeSessionId
+    expect(mockFindOne).toHaveBeenCalledWith(
+      expect.objectContaining({ restaurantId: FAKE_TENANT_ID })
+    );
   });
 
   it('commande prete → 200 + statut prete', async () => {
     mockFindOne.mockReturnValueOnce({
       lean: vi.fn().mockResolvedValue({ ...mockCommandePayee, statut: 'prete' }),
     });
-    const res = await GET(makeReq('cs_test_123'));
+    const res = await GET(makeReq('cs_test_123validlongformatxx'));
     expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.statut).toBe('prete');
+    expect((await res.json()).statut).toBe('prete');
   });
 });

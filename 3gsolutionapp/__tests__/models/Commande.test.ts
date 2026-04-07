@@ -3,9 +3,15 @@ import mongoose from 'mongoose';
 import { connect, closeDatabase, clearDatabase } from '../helpers/mongoMemory';
 import Commande from '@/models/Commande';
 
-beforeAll(async () => connect());
+beforeAll(async () => {
+  await connect();
+  await Commande.syncIndexes();
+});
 afterAll(async () => closeDatabase());
 afterEach(async () => clearDatabase());
+
+// TICK-134 — restaurantId requis sur Commande (scoping multi-tenant)
+const RESTAURANT_ID = new mongoose.Types.ObjectId();
 
 const validProduitSnapshot = {
   produitId: new mongoose.Types.ObjectId(),
@@ -16,6 +22,7 @@ const validProduitSnapshot = {
 };
 
 const validCommande = {
+  restaurantId: RESTAURANT_ID,
   stripeSessionId: 'cs_test_abc123',
   statut: 'payee' as const,
   client: { nom: 'Jean Dupont', telephone: '0612345678' },

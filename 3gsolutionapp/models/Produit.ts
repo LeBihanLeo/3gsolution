@@ -6,6 +6,7 @@ export interface IOption {
 }
 
 export interface IProduit extends Document {
+  restaurantId: mongoose.Types.ObjectId; // TICK-133 — scoping multi-tenant
   nom: string;
   description: string;
   categorie: string;
@@ -27,6 +28,13 @@ const OptionSchema = new Schema<IOption>(
 
 const ProduitSchema = new Schema<IProduit>(
   {
+    // TICK-133 — Scoping multi-tenant : filtrage systématique par restaurantId
+    restaurantId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Restaurant',
+      required: true,
+      index: true,
+    },
     nom: { type: String, required: true },
     description: { type: String, required: true },
     categorie: { type: String, required: true },

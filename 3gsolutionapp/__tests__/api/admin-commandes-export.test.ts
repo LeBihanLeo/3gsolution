@@ -1,10 +1,15 @@
 // TICK-106 — Tests GET /api/admin/commandes/export
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 
-const { mockCommandeFind, mockLogger } = vi.hoisted(() => ({
+const FAKE_TENANT_ID = new mongoose.Types.ObjectId('aaaaaaaaaaaaaaaaaaaaaaaa');
+
+const { mockCommandeFind, mockLogger, mockRequireAdmin, mockGetTenantId } = vi.hoisted(() => ({
   mockCommandeFind: vi.fn(),
   mockLogger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
+  mockRequireAdmin: vi.fn(),
+  mockGetTenantId: vi.fn(),
 }));
 
 vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined) }));
@@ -12,11 +17,13 @@ vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }));
 vi.mock('@/models/Commande', () => ({ default: { find: mockCommandeFind } }));
 vi.mock('@/lib/logger', () => ({ logger: mockLogger }));
+vi.mock('@/lib/assertAdmin', () => ({ requireAdmin: mockRequireAdmin }));
+vi.mock('@/lib/tenant', () => ({ getTenantId: mockGetTenantId, resolveTenantForAdmin: mockGetTenantId }));
 
-import { getServerSession } from 'next-auth';
 import { GET } from '@/app/api/admin/commandes/export/route';
 
-const adminSession = { user: { email: 'admin@test.fr', role: 'admin' } };
+const ADMIN_SESSION = { session: { user: { role: 'admin', email: 'admin@test.fr' } }, error: null };
+const NO_AUTH = { session: null, error: NextResponse.json({ error: 'Non autorisé.' }, { status: 401 }) };
 
 const mockCommande = {
   _id: { toString: () => 'abc123def456' },
@@ -36,22 +43,25 @@ function makeReq(params = '') {
 }
 
 describe('GET /api/admin/commandes/export', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetTenantId.mockResolvedValue(FAKE_TENANT_ID);
+  });
 
   it('sans session → 401', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(null);
+    mockRequireAdmin.mockResolvedValueOnce(NO_AUTH);
     const res = await GET(makeReq());
     expect(res.status).toBe(401);
   });
 
   it('date invalide → 400', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     const res = await GET(makeReq('?from=invalid&to=also-invalid'));
     expect(res.status).toBe(400);
   });
 
   it('aucune commande → CSV avec seulement l\'en-tête', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     mockCommandeFind.mockReturnValueOnce({
       sort: vi.fn().mockReturnThis(),
       lean: vi.fn().mockResolvedValue([]),
@@ -61,13 +71,12 @@ describe('GET /api/admin/commandes/export', () => {
     expect(res.headers.get('Content-Type')).toContain('text/csv');
     const text = await res.text();
     expect(text).toContain('Date;Heure;Numéro;Client');
-    // Pas de lignes de données
     const lines = text.split('\n').filter(Boolean);
-    expect(lines).toHaveLength(1); // seulement l'en-tête
+    expect(lines).toHaveLength(1);
   });
 
   it('commandes existantes → CSV avec BOM + données', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     mockCommandeFind.mockReturnValueOnce({
       sort: vi.fn().mockReturnThis(),
       lean: vi.fn().mockResolvedValue([mockCommande]),
@@ -75,20 +84,15 @@ describe('GET /api/admin/commandes/export', () => {
     const res = await GET(makeReq('?from=2026-03-26&to=2026-03-26'));
     expect(res.status).toBe(200);
     const text = await res.text();
-    // BOM UTF-8 ou contenu démarrant par l'en-tête (le BOM peut être absorbé par text())
     expect(text).toContain('Date;Heure;Numéro;Client');
-    // Données client
     expect(text).toContain('Jean Dupont');
-    // Numéro de commande court
     expect(text).toContain('#DEF456');
-    // TVA 10% : total 1400 centimes → TVA = round(1400/11) = 127 centimes → 1,27 €
     expect(text).toContain('1,27 €');
-    // Total TTC
     expect(text).toContain('14,00 €');
   });
 
   it('Content-Disposition contient le nom de fichier avec les dates', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     mockCommandeFind.mockReturnValueOnce({
       sort: vi.fn().mockReturnThis(),
       lean: vi.fn().mockResolvedValue([]),
@@ -99,7 +103,7 @@ describe('GET /api/admin/commandes/export', () => {
   });
 
   it('log commandes_exported_csv appelé avec les bons paramètres', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     mockCommandeFind.mockReturnValueOnce({
       sort: vi.fn().mockReturnThis(),
       lean: vi.fn().mockResolvedValue([mockCommande]),
@@ -111,29 +115,25 @@ describe('GET /api/admin/commandes/export', () => {
     );
   });
 
-  // TICK-130 — colonnes TVA
   it('CSV contient les colonnes TVA appliquée, Total HT, Total TVA', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     mockCommandeFind.mockReturnValueOnce({
       sort: vi.fn().mockReturnThis(),
       lean: vi.fn().mockResolvedValue([mockCommande]),
     });
-    const res = await GET(makeReq('?from=2026-03-26&to=2026-03-26'));
-    const text = await res.text();
+    const text = await (await GET(makeReq('?from=2026-03-26&to=2026-03-26'))).text();
     expect(text).toContain('TVA appliquée');
     expect(text).toContain('Total HT (€)');
     expect(text).toContain('Total TVA (€)');
   });
 
   it('TVA 10% taux unique → colonne "TVA appliquée" = "10 %"', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     mockCommandeFind.mockReturnValueOnce({
       sort: vi.fn().mockReturnThis(),
       lean: vi.fn().mockResolvedValue([mockCommande]),
     });
-    const res = await GET(makeReq('?from=2026-03-26&to=2026-03-26'));
-    const text = await res.text();
-    expect(text).toContain('10 %');
+    expect(await (await GET(makeReq('?from=2026-03-26&to=2026-03-26'))).text()).toContain('10 %');
   });
 
   it('commande mixte (10% + 20%) → colonne "TVA appliquée" = "10 % / 20 %"', async () => {
@@ -145,32 +145,26 @@ describe('GET /api/admin/commandes/export', () => {
       ],
       total: 1600,
     };
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     mockCommandeFind.mockReturnValueOnce({
       sort: vi.fn().mockReturnThis(),
       lean: vi.fn().mockResolvedValue([commandeMixte]),
     });
-    const res = await GET(makeReq('?from=2026-03-26&to=2026-03-26'));
-    const text = await res.text();
-    expect(text).toContain('10 % / 20 %');
+    expect(await (await GET(makeReq('?from=2026-03-26&to=2026-03-26'))).text()).toContain('10 % / 20 %');
   });
 
   it('produit avec taux_tva=0 → Total HT = Total TTC, Total TVA = 0,00', async () => {
     const commandeExo = {
       ...mockCommande,
-      produits: [
-        { nom: 'Eau', prix: 100, quantite: 1, taux_tva: 0, options: [] },
-      ],
+      produits: [{ nom: 'Eau', prix: 100, quantite: 1, taux_tva: 0, options: [] }],
       total: 100,
     };
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     mockCommandeFind.mockReturnValueOnce({
       sort: vi.fn().mockReturnThis(),
       lean: vi.fn().mockResolvedValue([commandeExo]),
     });
-    const res = await GET(makeReq('?from=2026-03-26&to=2026-03-26'));
-    const text = await res.text();
-    // HT = 1,00 (= TTC), TVA = 0,00
+    const text = await (await GET(makeReq('?from=2026-03-26&to=2026-03-26'))).text();
     expect(text).toContain('1,00');
     expect(text).toContain('0,00');
   });

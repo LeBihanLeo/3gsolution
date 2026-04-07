@@ -1,14 +1,40 @@
+// TICK-139 — Stripe multi-tenant : factory par tenant avec cache Map
+// Remplace le singleton getStripe() — la clé Stripe est chargée depuis le
+// document Restaurant (champ select:false, jamais exposé en API).
 import Stripe from 'stripe';
+import { connectDB } from '@/lib/mongodb';
+import Restaurant from '@/models/Restaurant';
 
-let _stripe: Stripe | null = null;
+const stripeClients = new Map<string, Stripe>();
 
-export function getStripe(): Stripe {
-  if (_stripe) return _stripe;
-  if (!process.env.STRIPE_SECRET_KEY) {
-    throw new Error('STRIPE_SECRET_KEY manquant dans .env.local');
+export async function getStripeClient(restaurantId: string): Promise<Stripe> {
+  if (stripeClients.has(restaurantId)) return stripeClients.get(restaurantId)!;
+  await connectDB();
+  const restaurant = await Restaurant.findById(restaurantId).select('+stripeSecretKey');
+  if (!restaurant?.stripeSecretKey) {
+    throw new Error('Stripe non configuré pour ce restaurant');
   }
-  _stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  const client = new Stripe(restaurant.stripeSecretKey, {
     apiVersion: '2026-02-25.clover',
   });
-  return _stripe;
+  stripeClients.set(restaurantId, client);
+  return client;
+}
+
+/**
+ * Invalide le cache du client Stripe pour un restaurant.
+ * À appeler après mise à jour des clés Stripe via PUT /api/superadmin/restaurants/[id].
+ */
+export function invalidateStripeClient(restaurantId: string): void {
+  stripeClients.delete(restaurantId);
+}
+
+/**
+ * Instancie un client Stripe depuis une clé secrète directe.
+ * Utilisé en fallback pour les événements sans metadata.restaurantId
+ * (ex: charge.refunded, disputes) pendant la migration mono→multi-tenant.
+ * Exporté séparément pour permettre le mock dans les tests.
+ */
+export function createStripeClient(secretKey: string): Stripe {
+  return new Stripe(secretKey, { apiVersion: '2026-02-25.clover' });
 }

@@ -12,6 +12,7 @@ export interface IProduitSnapshot {
 }
 
 export interface ICommande extends Document {
+  restaurantId: mongoose.Types.ObjectId; // TICK-134 — scoping multi-tenant
   stripeSessionId: string;
   // Lien vers le PaymentIntent — utilisé pour relier un remboursement/dispute Stripe à la commande
   stripePaymentIntentId?: string;
@@ -75,6 +76,13 @@ const ProduitSnapshotSchema = new Schema<IProduitSnapshot>(
 
 const CommandeSchema = new Schema<ICommande>(
   {
+    // TICK-134 — Scoping multi-tenant
+    restaurantId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Restaurant',
+      required: true,
+      index: true,
+    },
     stripeSessionId: { type: String, required: true, unique: true },
     stripePaymentIntentId: { type: String, index: true, sparse: true },
     statut: {

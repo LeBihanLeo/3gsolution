@@ -9,6 +9,7 @@ import { requireAdmin } from '@/lib/assertAdmin';
 import Commande from '@/models/Commande';
 import { logger } from '@/lib/logger';
 import mongoose from 'mongoose';
+import { resolveTenantForAdmin } from '@/lib/tenant';
 
 export async function DELETE(
   _request: NextRequest,
@@ -24,10 +25,16 @@ export async function DELETE(
     return NextResponse.json({ error: 'Identifiant invalide' }, { status: 400 });
   }
 
+  const restaurantId = await resolveTenantForAdmin(check.session);
+  if (!restaurantId) {
+    return NextResponse.json({ error: 'Tenant non résolu' }, { status: 400 });
+  }
+
   try {
     await connectDB();
 
-    const commande = await Commande.findById(id);
+    // TICK-134 — Filtre cross-tenant : un admin de restoA ne peut pas anonymiser les commandes de restoB
+    const commande = await Commande.findOne({ _id: id, restaurantId });
     if (!commande) {
       return NextResponse.json({ error: 'Commande introuvable' }, { status: 404 });
     }

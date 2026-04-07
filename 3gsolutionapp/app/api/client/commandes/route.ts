@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
 import Commande from '@/models/Commande';
 import { logger } from '@/lib/logger';
+import { getTenantId } from '@/lib/tenant';
 
 // Champs exposés — NE PAS exposer client.telephone ni client.email (RGPD)
 const PROJECTION = {
@@ -27,11 +28,16 @@ export async function GET() {
   const clientId = session.user.id;
 
   try {
+    // TICK-134 — scope par tenant
+    const restaurantId = await getTenantId().catch(() => null);
+
     await connectDB();
 
     // TICK-099 — enCours : tous les statuts non terminaux
     // TICK-098 — limit 200 pour la page historique complète
-    const commandes = await Commande.find({ clientId }, PROJECTION)
+    // TICK-134 — filtrage cross-tenant : clientId + restaurantId
+    const filtre = restaurantId ? { clientId, restaurantId } : { clientId };
+    const commandes = await Commande.find(filtre, PROJECTION)
       .sort({ createdAt: -1 })
       .limit(200)
       .lean();

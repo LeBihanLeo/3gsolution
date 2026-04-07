@@ -5,17 +5,19 @@
  * - Logique re-commande : redirection panier, message si produit retiré, message si aucun dispo
  */
 import React from 'react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import HistoriqueCommandes from '@/components/client/HistoriqueCommandes';
 
 // ── Mocks infrastructure ─────────────────────────────────────────────────────
 
-const mockPush = jest.fn();
-jest.mock('next/navigation', () => ({
+const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
+
+vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
-jest.mock('@/components/client/CommandeSuiviModal', () => ({
+vi.mock('@/components/client/CommandeSuiviModal', () => ({
   __esModule: true,
   default: ({ onClose }: { onClose: () => void }) => (
     <div data-testid="suivi-modal">
@@ -24,11 +26,11 @@ jest.mock('@/components/client/CommandeSuiviModal', () => ({
   ),
 }));
 
-jest.mock('@/components/client/StatutBadge', () => ({
+vi.mock('@/components/client/StatutBadge', () => ({
   StatutBadge: ({ statut }: { statut: string }) => <span>{statut}</span>,
 }));
 
-jest.mock('@/components/client/CommandeStatusCard', () => ({
+vi.mock('@/components/client/CommandeStatusCard', () => ({
   CommandeStatusCard: () => <div data-testid="commande-status-card" />,
 }));
 
@@ -52,38 +54,37 @@ const historiqueAvecPassee = { enCours: [], passees: [commandePassee] };
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function mockFetch(historiqueData: object, produitsData?: object) {
-  global.fetch = jest.fn().mockImplementation((url: string) => {
-    if (url === '/api/client/commandes') {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve(historiqueData),
-      });
+  vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
+    const urlStr = String(url);
+    if (urlStr === '/api/client/commandes') {
+      return Promise.resolve(new Response(JSON.stringify(historiqueData), { status: 200 }));
     }
-    if (url === '/api/produits') {
-      return Promise.resolve({
-        ok: produitsData !== undefined,
-        json: () => Promise.resolve(produitsData),
-      });
+    if (urlStr === '/api/produits') {
+      return Promise.resolve(
+        new Response(JSON.stringify(produitsData ?? {}), {
+          status: produitsData !== undefined ? 200 : 500,
+        })
+      );
     }
-    return Promise.reject(new Error(`URL inconnue : ${url}`));
+    return Promise.reject(new Error(`URL inconnue : ${urlStr}`));
   });
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  jest.clearAllMocks();
-  jest.useFakeTimers();
+  vi.clearAllMocks();
   localStorage.clear();
 });
 
 afterEach(() => {
-  jest.useRealTimers();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('HistoriqueCommandes — rendu de base', () => {
   it('affiche le skeleton pendant le chargement', () => {
-    global.fetch = jest.fn().mockReturnValue(new Promise(() => {}));
+    vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise(() => {}));
     render(<HistoriqueCommandes />);
     expect(document.querySelector('.animate-pulse')).toBeTruthy();
   });
@@ -121,9 +122,7 @@ describe('TICK-114 — Fix parse { data } GET /api/produits', () => {
     fireEvent.click(screen.getByRole('button', { name: /commander à nouveau/i }));
 
     await waitFor(() => {
-      // Pas de message d'erreur "Impossible de vérifier"
       expect(screen.queryByText(/impossible de vérifier/i)).toBeNull();
-      // Redirection vers /panier
       expect(mockPush).toHaveBeenCalledWith('/panier');
     });
   });
@@ -145,7 +144,6 @@ describe('TICK-114 — Fix parse { data } GET /api/produits', () => {
   it('affiche un message si aucun produit de la commande n\'est disponible', async () => {
     mockFetch(historiqueAvecPassee, {
       data: [
-        // prod1 et prod2 existent mais sont inactifs
         { _id: 'prod1', nom: 'Burger', prix: 1000, options: [], actif: false },
         { _id: 'prod2', nom: 'Frites', prix: 300, options: [], actif: false },
       ],
@@ -163,6 +161,8 @@ describe('TICK-114 — Fix parse { data } GET /api/produits', () => {
   });
 
   it('affiche un avertissement et redirige après 1800ms si certains produits retirés', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
     mockFetch(historiqueAvecPassee, {
       data: [
         { _id: 'prod1', nom: 'Burger', prix: 1000, options: [], actif: true },
@@ -180,8 +180,7 @@ describe('TICK-114 — Fix parse { data } GET /api/produits', () => {
     });
     expect(mockPush).not.toHaveBeenCalled();
 
-    // Après 1800ms → redirection
-    jest.advanceTimersByTime(1800);
+    vi.advanceTimersByTime(1800);
     expect(mockPush).toHaveBeenCalledWith('/panier');
   });
 

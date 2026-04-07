@@ -1,17 +1,24 @@
 // TICK-099 — Tests PATCH /api/commandes/[id]/statut
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 
-const { mockCommandeModel } = vi.hoisted(() => ({
-  mockCommandeModel: { findById: vi.fn(), findByIdAndUpdate: vi.fn() },
+const FAKE_TENANT_ID = new mongoose.Types.ObjectId('aaaaaaaaaaaaaaaaaaaaaaaa');
+
+const { mockCommandeModel, mockRequireAdmin, mockGetTenantId } = vi.hoisted(() => ({
+  // TICK-134 — findOne avec restaurantId (plus findById seul)
+  mockCommandeModel: { findOne: vi.fn() },
+  mockRequireAdmin: vi.fn(),
+  mockGetTenantId: vi.fn(),
 }));
 
 vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }));
+vi.mock('@/lib/assertAdmin', () => ({ requireAdmin: mockRequireAdmin }));
+vi.mock('@/lib/tenant', () => ({ getTenantId: mockGetTenantId, resolveTenantForAdmin: mockGetTenantId }));
 vi.mock('@/models/Commande', () => ({ default: mockCommandeModel }));
 
-import { getServerSession } from 'next-auth';
 import { PATCH } from '@/app/api/commandes/[id]/statut/route';
 
 const makeReq = (body: unknown) =>
@@ -22,27 +29,32 @@ const makeReq = (body: unknown) =>
   });
 
 const params = { params: Promise.resolve({ id: 'abc123' }) };
-const adminSession = { user: { role: 'admin' } };
+
+const ADMIN_SESSION = { session: { user: { role: 'admin' } }, error: null };
+const NO_AUTH = { session: null, error: NextResponse.json({ error: 'Non autorisé.' }, { status: 401 }) };
 
 describe('PATCH /api/commandes/[id]/statut', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetTenantId.mockResolvedValue(FAKE_TENANT_ID);
+  });
 
   it('sans session → 401', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(null);
+    mockRequireAdmin.mockResolvedValueOnce(NO_AUTH);
     const res = await PATCH(makeReq({ statut: 'en_preparation' }), params);
     expect(res.status).toBe(401);
   });
 
   it('statut invalide → 400', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     const res = await PATCH(makeReq({ statut: 'payee' }), params);
     expect(res.status).toBe(400);
   });
 
   it('transition payee → en_preparation → 200', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     const mockCommande = { _id: 'abc123', statut: 'payee', save: vi.fn().mockResolvedValue(undefined) };
-    mockCommandeModel.findById.mockResolvedValueOnce(mockCommande);
+    mockCommandeModel.findOne.mockResolvedValueOnce(mockCommande);
     const res = await PATCH(makeReq({ statut: 'en_preparation' }), params);
     expect(res.status).toBe(200);
     expect(mockCommande.statut).toBe('en_preparation');
@@ -50,18 +62,18 @@ describe('PATCH /api/commandes/[id]/statut', () => {
   });
 
   it('transition en_preparation → prete → 200', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     const mockCommande = { _id: 'abc123', statut: 'en_preparation', save: vi.fn().mockResolvedValue(undefined) };
-    mockCommandeModel.findById.mockResolvedValueOnce(mockCommande);
+    mockCommandeModel.findOne.mockResolvedValueOnce(mockCommande);
     const res = await PATCH(makeReq({ statut: 'prete' }), params);
     expect(res.status).toBe(200);
     expect(mockCommande.statut).toBe('prete');
   });
 
   it('transition prete → recuperee → 200 + recupereeAt posé', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     const mockCommande = { _id: 'abc123', statut: 'prete', recupereeAt: undefined as Date | undefined, save: vi.fn().mockResolvedValue(undefined) };
-    mockCommandeModel.findById.mockResolvedValueOnce(mockCommande);
+    mockCommandeModel.findOne.mockResolvedValueOnce(mockCommande);
     const res = await PATCH(makeReq({ statut: 'recuperee' }), params);
     expect(res.status).toBe(200);
     expect(mockCommande.statut).toBe('recuperee');
@@ -69,24 +81,24 @@ describe('PATCH /api/commandes/[id]/statut', () => {
   });
 
   it('transition invalide payee → prete → 422', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     const mockCommande = { _id: 'abc123', statut: 'payee', save: vi.fn() };
-    mockCommandeModel.findById.mockResolvedValueOnce(mockCommande);
+    mockCommandeModel.findOne.mockResolvedValueOnce(mockCommande);
     const res = await PATCH(makeReq({ statut: 'prete' }), params);
     expect(res.status).toBe(422);
   });
 
   it('transition invalide payee → recuperee → 422', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     const mockCommande = { _id: 'abc123', statut: 'payee', save: vi.fn() };
-    mockCommandeModel.findById.mockResolvedValueOnce(mockCommande);
+    mockCommandeModel.findOne.mockResolvedValueOnce(mockCommande);
     const res = await PATCH(makeReq({ statut: 'recuperee' }), params);
     expect(res.status).toBe(422);
   });
 
   it('ID inexistant → 404', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(adminSession as never);
-    mockCommandeModel.findById.mockResolvedValueOnce(null);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
+    mockCommandeModel.findOne.mockResolvedValueOnce(null);
     const res = await PATCH(makeReq({ statut: 'en_preparation' }), params);
     expect(res.status).toBe(404);
   });

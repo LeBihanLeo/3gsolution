@@ -1,18 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import mongoose from 'mongoose';
+import { NextResponse } from 'next/server';
 
-// ── vi.hoisted pour éviter le problème de hoisting avec vi.mock ───────────────
-const { mockProduitChain, mockProduitModel } = vi.hoisted(() => {
+const FAKE_TENANT_STR = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+
+// ── vi.hoisted ────────────────────────────────────────────────────────────────
+const { mockProduitChain, mockProduitModel, mockRequireAdmin, mockGetTenantId } = vi.hoisted(() => {
   const chain = {
     sort: vi.fn().mockReturnThis(),
     lean: vi.fn().mockResolvedValue([]),
   };
   return {
     mockProduitChain: chain,
-    mockProduitModel: {
-      find: vi.fn().mockReturnValue(chain),
-      create: vi.fn(),
-    },
+    mockProduitModel: { find: vi.fn().mockReturnValue(chain), create: vi.fn() },
+    mockRequireAdmin: vi.fn(),
+    mockGetTenantId: vi.fn(),
   };
 });
 
@@ -20,12 +23,17 @@ vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined
 vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }));
 vi.mock('@/models/Produit', () => ({ default: mockProduitModel }));
+vi.mock('@/lib/assertAdmin', () => ({ requireAdmin: mockRequireAdmin }));
+vi.mock('@/lib/tenant', () => ({ getTenantId: mockGetTenantId, resolveTenantForAdmin: mockGetTenantId }));
 
-import { getServerSession } from 'next-auth';
 import { GET, POST } from '@/app/api/produits/route';
 
+const FAKE_TENANT_ID = new mongoose.Types.ObjectId(FAKE_TENANT_STR);
+const ADMIN_SESSION = { session: { user: { role: 'admin', email: 'admin@test.com' } }, error: null };
+const NO_AUTH = { session: null, error: NextResponse.json({ error: 'Non autorisé.' }, { status: 401 }) };
+
 const mockProduits = [
-  { _id: '1', nom: 'Burger', description: 'Desc', categorie: 'Burgers', prix: 850, taux_tva: 10, actif: true, options: [] },
+  { _id: '1', nom: 'Burger', description: 'Desc', categorie: 'Burgers', prix: 850, taux_tva: 10, actif: true, options: [], restaurantId: FAKE_TENANT_ID },
 ];
 
 const makeReq = (url: string, method = 'GET', body?: unknown) =>
@@ -36,71 +44,78 @@ const makeReq = (url: string, method = 'GET', body?: unknown) =>
   });
 
 describe('GET /api/produits', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetTenantId.mockResolvedValue(FAKE_TENANT_ID);
+  });
 
-  it('retourne 200 + liste des produits actifs (public)', async () => {
+  it('retourne 200 + produits actifs filtrés par tenant (public)', async () => {
     mockProduitChain.lean.mockResolvedValueOnce(mockProduits);
     const res = await GET(makeReq('http://localhost/api/produits'));
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data).toHaveLength(1);
-    expect(mockProduitModel.find).toHaveBeenCalledWith({ actif: true });
+    // TICK-133 — filtrage par restaurantId
+    expect(mockProduitModel.find).toHaveBeenCalledWith({ restaurantId: FAKE_TENANT_ID, actif: true });
   });
 
   it('base vide → 200 + tableau vide', async () => {
     mockProduitChain.lean.mockResolvedValueOnce([]);
     const res = await GET(makeReq('http://localhost/api/produits'));
     expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.data).toEqual([]);
+    expect((await res.json()).data).toEqual([]);
   });
 
   it('?all=true sans session → 401', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(null);
+    mockRequireAdmin.mockResolvedValueOnce(NO_AUTH);
     const res = await GET(makeReq('http://localhost/api/produits?all=true'));
     expect(res.status).toBe(401);
   });
 
-  it('?all=true avec session admin → 200 + tous les produits', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { email: 'admin@test.com' } } as Parameters<typeof vi.mocked<typeof getServerSession>>[0] extends infer T ? T : never);
+  it('?all=true avec session admin → 200 + tous les produits du tenant', async () => {
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     mockProduitChain.lean.mockResolvedValueOnce(mockProduits);
     const res = await GET(makeReq('http://localhost/api/produits?all=true'));
     expect(res.status).toBe(200);
-    expect(mockProduitModel.find).toHaveBeenCalledWith({});
+    // TICK-133 — filtrage par restaurantId même pour admin
+    expect(mockProduitModel.find).toHaveBeenCalledWith({ restaurantId: FAKE_TENANT_ID });
   });
 });
 
 describe('POST /api/produits', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetTenantId.mockResolvedValue(FAKE_TENANT_ID);
+  });
 
   it('sans session → 401', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce(null);
+    mockRequireAdmin.mockResolvedValueOnce(NO_AUTH);
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', { nom: 'Test' }));
     expect(res.status).toBe(401);
   });
 
   it('body invalide (prix manquant) → 400', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
       nom: 'Test', description: 'Desc', categorie: 'Cat',
     }));
     expect(res.status).toBe(400);
   });
 
-  it('body valide + session → 201 + produit créé', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
-    mockProduitModel.create.mockResolvedValueOnce({ _id: 'new1', nom: 'Burger', prix: 850, taux_tva: 10 });
+  it('body valide + session → 201 + restaurantId injecté', async () => {
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
+    mockProduitModel.create.mockResolvedValueOnce({ _id: 'new1', nom: 'Burger', prix: 850, taux_tva: 10, restaurantId: FAKE_TENANT_ID });
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
       nom: 'Burger', description: 'Desc', categorie: 'Burgers', prix: 850,
     }));
     expect(res.status).toBe(201);
-    const json = await res.json();
-    expect(json.data.nom).toBe('Burger');
+    expect(mockProduitModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({ restaurantId: FAKE_TENANT_ID })
+    );
   });
 
-  // TICK-127 — taux_tva Zod
   it('body avec taux_tva valide (20) → 201', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     mockProduitModel.create.mockResolvedValueOnce({ _id: 'new2', nom: 'Bière', prix: 500, taux_tva: 20 });
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
       nom: 'Bière', description: 'Desc', categorie: 'Boissons', prix: 500, taux_tva: 20,
@@ -109,15 +124,15 @@ describe('POST /api/produits', () => {
   });
 
   it('body avec taux_tva invalide (7) → 400', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
       nom: 'Test', description: 'Desc', categorie: 'Cat', prix: 500, taux_tva: 7,
     }));
     expect(res.status).toBe(400);
   });
 
-  it('body sans taux_tva → 201 (défaut 10 appliqué)', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+  it('body sans taux_tva → 201 (défaut 10)', async () => {
+    mockRequireAdmin.mockResolvedValueOnce(ADMIN_SESSION);
     mockProduitModel.create.mockResolvedValueOnce({ _id: 'new3', nom: 'Pizza', prix: 900, taux_tva: 10 });
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
       nom: 'Pizza', description: 'Desc', categorie: 'Plats', prix: 900,

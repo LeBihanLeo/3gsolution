@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
 import { requireAdmin } from '@/lib/assertAdmin';
 import Produit from '@/models/Produit';
+import { getTenantId, resolveTenantForAdmin } from '@/lib/tenant';
 
 const OptionSchema = z.object({
   nom: z.string().min(1),
@@ -23,13 +24,13 @@ const ProduitSchema = z.object({
   prix: z.number().int().min(0, 'Le prix doit être positif'),
   taux_tva: TauxTvaSchema, // TICK-127
   options: z.array(OptionSchema).default([]),
-  imageUrl: z.string().url().optional(), // TICK-036
+  imageUrl: z.preprocess((v) => (!v ? undefined : v), z.union([z.string().url(), z.string().startsWith('/')]).optional()), // TICK-036
   actif: z.boolean().default(true),
 });
 
 // GET /api/produits
-//   - Public (sans ?all=true) : produits actifs uniquement
-//   - Admin (?all=true avec session) : tous les produits
+//   - Public (sans ?all=true) : produits actifs uniquement, scopés par tenant
+//   - Admin (?all=true avec session) : tous les produits du tenant
 export async function GET(request: NextRequest) {
   try {
     const all = request.nextUrl.searchParams.get('all') === 'true';
@@ -40,8 +41,14 @@ export async function GET(request: NextRequest) {
       if (check.error) return check.error;
     }
 
+    const restaurantId = await getTenantId().catch(() => null);
+    if (!restaurantId) {
+      return NextResponse.json({ error: 'Tenant non résolu' }, { status: 400 });
+    }
+
     await connectDB();
-    const filtre = all ? {} : { actif: true };
+    // TICK-133 — Filtrage systématique par restaurantId
+    const filtre = all ? { restaurantId } : { restaurantId, actif: true };
     const produits = await Produit.find(filtre).sort({ categorie: 1, nom: 1 }).lean();
     return NextResponse.json({ data: produits });
   } catch {
@@ -49,13 +56,18 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/produits — admin : créer un produit
+// POST /api/produits — admin : créer un produit pour le tenant courant
 export async function POST(request: NextRequest) {
   // CVE-02 — vérification de rôle 'admin'
   const check = await requireAdmin();
   if (check.error) return check.error;
 
   try {
+    const restaurantId = await resolveTenantForAdmin(check.session);
+    if (!restaurantId) {
+      return NextResponse.json({ error: 'Tenant non résolu' }, { status: 400 });
+    }
+
     const body = await request.json();
     const parsed = ProduitSchema.safeParse(body);
 
@@ -64,7 +76,8 @@ export async function POST(request: NextRequest) {
     }
 
     await connectDB();
-    const produit = await Produit.create(parsed.data);
+    // TICK-133 — restaurantId injecté depuis x-tenant-id
+    const produit = await Produit.create({ ...parsed.data, restaurantId });
     return NextResponse.json({ data: produit }, { status: 201 });
   } catch {
     return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 });

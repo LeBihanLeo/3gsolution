@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-// Mock Stripe
-const mockCreateSession = vi.fn();
+// TICK-139 — getStripeClient remplace getStripe
+const { mockGetStripeClient, mockCreateSession } = vi.hoisted(() => ({
+  mockGetStripeClient: vi.fn(),
+  mockCreateSession: vi.fn(),
+}));
+
 vi.mock('@/lib/stripe', () => ({
-  getStripe: () => ({
-    checkout: { sessions: { create: mockCreateSession } },
-  }),
+  getStripeClient: mockGetStripeClient,
 }));
 
 // Mock mockStore
@@ -21,10 +23,11 @@ vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 vi.mock('next-auth', () => ({ getServerSession: vi.fn().mockResolvedValue(null) }));
 
 // vi.hoisted() garantit que la variable est initialisée avant le hoist de vi.mock
-const { mockProduitFind, mockSiteConfigFindOne, mockPendingOrderCreate } = vi.hoisted(() => ({
+const { mockProduitFind, mockSiteConfigFindOne, mockPendingOrderCreate, mockGetTenantId } = vi.hoisted(() => ({
   mockProduitFind: vi.fn(),
   mockSiteConfigFindOne: vi.fn(),
   mockPendingOrderCreate: vi.fn(),
+  mockGetTenantId: vi.fn(),
 }));
 vi.mock('@/models/Produit', () => ({
   default: { find: mockProduitFind },
@@ -37,6 +40,8 @@ vi.mock('@/models/SiteConfig', () => ({
 vi.mock('@/models/PendingOrder', () => ({
   default: { create: mockPendingOrderCreate },
 }));
+// TICK-134 — mock getTenantId
+vi.mock('@/lib/tenant', () => ({ getTenantId: mockGetTenantId }));
 
 import { POST } from '@/app/api/checkout/route';
 
@@ -79,8 +84,13 @@ const mockPendingOrderDoc = { _id: { toString: () => 'pending123' } };
 describe('POST /api/checkout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_fake');
     vi.stubEnv('NEXTAUTH_URL', 'http://localhost:3000');
+    // TICK-134 — tenant résolu par défaut
+    mockGetTenantId.mockResolvedValue({ toString: () => 'aaaaaaaaaaaaaaaaaaaaaaaa' });
+    // TICK-139 — getStripeClient résolu par défaut (mode Stripe réel)
+    mockGetStripeClient.mockResolvedValue({
+      checkout: { sessions: { create: mockCreateSession } },
+    });
     // Par défaut : boutique ouverte toute la journée
     mockSiteConfigFindOne.mockReturnValue({ lean: vi.fn().mockResolvedValue(openConfig) });
     // Par défaut : la BDD retourne le produit valide
@@ -135,6 +145,16 @@ describe('POST /api/checkout', () => {
     expect(res.status).toBe(503);
     const json = await res.json();
     expect(json.error).toMatch(/fermée/i);
+  });
+
+  // TICK-139 — mode mock : getStripeClient rejette (Stripe non configuré)
+  it('Stripe non configuré pour le restaurant → bascule mode mock', async () => {
+    mockGetStripeClient.mockRejectedValueOnce(new Error('Stripe non configuré pour ce restaurant'));
+    const res = await POST(makeReq(validBody));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.url).toMatch(/mock-checkout/);
+    expect(mockCreateSession).not.toHaveBeenCalled();
   });
 
   it('body valide → stripe.checkout.sessions.create appelé avec les bons line_items', async () => {

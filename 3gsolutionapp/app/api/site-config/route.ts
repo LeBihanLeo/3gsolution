@@ -1,9 +1,12 @@
+// TICK-135 — GET/PUT /api/site-config lit désormais Restaurant (multi-tenant) au lieu du singleton SiteConfig.
+// SiteConfig est conservé marqué @deprecated et sera supprimé après validation en production.
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
 import { requireAdmin } from '@/lib/assertAdmin';
-import SiteConfig from '@/models/SiteConfig';
+import Restaurant from '@/models/Restaurant';
 import { generatePalette } from '@/lib/palette';
+import { getTenantId, resolveTenantForAdmin } from '@/lib/tenant';
 
 const DEFAULT_COULEUR = '#E63946';
 
@@ -27,18 +30,9 @@ const SiteConfigZod = z.object({
       (val) => !val || /^https?:\/\//.test(val) || val.startsWith('/'),
       { message: "L'URL doit être HTTPS ou un chemin relatif (/...)" }
     ),
-  // TICK-100 — Horaires d'ouverture
-  horaireOuverture: z
-    .string()
-    .regex(timeRegex, 'Format attendu HH:MM')
-    .optional(),
-  horaireFermeture: z
-    .string()
-    .regex(timeRegex, 'Format attendu HH:MM')
-    .optional(),
-  // TICK-105 — Fermeture manuelle
+  horaireOuverture: z.string().regex(timeRegex, 'Format attendu HH:MM').optional(),
+  horaireFermeture: z.string().regex(timeRegex, 'Format attendu HH:MM').optional(),
   fermeeAujourdhui: z.boolean().optional(),
-  // TICK-122 — couleur principale hex
   couleurPrincipale: z
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/, 'Format attendu #RRGGBB')
@@ -55,13 +49,24 @@ const SiteConfigZod = z.object({
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
+// Champs publics retournés — stripeSecretKey et stripeWebhookSecret JAMAIS exposés.
+// stripePublishableKey inclus : nécessaire côté client pour Stripe Elements.
+const PUBLIC_SELECT = 'nomRestaurant banniereUrl couleurPrincipale horaireOuverture horaireFermeture fermeeAujourdhui stripePublishableKey';
+
 // GET /api/site-config — public
-// TICK-119/120 — no-store : la valeur doit être fraîche à chaque requête (fermeeAujourdhui, horaires)
-// TICK-122 — retourne aussi la palette calculée à la volée (non stockée)
+// TICK-119/120 — no-store : valeur fraîche (fermeeAujourdhui, horaires)
+// TICK-122  — palette calculée à la volée
+// TICK-135  — lit le restaurant du tenant courant
 export async function GET() {
   try {
+    const restaurantId = await getTenantId().catch(() => null);
+
     await connectDB();
-    const config = await SiteConfig.findOne().select('-__v -_id').lean();
+
+    const config = restaurantId
+      ? await Restaurant.findById(restaurantId).select(PUBLIC_SELECT).lean()
+      : null;
+
     if (!config) {
       const palette = generatePalette(DEFAULT_COULEUR);
       return NextResponse.json(
@@ -69,10 +74,11 @@ export async function GET() {
         { headers: NO_STORE }
       );
     }
+
     const c = config as Record<string, unknown>;
     const couleur = (typeof c.couleurPrincipale === 'string' && c.couleurPrincipale) ? c.couleurPrincipale : DEFAULT_COULEUR;
     const palette = generatePalette(couleur);
-    // ?? explicite : protège contre les champs null dans les anciens documents MongoDB
+
     return NextResponse.json({
       data: {
         nomRestaurant: (typeof c.nomRestaurant === 'string' && c.nomRestaurant) ? c.nomRestaurant : DEFAULT_CONFIG.nomRestaurant,
@@ -81,6 +87,7 @@ export async function GET() {
         horaireFermeture: (typeof c.horaireFermeture === 'string' && c.horaireFermeture) ? c.horaireFermeture : DEFAULT_CONFIG.horaireFermeture,
         fermeeAujourdhui: typeof c.fermeeAujourdhui === 'boolean' ? c.fermeeAujourdhui : DEFAULT_CONFIG.fermeeAujourdhui,
         couleurPrincipale: couleur,
+        stripePublishableKey: typeof c.stripePublishableKey === 'string' ? c.stripePublishableKey : undefined,
         palette,
       },
     }, { headers: NO_STORE });
@@ -89,13 +96,18 @@ export async function GET() {
   }
 }
 
-// PUT /api/site-config — admin
+// PUT /api/site-config — admin : met à jour le restaurant du tenant courant
 export async function PUT(request: NextRequest) {
-  // CVE-02 — vérification de rôle 'admin' (cette route est exclue du middleware)
+  // CVE-02 — vérification de rôle 'admin'
   const check = await requireAdmin();
   if (check.error) return check.error;
 
   try {
+    const restaurantId = await resolveTenantForAdmin(check.session);
+    if (!restaurantId) {
+      return NextResponse.json({ error: 'Tenant non résolu' }, { status: 400 });
+    }
+
     const body = await request.json();
     const parsed = SiteConfigZod.safeParse(body);
 
@@ -104,12 +116,16 @@ export async function PUT(request: NextRequest) {
     }
 
     await connectDB();
-    // $set : mise à jour partielle (ne supprime pas les champs non envoyés)
-    const config = await SiteConfig.findOneAndUpdate(
-      {},
+    // TICK-135 — mise à jour du restaurant du tenant (jamais d'un autre)
+    const config = await Restaurant.findByIdAndUpdate(
+      restaurantId,
       { $set: parsed.data },
-      { upsert: true, new: true, select: '-__v -_id' }
+      { new: true, select: PUBLIC_SELECT }
     ).lean();
+
+    if (!config) {
+      return NextResponse.json({ error: 'Restaurant introuvable' }, { status: 404 });
+    }
 
     return NextResponse.json({ data: config });
   } catch {

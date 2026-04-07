@@ -1,12 +1,16 @@
+// TICK-137 — Server Component : lit x-tenant-id (injecté par middleware TICK-132)
+//             et requête Restaurant pour les CSS vars palette + config vitrine.
+//             SiteConfig n'est plus utilisé dans ce layout.
 import type { ReactNode } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { headers } from 'next/headers';
 import { CartProvider } from '@/lib/cartContext';
 import CookieBanner from '@/components/client/CookieBanner';
 import UserNavButton from '@/components/client/UserNavButton';
 import DesktopMenuShell from '@/components/client/DesktopMenuShell';
 import { connectDB } from '@/lib/mongodb';
-import SiteConfig from '@/models/SiteConfig';
+import Restaurant from '@/models/Restaurant';
 import { generatePalette, SitePalette } from '@/lib/palette';
 
 const DEFAULT_COULEUR = '#E63946';
@@ -28,20 +32,32 @@ const DEFAULT_CONFIG: SiteConfigData = {
   fermeeAujourdhui: false,
 };
 
-// TICK-123 — no-store : palette fraîche à chaque requête
+// TICK-137 — Lecture Restaurant depuis x-tenant-id (header injecté par le middleware)
 async function getSiteConfig(): Promise<SiteConfigData> {
   try {
+    const hdrs = await headers();
+    const tenantId = hdrs.get('x-tenant-id');
+
     await connectDB();
-    const config = await SiteConfig.findOne().lean();
-    if (!config) return DEFAULT_CONFIG;
-    const couleur = (config as { couleurPrincipale?: string }).couleurPrincipale ?? DEFAULT_COULEUR;
+
+    const restaurant = tenantId
+      ? await Restaurant.findById(tenantId)
+          .select('nomRestaurant banniereUrl couleurPrincipale horaireOuverture horaireFermeture fermeeAujourdhui')
+          .lean()
+      : null;
+
+    if (!restaurant) return DEFAULT_CONFIG;
+
+    const r = restaurant as Record<string, unknown>;
+    const couleur = typeof r.couleurPrincipale === 'string' ? r.couleurPrincipale : DEFAULT_COULEUR;
+
     return {
-      nomRestaurant: config.nomRestaurant,
-      banniereUrl: config.banniereUrl,
+      nomRestaurant: typeof r.nomRestaurant === 'string' ? r.nomRestaurant : DEFAULT_CONFIG.nomRestaurant,
+      banniereUrl: typeof r.banniereUrl === 'string' ? r.banniereUrl : undefined,
       palette: generatePalette(couleur),
-      horaireOuverture: config.horaireOuverture ?? '11:30',
-      horaireFermeture: config.horaireFermeture ?? '14:00',
-      fermeeAujourdhui: config.fermeeAujourdhui ?? false,
+      horaireOuverture: typeof r.horaireOuverture === 'string' ? r.horaireOuverture : DEFAULT_CONFIG.horaireOuverture,
+      horaireFermeture: typeof r.horaireFermeture === 'string' ? r.horaireFermeture : DEFAULT_CONFIG.horaireFermeture,
+      fermeeAujourdhui: typeof r.fermeeAujourdhui === 'boolean' ? r.fermeeAujourdhui : false,
     };
   } catch {
     return DEFAULT_CONFIG;
@@ -56,7 +72,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function ClientLayout({ children }: { children: ReactNode }) {
   const config = await getSiteConfig();
 
-  // TICK-123 — CSS custom properties injectées sur le conteneur principal (Server Component)
+  // TICK-123/137 — CSS custom properties injectées sur le conteneur principal (Server Component)
   const cssVars = {
     '--color-primary': config.palette.primary,
     '--color-primary-light': config.palette.primaryLight,

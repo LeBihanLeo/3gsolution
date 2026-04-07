@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
 import { requireAdmin } from '@/lib/assertAdmin';
 import Commande from '@/models/Commande';
+import { resolveTenantForAdmin } from '@/lib/tenant';
 
 // TICK-099 — Transitions valides admin
 const TRANSITIONS: Record<string, string> = {
@@ -25,6 +26,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
   try {
     const { id } = await params;
+    const restaurantId = await resolveTenantForAdmin(check.session);
+    if (!restaurantId) {
+      return NextResponse.json({ error: 'Tenant non résolu' }, { status: 400 });
+    }
+
     const body = await request.json();
     const parsed = StatutSchema.safeParse(body);
 
@@ -38,7 +44,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const { statut: newStatut } = parsed.data;
 
     await connectDB();
-    const commande = await Commande.findById(id);
+    // TICK-134 — Filtrage cross-tenant
+    const commande = await Commande.findOne({ _id: id, restaurantId });
 
     if (!commande) {
       return NextResponse.json({ error: 'Commande introuvable' }, { status: 404 });

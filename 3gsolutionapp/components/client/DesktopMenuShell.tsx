@@ -1,7 +1,9 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useSession } from 'next-auth/react';
 import DesktopCategorySidebar from './DesktopCategorySidebar';
 import DesktopCartSidebar from './DesktopCartSidebar';
 
@@ -53,6 +55,15 @@ export default function DesktopMenuShell({
 }: Props) {
   const pathname = usePathname();
   const isMenu = pathname === '/';
+  const { status } = useSession();
+  const [guestMode, setGuestMode] = useState(false);
+
+  useEffect(() => {
+    setGuestMode(sessionStorage.getItem('guest_mode') === 'true');
+  }, []);
+
+  // Masquer le panier desktop pendant l'EcranChoix (non authentifié + pas en mode invité)
+  const showCart = !(status === 'unauthenticated' && !guestMode);
 
   if (!isMenu) {
     return (
@@ -92,7 +103,7 @@ export default function DesktopMenuShell({
       <div className="lg:flex lg:justify-center lg:gap-6 lg:px-6 lg:py-6 lg:items-start">
 
         {/* Spacer miroir du panier — force le menu au centre exact de l'écran */}
-        <div className="hidden lg:block w-64 xl:w-72 shrink-0" />
+        {showCart && <div className="hidden lg:block w-64 xl:w-72 shrink-0" />}
 
         {/* Colonne centrale */}
         <div className="min-w-0 max-w-2xl mx-auto w-full px-4 py-6 lg:w-[672px] lg:shrink-0 lg:mx-0 lg:px-0 lg:py-0">
@@ -122,8 +133,8 @@ export default function DesktopMenuShell({
           {children}
         </div>
 
-        {/* Sidebar panier — se masque elle-même sur mobile */}
-        <DesktopCartSidebar />
+        {/* Sidebar panier — masquée sur mobile et pendant l'EcranChoix */}
+        {showCart && <DesktopCartSidebar />}
       </div>
     </main>
   );

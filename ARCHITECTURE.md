@@ -113,44 +113,68 @@
 
 ## Modèles de données (MongoDB / Mongoose)
 
+### Restaurant *(nouveau — Sprint 18 TICK-131)*
+
+> Remplace `SiteConfig` (singleton). Chaque document représente un tenant (un restaurant) identifié par son domaine.
+
+```typescript
+{
+  _id: ObjectId,
+  slug: string,                  // "resto-a" — identifiant URL interne, unique
+  domaine: string,               // "www.restoA.com" — index unique, résolution tenant
+  domainesAlternatifs?: string[], // ["restoA.com"] — alias www/apex
+
+  // Config vitrine (anciennement SiteConfig)
+  nomRestaurant: string,
+  banniereUrl?: string,
+  couleurPrincipale: string,     // hex ex: "#E63946"
+  horaireOuverture: string,      // "HH:MM", défaut "11:30"
+  horaireFermeture: string,      // "HH:MM", défaut "14:00"
+  fermeeAujourdhui: boolean,     // toggle manuel, défaut false
+
+  // Auth admin (remplace ADMIN_EMAIL / ADMIN_PASSWORD_HASH env)
+  adminEmail: string,            // unique par restaurant
+  adminPasswordHash: string,     // bcrypt hash — jamais exposé en API
+
+  // Stripe (par restaurant — champs select: false par défaut)
+  stripeSecretKey: string,           // sk_live_... — jamais exposé en API
+  stripeWebhookSecret: string,       // whsec_... — jamais exposé en API
+  stripePublishableKey: string,      // pk_live_... — exposé via GET /api/site-config
+
+  emailFrom?: string,            // ex: "commandes@restoA.com" — fallback sur env global si absent
+
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+> **Index :** `domaine` (unique), `slug` (unique), `adminEmail` (unique).
+> `fermeeAujourdhui` est un toggle manuel — non réinitialisé automatiquement à minuit.
+> `stripeSecretKey` et `stripeWebhookSecret` sont marqués `select: false` — jamais retournés par les requêtes Mongoose sans `.select('+stripeSecretKey')` explicite.
+
+### SiteConfig *(deprecated — Sprint 18 TICK-135)*
+
+> Remplacé par `Restaurant`. Conservé temporairement pour la migration. Sera supprimé après validation du Sprint 18.
+
 ### Produit
 
 ```typescript
 {
   _id: ObjectId,
-  nom: string,           // "Burger Classic"
+  restaurantId: ObjectId,  // référence Restaurant — requis, indexé — Sprint 18 TICK-133
+  nom: string,             // "Burger Classic"
   description: string,
-  categorie: string,     // "Burgers", "Boissons", etc.
-  prix: number,          // en centimes, toujours TTC (ex: 850 = 8,50€)
+  categorie: string,       // "Burgers", "Boissons", etc.
+  prix: number,            // en centimes, toujours TTC (ex: 850 = 8,50€)
   taux_tva: 0 | 5.5 | 10 | 20, // taux TVA applicable — défaut 10 (restauration standard) — Sprint 17 TICK-126
-  options: [             // suppléments
+  options: [               // suppléments
     { nom: string, prix: number }
   ],
-  imageUrl?: string,     // URL Vercel Blob (optionnel)
+  imageUrl?: string,       // URL Vercel Blob (optionnel)
   actif: boolean,
   createdAt: Date
 }
 ```
-
-### SiteConfig
-
-```typescript
-{
-  _id: ObjectId,
-  nomRestaurant: string,         // "Le Bistrot du Coin"
-  banniereUrl?: string,          // URL image (HTTPS ou chemin /public)
-  couleurBordureGauche: string,  // hex ex: "#E63946"
-  couleurBordureDroite: string,  // hex ex: "#457B9D"
-  horaireOuverture: string,      // format "HH:MM", ex: "11:30" — Sprint 13 TICK-100
-  horaireFermeture: string,      // format "HH:MM", ex: "14:00" — Sprint 13 TICK-100
-  fermeeAujourdhui: boolean,     // fermeture manuelle du jour, défaut: false — Sprint 13 TICK-105
-  couleurPrincipale: string,     // hex ex: "#E63946" — Sprint 16 TICK-122 (remplace couleurBordureGauche/Droite)
-  updatedAt: Date
-}
-```
-
-> Document **singleton** : un seul enregistrement en base, mis à jour par `upsert`.
-> `fermeeAujourdhui` est un toggle manuel — non réinitialisé automatiquement à minuit.
 
 ---
 
@@ -209,6 +233,7 @@
   commentaire?: string,
   total: number,               // en centimes
   clientId?: ObjectId,         // référence Client — null pour commandes invité (TICK-075)
+  restaurantId: ObjectId,      // référence Restaurant — requis, indexé — Sprint 18 TICK-134
   purgeAt: Date,               // TICK-057 — RGPD Art. 5(1)(e) : createdAt + 12 mois
   createdAt: Date
 }
@@ -315,17 +340,139 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 | `/api/client/profil`, `/api/client/account`, `/api/client/commandes` | Token JWT requis (`role === "client"`) |
 | `/api/client/register`, `/api/client/forgot-password` | Rate limiting 5 req / 15 min par IP |
 
+**Routes protégées par le middleware — ajouts Sprint 18 (TICK-132, TICK-136) :**
+
+| Routes | Protection |
+|--------|-----------|
+| `/superadmin/*`, `/api/superadmin/*` | Token JWT `role === "superadmin"` (credentials maîtres env) |
+
+> **Multi-tenant (TICK-136) :** Le middleware vérifie également que `token.restaurantId` correspond au `x-tenant-id` résolu pour les tokens admin. Un admin de restoA ne peut pas accéder aux routes admin de restoB.
+
 **Routes publiques intentionnelles :** `GET /api/produits`, `GET /api/site-config`, `GET /api/commandes/suivi`, `POST /api/checkout`, `POST /api/webhooks/stripe`, `POST /api/client/verify-email`, `POST /api/client/reset-password`
 
 ```
 Variables d'env :
-ADMIN_EMAIL
-ADMIN_PASSWORD_HASH   # bcrypt hash
+# Sprint 18 : ADMIN_EMAIL et ADMIN_PASSWORD_HASH supprimés (credentials par restaurant en base)
 NEXTAUTH_SECRET
+# Super-admin (gestionnaire de la plateforme)
+SUPERADMIN_EMAIL
+SUPERADMIN_PASSWORD_HASH   # bcrypt hash
+SUPERADMIN_JWT_SECRET
 # Rate limiting (TICK-052) — plan gratuit Upstash Redis
 UPSTASH_REDIS_REST_URL
 UPSTASH_REDIS_REST_TOKEN
 ```
+
+---
+
+## Architecture Multi-Tenant *(Sprint 18)*
+
+### Vue d'ensemble
+
+```
+www.restoA.com ──┐
+www.restoB.com ──┤──→ Vercel (un seul déploiement Next.js)
+www.restoC.com ──┘         │
+                            ▼
+                     middleware.ts
+                     ┌─────────────────────────────┐
+                     │ 1. Lire Host header           │
+                     │ 2. Lookup Restaurant.domaine  │
+                     │ 3. Injecter x-tenant-id       │
+                     └─────────────┬───────────────┘
+                                   │ x-tenant-id: ObjectId
+                          ┌────────┴────────┐
+                          ▼                 ▼
+                   Server Components    API Routes
+                   (layout.tsx)         (produits, commandes...)
+                          │                 │
+                          └────────┬────────┘
+                                   ▼
+                          MongoDB (base partagée)
+                          ├── Restaurant (config + auth)
+                          ├── Produit (+ restaurantId)
+                          ├── Commande (+ restaurantId)
+                          └── Client (global, partagé)
+```
+
+### Isolation des données
+
+| Collection | Isolation | Mécanisme |
+|-----------|-----------|-----------|
+| `Restaurant` | N/A | Un document = un tenant |
+| `Produit` | Par tenant | Champ `restaurantId` indexé, filtré sur toutes les requêtes |
+| `Commande` | Par tenant | Champ `restaurantId` indexé, filtré sur toutes les requêtes |
+| `Client` | **Global** | Comptes partagés inter-restaurants (login unique) |
+
+### Résolution du tenant (`lib/tenant.ts`)
+
+```typescript
+// Lit x-tenant-id depuis les headers Next.js (injecté par middleware)
+export function getTenantId(headers: Headers): mongoose.Types.ObjectId
+
+// Cache middleware : Map<domaine, { restaurantId, expiry }> — TTL 60 s
+// Évite une requête DB sur chaque requête HTTP
+```
+
+### Stripe multi-tenant (`lib/stripe.ts`)
+
+```typescript
+// Factory avec cache — un client Stripe par restaurant
+export async function getStripeClient(restaurantId: string): Promise<Stripe>
+
+// Clé publique exposée via GET /api/site-config (champ stripePublishableKey)
+// Clés secrètes stockées avec select: false — jamais retournées par défaut
+```
+
+### Zones d'administration
+
+| Zone | URL | Accès | Périmètre |
+|------|-----|-------|-----------|
+| Admin restaurant | `/admin/*` | Credentials du `Restaurant` | Menu, commandes, personnalisation d'un restaurant |
+| Super-admin | `/superadmin/*` | Credentials env (`SUPERADMIN_*`) | Création/gestion de tous les restaurants |
+
+### Onboarding d'un nouveau restaurant
+
+**Étape 1 — Créer le tenant (super-admin)**
+1. Aller sur `/superadmin/nouveau`
+2. Renseigner : nom du restaurant, slug, domaine principal (`www.restoA.com`), email admin, mot de passe admin, clés Stripe (`pk_live_...`, `sk_live_...`, `whsec_...`)
+
+**Étape 2 — Ajouter le domaine sur Vercel**
+1. Vercel Dashboard → Project → Settings → Domains
+2. Ajouter `www.restoA.com` et `restoA.com` (redirect vers www)
+3. Vercel génère automatiquement les certificats SSL
+
+**Étape 3 — Configurer le DNS chez le registrar**
+```
+Type    Nom     Valeur
+CNAME   www     cname.vercel-dns.com
+A       @       76.76.21.21  (IP Vercel — vérifier dans le dashboard)
+```
+
+**Étape 4 — Enregistrer le webhook Stripe**
+1. Dans le dashboard Stripe du restaurant
+2. Créer un endpoint webhook : `https://www.restoA.com/api/webhooks/stripe`
+3. Événements à sélectionner : `checkout.session.completed`, `charge.refunded`, `charge.dispute.created`, `charge.failed`
+4. Copier le `whsec_...` généré dans le champ `stripeWebhookSecret` via le super-admin
+
+**Étape 5 — Vérification**
+- [ ] `https://www.restoA.com` → affiche le menu du bon restaurant (nom + bannière + palette)
+- [ ] `https://www.restoA.com/admin/login` → connexion avec les credentials du restaurant
+- [ ] Commande test → confirmation email reçu → webhook Stripe `checkout.session.completed` OK
+- [ ] `https://www.restoA.com/admin` → commande visible dans le dashboard admin
+
+**Développement local — Seed restaurant**
+
+```bash
+# Crée un restaurant par défaut avec domaine "localhost:3000"
+# Lit ADMIN_EMAIL, ADMIN_PASSWORD, STRIPE_* depuis .env.local
+npx tsx scripts/seed-restaurant.ts
+
+# Génération d'un hash bcrypt (pour SUPERADMIN_PASSWORD_HASH)
+npx tsx scripts/generate-hash.ts <mot_de_passe>
+```
+
+Le script est idempotent : relancé sur un restaurant existant, il ne fait rien.
 
 ---
 
@@ -438,39 +585,43 @@ Section "Récupérées aujourd'hui" en bas de page commandes.
 
 ## Variables d'environnement
 
+> **Sprint 18 — Multi-tenant :** Les variables `STRIPE_*`, `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` sont supprimées. Elles sont désormais stockées **par restaurant** dans la collection `Restaurant` en base. Seules les variables globales de plateforme restent en env.
+
 ```env
 # MongoDB
 MONGODB_URI=mongodb+srv://...
 
-# Stripe
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_...
-
-# NextAuth
-NEXTAUTH_URL=https://monsite.vercel.app
+# NextAuth (global — un seul secret pour toute la plateforme)
+NEXTAUTH_URL=https://www.restoA.com  # URL de base pour le callback OAuth (doit correspondre au domaine principal)
 NEXTAUTH_SECRET=...
-ADMIN_EMAIL=admin@restaurant.fr
-ADMIN_PASSWORD_HASH=$2b$10$...
 
-# Email (Resend)
+# Super-admin — gestionnaire de la plateforme 3G Solution (Sprint 18 TICK-138)
+SUPERADMIN_EMAIL=admin@3gsolution.fr
+SUPERADMIN_PASSWORD_HASH=$2b$10$...   # bcrypt hash
+SUPERADMIN_JWT_SECRET=...             # secret JWT dédié super-admin
+
+# Email global (Resend) — utilisé si emailFrom absent sur le Restaurant
 RESEND_API_KEY=re_...
-EMAIL_FROM=commandes@restaurant.fr
+EMAIL_FROM=noreply@3gsolution.fr
 
-# Vercel Blob (images)
+# Vercel Blob (images) — partagé entre tous les restaurants
 # Optionnel en développement : si absent, les uploads sont sauvegardés dans public/uploads/
 BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...
 
-# Rate limiting login admin — TICK-052 (Upstash Redis, plan gratuit)
+# Rate limiting login — TICK-052 (Upstash Redis, plan gratuit)
 # Optionnel : si absent, fallback in-memory (développement uniquement)
 UPSTASH_REDIS_REST_URL=https://...upstash.io
 UPSTASH_REDIS_REST_TOKEN=...
 
-# Google OAuth — compte client (Sprint 10)
+# Google OAuth — compte client (Sprint 10) — global, partagé entre restaurants
 # Créer les credentials sur console.cloud.google.com
 GOOGLE_CLIENT_ID=...apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=...
 ```
+
+> **Variables supprimées en Sprint 18 :** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` — toutes stockées par restaurant dans `models/Restaurant.ts`.
+>
+> **Développement local :** Le script `scripts/seed-restaurant.ts` crée un restaurant seed avec domaine `localhost:3000` incluant des clés Stripe de test, permettant de travailler sans super-admin.
 
 ---
 
@@ -1051,4 +1202,4 @@ Cette section recense les fonctionnalités intentionnellement exclues du scope a
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19) — Version 1.8 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20 : validation prix serveur, headers HTTP, rate limiting, magic bytes upload, middleware étendu, mock guard, CNIL, rétention RGPD, sous-traitants, logs structurés) — Version 1.9 (Sprint 9 Correctifs post-audit ajoutés le 2026-03-20 : index TTL MongoDB purgeAt, CSP sans unsafe-eval en prod, middleware /api/commandes/:id + IP non-spoofable, rate limiting fail-safe, Zod validation metadata webhook, logger mock-checkout) — Version 1.10 (Conventions de mock complétées le 2026-03-20 : file-type ESM mocké, vi.hoisted() pour factories dépendant de variables externes, connectDB + Produit mockés dans checkout) — Version 2.0 (Sprint 10–11 Compte Client ajouté le 2026-03-24 : modèle Client, auth étendue NextAuth Google + credentials client, inscription + vérification email, reset mdp, page profil, historique commandes, suppression compte RGPD, rate limiting étendu) — Version 2.1 (Re-commande rapide + Export RGPD Art. 20 ajoutés le 2026-03-24) — Version 2.2 (Sprint 10.2 ajouté le 2026-03-24 : écran choix invité/connexion, design system Button/BackLink, nom client obligatoire, historique commandes avancé, fix confirmation post-paiement, navigation retour, Mes données mis de côté) — Version 2.3 (Sprint 14 ajouté le 2026-03-26 : anonymisation manuelle commandes mise de côté, 7 correctifs UX & Auth admin + client) — Version 2.4 (Sprint 15 ajouté le 2026-03-26 : fix re-commande rapide + bouton discret TICK-114, contraste input + curseur profil TICK-115, bouton "Mon profil" déplacé header→main TICK-116)*
+*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19) — Version 1.8 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20 : validation prix serveur, headers HTTP, rate limiting, magic bytes upload, middleware étendu, mock guard, CNIL, rétention RGPD, sous-traitants, logs structurés) — Version 1.9 (Sprint 9 Correctifs post-audit ajoutés le 2026-03-20 : index TTL MongoDB purgeAt, CSP sans unsafe-eval en prod, middleware /api/commandes/:id + IP non-spoofable, rate limiting fail-safe, Zod validation metadata webhook, logger mock-checkout) — Version 1.10 (Conventions de mock complétées le 2026-03-20 : file-type ESM mocké, vi.hoisted() pour factories dépendant de variables externes, connectDB + Produit mockés dans checkout) — Version 2.0 (Sprint 10–11 Compte Client ajouté le 2026-03-24 : modèle Client, auth étendue NextAuth Google + credentials client, inscription + vérification email, reset mdp, page profil, historique commandes, suppression compte RGPD, rate limiting étendu) — Version 2.1 (Re-commande rapide + Export RGPD Art. 20 ajoutés le 2026-03-24) — Version 2.2 (Sprint 10.2 ajouté le 2026-03-24 : écran choix invité/connexion, design system Button/BackLink, nom client obligatoire, historique commandes avancé, fix confirmation post-paiement, navigation retour, Mes données mis de côté) — Version 2.3 (Sprint 14 ajouté le 2026-03-26 : anonymisation manuelle commandes mise de côté, 7 correctifs UX & Auth admin + client) — Version 2.4 (Sprint 15 ajouté le 2026-03-26 : fix re-commande rapide + bouton discret TICK-114, contraste input + curseur profil TICK-115, bouton "Mon profil" déplacé header→main TICK-116) — Version 2.5 (Sprint 18 TICK-140–141 ajoutés le 2026-04-06 : export RGPD multi-tenant nomRestaurant, checklist onboarding complète, .env.local.example Sprint 18, seed-restaurant documenté)*

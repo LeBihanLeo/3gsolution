@@ -68,7 +68,9 @@ export default function LoginPage() {
 
   async function handleGoogle() {
     setError('');
-    await signIn('google', { callbackUrl: '/' });
+    // Passer l'origine courante pour que le redirect post-OAuth revienne
+    // sur le bon domaine restaurant (multi-tenant) et non sur NEXTAUTH_URL.
+    await signIn('google', { callbackUrl: `${window.location.origin}/` });
   }
 
   if (status === 'loading') return null;

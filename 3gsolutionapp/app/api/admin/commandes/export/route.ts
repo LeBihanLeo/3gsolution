@@ -9,6 +9,7 @@ import { connectDB } from '@/lib/mongodb';
 import { requireAdmin } from '@/lib/assertAdmin';
 import Commande, { ICommande, IProduitSnapshot } from '@/models/Commande';
 import { logger } from '@/lib/logger';
+import { resolveTenantForAdmin } from '@/lib/tenant';
 
 function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -70,6 +71,12 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // TICK-134 — scope export par tenant
+    const restaurantId = await resolveTenantForAdmin(check.session);
+    if (!restaurantId) {
+      return NextResponse.json({ error: 'Tenant non résolu' }, { status: 400 });
+    }
+
     await connectDB();
 
     const statutQuery = statutFilter
@@ -77,6 +84,7 @@ export async function GET(request: NextRequest) {
       : { statut: { $ne: 'en_attente_paiement' } };
 
     const commandes = await Commande.find({
+      restaurantId,
       createdAt: { $gte: from, $lte: to },
       ...statutQuery,
     })
