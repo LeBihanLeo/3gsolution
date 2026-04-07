@@ -1,6 +1,7 @@
 # Backlog de développement — Plateforme de commande en ligne
 > Généré le 2026-03-17 · Basé sur ARCHITECTURE.md · Sizing en jours/dev
 > Mis à jour le 2026-03-28 · Sprint 17 ajouté (gestion TVA)
+> Mis à jour le 2026-04-07 · Sprint 19 ajouté (OAuth cross-domain & callbacks multi-tenant)
 
 ---
 
@@ -27,7 +28,9 @@
 | 15 | Correctifs UX Client — Re-commande, Profil, Navigation | TICK-114 → 116 | 1,0 j |
 | 16 | Refactoring Admin, Palette Couleur & Correctifs | TICK-117 → 125 | 7,0 j |
 | 17 | Gestion des prix et de la TVA | TICK-126 → 130 | 2,0 j |
-| **Total** | | **130 tickets** | **~85,75 j** |
+| 18 | Architecture multi-tenant | TICK-131 → 141 | 8,0 j | ✅ Implémenté |
+| 19 | OAuth cross-domain & callbacks multi-tenant | TICK-142 → 155 | 5,75 j |
+| **Total** | | **155 tickets** | **~91,5 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -3498,6 +3501,511 @@ const totalTVA = sum(lignesTVA);
 - [ ] Commandes avec snapshots anciens (sans `taux_tva`) : utiliser le défaut `10` pour le calcul (Mongoose default)
 - [ ] L'encodage UTF-8 BOM et le `Content-Disposition` existants sont préservés
 - [ ] Aucune régression sur les colonnes existantes de l'export
+
+---
+
+## Sprint 19 — OAuth Cross-Domain & Callbacks Multi-Tenant (5,75 j)
+
+> **Objectif :** Faire fonctionner le social login Google et les callbacks Stripe pour N restaurants avec N noms de domaine différents, sans enregistrer chaque domaine dans Google Console.
+>
+> **Architecture retenue :** Central Auth Hub (pattern Auth Code Exchange)
+> - Un domaine fixe (ex. `app.3gsolution.com`) gère le flow Google OAuth — seule URI à enregistrer
+> - Après auth Google, un code opaque (30s, usage unique) est émis et échangé server-to-server
+> - Le restaurant reçoit les données utilisateur et crée une session NextAuth locale
+>
+> **Problèmes résolus :**
+> - Bug `NEXTAUTH_URL` statique dans `success_url`/`cancel_url` Stripe (critique)
+> - Google OAuth impossible sur domaine custom (Google exige des URIs pré-enregistrées)
+> - Token JWT sensible dans l'URL (remplacé par code opaque, échange server-to-server)
+
+---
+
+### TICK-142 — Fix critique : `success_url`/`cancel_url` Stripe dynamiques
+**Épic :** Multi-tenant
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,25 j
+**Dépendances :** aucune
+
+**Description :**
+`app/api/checkout/route.ts` ligne 105 utilise `process.env.NEXTAUTH_URL` pour construire les URLs de retour Stripe. Sur un domaine custom (`resto-a.com`), Stripe redirigera vers le mauvais domaine après paiement. Ce ticket corrige ce bug critique.
+
+**Critères d'acceptance :**
+- [ ] Remplacer `const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000'` par la lecture du Host header
+- [ ] `const host = request.headers.get('host')` + `const proto = process.env.NODE_ENV === 'production' ? 'https' : 'http'`
+- [ ] `const baseUrl = \`${proto}://${host}\``
+- [ ] Vérifier que le mock checkout utilise aussi le baseUrl dynamique
+- [ ] Tester : créer une session depuis `localhost:3000` → URLs pointent bien vers `localhost:3000`
+- [ ] Tester (staging) : créer une session depuis `resto-a.com` → URLs pointent bien vers `resto-a.com`
+
+---
+
+### TICK-143 — Modèle `AuthCode` MongoDB (code opaque, TTL 30s)
+**Épic :** Multi-tenant — Auth Hub
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,25 j
+**Dépendances :** aucune
+
+**Description :**
+Créer le modèle Mongoose `AuthCode` utilisé pour l'échange server-to-server après Google OAuth. Le code est opaque (aléatoire, pas un JWT), usage unique, TTL 30 secondes.
+
+**Schéma :**
+```typescript
+// models/AuthCode.ts
+const AuthCodeSchema = new Schema({
+  code: { type: String, required: true, unique: true, index: true },
+  userId: { type: String, required: true },
+  email: { type: String, required: true },
+  name: { type: String },
+  returnTo: { type: String, required: true }, // domaine restaurant validé
+  createdAt: { type: Date, default: Date.now, expires: 30 }, // TTL 30s via index MongoDB
+})
+```
+
+**Critères d'acceptance :**
+- [ ] Modèle créé dans `models/AuthCode.ts`
+- [ ] Index TTL 30s sur `createdAt` (cohérent avec le pattern PendingOrder existant)
+- [ ] Champ `code` indexé unique pour lookup rapide
+- [ ] Pas d'export de `passwordHash`, `role`, ni aucune donnée sensible dans le schéma
+
+---
+
+### TICK-144 — Modèle `RelayToken` MongoDB (TTL 10s)
+**Épic :** Multi-tenant — Auth Hub
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,25 j
+**Dépendances :** aucune
+
+**Description :**
+Créer le modèle Mongoose `RelayToken`, utilisé côté restaurant pour bridger l'échange server-to-server vers la création de session NextAuth côté client. TTL très court (10s) — juste le temps du chargement de page.
+
+**Schéma :**
+```typescript
+// models/RelayToken.ts
+const RelayTokenSchema = new Schema({
+  token: { type: String, required: true, unique: true, index: true },
+  userId: { type: String, required: true },
+  email: { type: String, required: true },
+  name: { type: String },
+  createdAt: { type: Date, default: Date.now, expires: 10 }, // TTL 10s
+})
+```
+
+**Critères d'acceptance :**
+- [ ] Modèle créé dans `models/RelayToken.ts`
+- [ ] Index TTL 10s sur `createdAt`
+- [ ] Champ `token` indexé unique
+
+---
+
+### TICK-145 — Helper `assertKnownDomain()` — validation `returnTo`
+**Épic :** Multi-tenant — Sécurité
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-143 (modèle Restaurant doit exister)
+
+**Description :**
+Créer un helper de validation qui vérifie que l'URL `returnTo` appartient à un domaine enregistré en base de données. Sans cette validation, un attaquant pourrait forger un `returnTo` pointant vers un site malveillant (open redirect).
+
+**Implémentation :**
+```typescript
+// lib/auth/assert-known-domain.ts
+export async function assertKnownDomain(returnTo: string): Promise<void> {
+  let hostname: string
+  try {
+    hostname = new URL(returnTo).hostname
+  } catch {
+    throw new Error('returnTo invalide : URL malformée')
+  }
+
+  await connectDB()
+  // Lookup dans Restaurant.domaine (ex: "resto-a.com")
+  const exists = await Restaurant.exists({ domaine: hostname })
+  if (!exists) {
+    throw new Error(`Domaine non autorisé : ${hostname}`)
+  }
+}
+```
+
+**Critères d'acceptance :**
+- [ ] Fichier `lib/auth/assert-known-domain.ts` créé
+- [ ] Parse l'URL avec `new URL()` — rejette les URLs malformées
+- [ ] Lookup `Restaurant.domaine` en DB (pas une liste hardcodée)
+- [ ] Lève une erreur si domaine inconnu (fail-closed)
+- [ ] Utilisé dans TICK-146 et TICK-149
+
+---
+
+### TICK-146 — Route `GET /api/auth/google-relay` — initiation du flow
+**Épic :** Multi-tenant — Auth Hub
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-145
+
+**Description :**
+Point d'entrée du flow cross-domain. Le bouton Google sur `resto-a.com` ne pointe plus directement vers `/api/auth/signin/google` mais vers `{AUTH_HUB_URL}/api/auth/google-relay?returnTo=https://resto-a.com`. Cette route valide `returnTo`, stocke la valeur dans un cookie httpOnly sur le hub, puis redirecte vers le flow Google OAuth standard.
+
+**Flow :**
+```
+resto-a.com : clic "Google"
+  → GET {AUTH_HUB_URL}/api/auth/google-relay?returnTo=https://resto-a.com
+  → assertKnownDomain(returnTo)
+  → cookie httpOnly "auth_return_to" = "https://resto-a.com" (SameSite=Lax, 5min)
+  → redirect vers /api/auth/signin/google
+```
+
+**Critères d'acceptance :**
+- [ ] Route `app/api/auth/google-relay/route.ts` créée
+- [ ] Paramètre `returnTo` obligatoire — 400 si absent ou invalide
+- [ ] `assertKnownDomain(returnTo)` appelé — 403 si domaine inconnu
+- [ ] Cookie `auth_return_to` : httpOnly, Secure en prod, SameSite=Lax, MaxAge 300s
+- [ ] Redirect vers `/api/auth/signin/google`
+- [ ] Logger `google_relay_initiated` avec hostname (sans token)
+
+---
+
+### TICK-147 — Callback NextAuth `redirect` — émission AuthCode post-Google
+**Épic :** Multi-tenant — Auth Hub
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,75 j
+**Dépendances :** TICK-143, TICK-145, TICK-146
+
+**Description :**
+Modifier `lib/auth.ts` pour intercepter la redirection post-Google OAuth. Si un cookie `auth_return_to` est présent sur le hub, émettre un AuthCode en DB et rediriger vers `{returnTo}/api/auth/cross-domain?code=...` au lieu de revenir sur le hub.
+
+**Implémentation dans `authOptions.callbacks.redirect` :**
+```typescript
+async redirect({ url, baseUrl }) {
+  // Lire le cookie auth_return_to (disponible dans les cookies de la requête)
+  const returnTo = cookies().get('auth_return_to')?.value
+  if (returnTo) {
+    await assertKnownDomain(returnTo)
+    // Récupérer l'utilisateur depuis la session en cours
+    const session = await getServerSession(authOptions)
+    if (session?.user?.email) {
+      const code = crypto.randomBytes(32).toString('hex')
+      await AuthCode.create({
+        code,
+        userId: session.user.id,
+        email: session.user.email,
+        name: session.user.name,
+        returnTo,
+      })
+      // Supprimer le cookie
+      cookies().delete('auth_return_to')
+      return `${returnTo}/api/auth/cross-domain?code=${code}`
+    }
+  }
+  return url.startsWith(baseUrl) ? url : baseUrl
+}
+```
+
+**Critères d'acceptance :**
+- [ ] Callback `redirect` modifié dans `lib/auth.ts`
+- [ ] Cookie `auth_return_to` lu et supprimé après usage
+- [ ] AuthCode créé en DB avec code aléatoire 32 bytes
+- [ ] Redirect vers `{returnTo}/api/auth/cross-domain?code=...`
+- [ ] Si pas de cookie → comportement NextAuth inchangé (rétrocompatible)
+- [ ] Logger `auth_code_issued` avec `hostname(returnTo)` (pas le code lui-même)
+
+---
+
+### TICK-148 — Route `POST /api/auth/token` — échange server-to-server
+**Épic :** Multi-tenant — Auth Hub
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-143
+
+**Description :**
+Route sur le hub (`{AUTH_HUB_URL}`) qui permet à un restaurant d'échanger un AuthCode contre les données utilisateur. Appelée uniquement de serveur à serveur, protégée par `INTER_SERVICE_SECRET`.
+
+**Implémentation :**
+```typescript
+// app/api/auth/token/route.ts
+export async function POST(req: Request) {
+  // Vérification secret inter-services
+  const auth = req.headers.get('authorization')
+  if (auth !== `Bearer ${process.env.INTER_SERVICE_SECRET}`) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { code } = await req.json()
+  if (!code || typeof code !== 'string') {
+    return Response.json({ error: 'code requis' }, { status: 400 })
+  }
+
+  await connectDB()
+  // findOneAndDelete = atomique : lit ET supprime en une opération (usage unique)
+  const authCode = await AuthCode.findOneAndDelete({ code })
+  if (!authCode) {
+    return Response.json({ error: 'Code invalide ou expiré' }, { status: 401 })
+  }
+
+  return Response.json({
+    userId: authCode.userId,
+    email: authCode.email,
+    name: authCode.name,
+  })
+}
+```
+
+**Critères d'acceptance :**
+- [ ] Route `app/api/auth/token/route.ts` créée (POST uniquement)
+- [ ] Header `Authorization: Bearer {INTER_SERVICE_SECRET}` requis — 401 sinon
+- [ ] `findOneAndDelete` atomique (garantit usage unique sans race condition)
+- [ ] AuthCode expiré (TTL MongoDB) → document supprimé automatiquement → 401
+- [ ] Ne retourne jamais `passwordHash`, `role` ni données sensibles
+- [ ] Logger `auth_token_exchange` (succès et échec)
+- [ ] Rate limiting : max 20 req/min par IP (protège contre brute-force du code)
+
+---
+
+### TICK-149 — Route `GET /api/auth/cross-domain` — réception côté restaurant
+**Épic :** Multi-tenant — Auth Hub
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,75 j
+**Dépendances :** TICK-144, TICK-148
+
+**Description :**
+Route côté restaurant qui reçoit le code, l'échange contre les données utilisateur via appel server-to-server, crée un RelayToken en DB, puis redirige vers la page `/auth/completing` pour créer la session NextAuth.
+
+**Flow :**
+```
+Browser → GET /api/auth/cross-domain?code=abc123 (sur resto-a.com)
+  → Server: POST {AUTH_HUB_URL}/api/auth/token { code }
+  → Reçoit { userId, email, name }
+  → Crée RelayToken en DB (TTL 10s)
+  → Redirect vers /auth/completing?t={relayToken}
+```
+
+**Critères d'acceptance :**
+- [ ] Route `app/api/auth/cross-domain/route.ts` créée (GET uniquement)
+- [ ] Paramètre `code` obligatoire — redirect `/auth/login?error=invalid` si absent
+- [ ] Appel server-to-server vers `{AUTH_HUB_URL}/api/auth/token` avec `INTER_SERVICE_SECRET`
+- [ ] Si échange échoue (401/404) → redirect `/auth/login?error=expired`
+- [ ] RelayToken : `crypto.randomBytes(32).toString('hex')`, stocké en DB TTL 10s
+- [ ] Redirect vers `/auth/completing?t={relayToken}`
+- [ ] Timeout sur le fetch inter-services : 5s max (évite de bloquer indéfiniment)
+- [ ] Logger `cross_domain_exchange_success` et `cross_domain_exchange_failed`
+
+---
+
+### TICK-150 — Provider NextAuth `cross-domain` + page `/auth/completing`
+**Épic :** Multi-tenant — Auth Hub
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,75 j
+**Dépendances :** TICK-144, TICK-149
+
+**Description :**
+Créer le provider credentials `cross-domain` dans NextAuth qui valide le RelayToken et crée la session. Créer la page `/auth/completing` qui appelle automatiquement `signIn('cross-domain', { t: relayToken })` à son chargement.
+
+**Provider à ajouter dans `lib/auth.ts` :**
+```typescript
+CredentialsProvider({
+  id: 'cross-domain',
+  name: 'Cross-Domain',
+  credentials: { t: { label: 'Relay Token', type: 'text' } },
+  async authorize(credentials) {
+    if (!credentials?.t) return null
+    await connectDB()
+    // Atomique : lit et supprime (usage unique)
+    const relay = await RelayToken.findOneAndDelete({ token: credentials.t })
+    if (!relay) return null
+    // Upsert client (même logique que le provider Google existant)
+    const client = await Client.findOneAndUpdate(
+      { email: relay.email },
+      { $setOnInsert: { email: relay.email, nom: relay.name, provider: 'google', emailVerified: true, role: 'client' } },
+      { upsert: true, new: true }
+    )
+    return { id: client._id.toString(), email: client.email, name: client.nom, role: 'client' }
+  }
+})
+```
+
+**Page `/auth/completing` :**
+```typescript
+// app/(client)/auth/completing/page.tsx — Client Component
+'use client'
+export default function CompletingPage() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  useEffect(() => {
+    const t = searchParams.get('t')
+    if (!t) { router.replace('/auth/login?error=invalid'); return }
+    signIn('cross-domain', { t, redirect: false }).then((result) => {
+      if (result?.error) router.replace('/auth/login?error=expired')
+      else router.replace('/')
+    })
+  }, [])
+  return <LoadingSpinner message="Connexion en cours…" />
+}
+```
+
+**Critères d'acceptance :**
+- [ ] Provider `cross-domain` ajouté dans `lib/auth.ts`
+- [ ] `findOneAndDelete` atomique sur RelayToken
+- [ ] Upsert client cohérent avec le provider Google existant (évite les doublons)
+- [ ] Page `/auth/completing` créée — Client Component avec `useEffect`
+- [ ] Si `t` absent ou invalide → redirect `/auth/login?error=expired`
+- [ ] Si succès → redirect `/` (ou page d'origine si stockée en session)
+- [ ] `LoadingSpinner` affiché pendant la création de session (UX)
+
+---
+
+### TICK-151 — Mise à jour page `/auth/login` — bouton Google cross-domain
+**Épic :** Multi-tenant — UX
+**Priorité :** 🟠 Haute
+**Sizing :** 0,25 j
+**Dépendances :** TICK-146
+
+**Description :**
+Modifier la page de login client pour que le bouton "Continuer avec Google" initie le flow cross-domain au lieu d'appeler directement `signIn('google')`.
+
+**Avant :**
+```typescript
+<button onClick={() => signIn('google')}>Continuer avec Google</button>
+```
+
+**Après :**
+```typescript
+<button onClick={() => {
+  const returnTo = encodeURIComponent(window.location.origin)
+  window.location.href = `${process.env.NEXT_PUBLIC_AUTH_HUB_URL}/api/auth/google-relay?returnTo=${returnTo}`
+}}>Continuer avec Google</button>
+```
+
+**Critères d'acceptance :**
+- [ ] Bouton Google redirige vers `{NEXT_PUBLIC_AUTH_HUB_URL}/api/auth/google-relay?returnTo=...`
+- [ ] `returnTo` = `window.location.origin` (domaine courant du restaurant)
+- [ ] Variable `NEXT_PUBLIC_AUTH_HUB_URL` ajoutée à `.env.local.example`
+- [ ] Si `NEXT_PUBLIC_AUTH_HUB_URL` absent → bouton désactivé avec message "Social login non configuré"
+- [ ] Comportement login credentials (email/mdp) inchangé
+
+---
+
+### TICK-152 — Mise à jour CSP — autoriser appels vers l'Auth Hub
+**Épic :** Multi-tenant — Sécurité
+**Priorité :** 🟠 Haute
+**Sizing :** 0,25 j
+**Dépendances :** TICK-146
+
+**Description :**
+La directive `connect-src` du CSP actuel ne permet pas les appels vers `{AUTH_HUB_URL}`. Sans cette modification, le navigateur bloquera la redirection initiée depuis une page client.
+
+**Modification dans `middleware.ts` `generateCsp()` :**
+```typescript
+const authHubHost = process.env.AUTH_HUB_HOST ?? '' // ex: "app.3gsolution.com"
+`connect-src 'self' https://api.stripe.com https://challenges.cloudflare.com ${authHubHost ? `https://${authHubHost}` : ''}`.trim()
+```
+
+**Critères d'acceptance :**
+- [ ] `connect-src` inclut `https://{AUTH_HUB_HOST}` si la variable est définie
+- [ ] Si `AUTH_HUB_HOST` absent → CSP inchangé (rétrocompatible dev local)
+- [ ] Variable `AUTH_HUB_HOST` ajoutée à `.env.local.example`
+
+---
+
+### TICK-153 — Variables d'environnement & `.env.local.example` Sprint 19
+**Épic :** Multi-tenant — Déploiement
+**Priorité :** 🟠 Haute
+**Sizing :** 0,25 j
+**Dépendances :** TICK-148, TICK-149, TICK-151, TICK-152
+
+**Description :**
+Documenter toutes les nouvelles variables d'environnement introduites dans le Sprint 19.
+
+**Nouvelles variables :**
+```bash
+# Auth Hub — Sprint 19
+# URL du domaine central qui gère Google OAuth (ex: https://app.3gsolution.com)
+AUTH_HUB_URL=https://app.3gsolution.com
+
+# Visible côté client (préfixe NEXT_PUBLIC_)
+NEXT_PUBLIC_AUTH_HUB_URL=https://app.3gsolution.com
+
+# Hostname seul, pour la directive CSP connect-src (sans https://)
+AUTH_HUB_HOST=app.3gsolution.com
+
+# Secret partagé entre hub et restaurants pour l'échange server-to-server
+# Générer avec : openssl rand -base64 32
+INTER_SERVICE_SECRET=changeme_openssl_rand_base64_32
+```
+
+**Critères d'acceptance :**
+- [ ] `.env.local.example` mis à jour avec les 4 nouvelles variables + commentaires
+- [ ] Assertion au démarrage sur `INTER_SERVICE_SECRET` (même pattern que `NEXTAUTH_SECRET`)
+- [ ] `AUTH_HUB_URL` validé comme URL valide au démarrage
+
+---
+
+### TICK-154 — Checklist déploiement — Custom domains Vercel + Google Console
+**Épic :** Multi-tenant — Déploiement
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** tous les tickets précédents
+
+**Description :**
+Documenter les étapes opérationnelles pour onboarder un nouveau restaurant avec son domaine custom et s'assurer que le flow OAuth fonctionne end-to-end.
+
+**Checklist à produire dans `docs/onboarding-restaurant.md` :**
+
+**A — Google Console (une seule fois pour la plateforme)**
+- [ ] Créer un projet OAuth sur `console.cloud.google.com`
+- [ ] Ajouter URI de redirection autorisée : `https://app.3gsolution.com/api/auth/callback/google`
+- [ ] Copier `Client ID` et `Client Secret` → variables `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` sur Vercel
+
+**B — Par restaurant (lors de chaque onboarding)**
+- [ ] Créer l'entrée `Restaurant` en super-admin avec `domaine: "resto-a.com"`
+- [ ] Dans Vercel dashboard → Settings → Domains → ajouter `resto-a.com`
+- [ ] Configurer DNS chez le registrar du restaurant : `CNAME resto-a.com → cname.vercel-dns.com`
+- [ ] Vérifier SSL auto-provisioning Vercel (1-5 minutes)
+- [ ] Tester : `https://resto-a.com` → menu du restaurant s'affiche
+- [ ] Tester : flow Google login sur `https://resto-a.com` → session créée avec `restaurantId` correct
+- [ ] Tester : checkout Stripe → `success_url` pointe vers `https://resto-a.com/confirmation`
+
+**Critères d'acceptance :**
+- [ ] Document `docs/onboarding-restaurant.md` créé
+- [ ] Checklist couvre Google Console, Vercel, DNS et tests de recette
+- [ ] Section "Dépannage" : causes fréquentes d'erreur (DNS propagation, SSL pending, domaine non enregistré en DB)
+
+---
+
+### TICK-155 — Tests : flow OAuth cross-domain (intégration)
+**Épic :** Multi-tenant — Tests
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,75 j
+**Dépendances :** TICK-143 → TICK-151
+
+**Description :**
+Couvrir les scénarios critiques du flow cross-domain par des tests d'intégration.
+
+**Scénarios à couvrir :**
+
+`assertKnownDomain` :
+- [ ] URL valide et domaine en DB → resolve sans erreur
+- [ ] URL valide mais domaine inconnu → lève erreur
+- [ ] URL malformée → lève erreur
+
+`POST /api/auth/token` :
+- [ ] Code valide + bon secret → 200 + { userId, email, name }
+- [ ] Code valide + mauvais secret → 401
+- [ ] Code expiré (document TTL supprimé) → 401
+- [ ] Même code utilisé deux fois → 401 au second appel (usage unique)
+
+`GET /api/auth/cross-domain` :
+- [ ] Code valide → RelayToken créé + redirect `/auth/completing`
+- [ ] Code absent → redirect `/auth/login?error=invalid`
+- [ ] Échange échoue (hub répond 401) → redirect `/auth/login?error=expired`
+
+Provider `cross-domain` NextAuth :
+- [ ] RelayToken valide → session créée avec `role: 'client'`
+- [ ] RelayToken expiré → `authorize` retourne null
+- [ ] Même RelayToken deux fois → null au second appel
+
+**Critères d'acceptance :**
+- [ ] Tests dans `__tests__/auth/cross-domain.test.ts`
+- [ ] Mocks : MongoDB (AuthCode, RelayToken), fetch inter-services
+- [ ] Tous les scénarios listés couverts
+- [ ] Aucune régression sur les tests auth existants
 
 ---
 
