@@ -107,17 +107,17 @@ function ProduitCard({
         </div>
         <p className="text-xs text-orange-500 font-medium mb-1">{produit.categorie}</p>
         {produit.description && (
-          <p className="text-sm text-gray-500 line-clamp-2 mb-3">{produit.description}</p>
+          <p className="text-sm text-gray-700 line-clamp-2 mb-3">{produit.description}</p>
         )}
         {produit.options.length > 0 && (
-          <p className="text-xs text-gray-400 mb-3">{produit.options.length} option(s)</p>
+          <p className="text-xs text-gray-600 mb-3">{produit.options.length} option(s)</p>
         )}
 
         {/* Boutons management */}
         <div className="flex gap-2 pt-2 border-t border-gray-100 mt-auto">
           <button
             onClick={onEdit}
-            className="flex-1 text-xs font-medium text-blue-600 hover:text-blue-700 border border-blue-200 hover:bg-blue-50 rounded-lg py-1.5 transition-colors"
+            className="flex-1 text-xs font-semibold text-blue-700 hover:text-blue-800 border border-blue-300 hover:bg-blue-50 rounded-lg py-1.5 transition-colors"
           >
             Modifier
           </button>
@@ -125,15 +125,15 @@ function ProduitCard({
             onClick={onToggle}
             className={`flex-1 text-xs font-medium rounded-lg py-1.5 border transition-colors ${
               produit.actif
-                ? 'text-gray-500 border-gray-200 hover:bg-gray-50'
-                : 'text-green-600 border-green-200 hover:bg-green-50'
+                ? 'text-gray-800 border-gray-300 hover:bg-gray-50'
+                : 'text-green-700 border-green-300 hover:bg-green-50 font-semibold'
             }`}
           >
             {produit.actif ? 'Désactiver' : 'Activer'}
           </button>
           <button
             onClick={onDelete}
-            className="flex-1 text-xs font-medium text-red-500 hover:text-red-600 border border-red-200 hover:bg-red-50 rounded-lg py-1.5 transition-colors"
+            className="flex-1 text-xs font-semibold text-red-600 hover:text-red-700 border border-red-300 hover:bg-red-50 rounded-lg py-1.5 transition-colors"
           >
             Supprimer
           </button>
@@ -178,7 +178,8 @@ export default function AdminMenuPage() {
   // ── Créer ──────────────────────────────────────────────────────────────────
 
   const handleCreate = async (values: ProduitFormValues) => {
-    const body = { ...values, imageUrl: values.imageUrl || undefined };
+    const { imageUrl, ...rest } = values;
+    const body = imageUrl ? { ...rest, imageUrl } : rest;
     const res = await fetch('/api/produits', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -287,7 +288,7 @@ export default function AdminMenuPage() {
       {/* Formulaire de création */}
       {creating && (
         <div className="bg-white rounded-xl border shadow-sm p-6 mb-6">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">Nouveau produit</h2>
+          <h2 className="text-lg font-bold text-gray-900 mb-4">Nouveau produit</h2>
           <ProduitForm
             onSubmit={handleCreate}
             onCancel={() => setCreating(false)}
@@ -319,7 +320,7 @@ export default function AdminMenuPage() {
       )}
 
       {!loading && produits.length === 0 && (
-        <p className="text-gray-400 text-center py-16">
+        <p className="text-gray-700 text-center py-16 font-medium">
           Aucun produit. Créez le premier !
         </p>
       )}
@@ -329,7 +330,7 @@ export default function AdminMenuPage() {
         <div className="space-y-8">
           {categories.map((cat) => (
             <section key={cat}>
-              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
+              <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-3">
                 {cat}
               </h2>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">

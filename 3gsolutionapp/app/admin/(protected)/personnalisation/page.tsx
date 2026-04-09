@@ -127,7 +127,7 @@ export default function PersonnalisationPage() {
 
         {/* Nom du restaurant */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-semibold text-gray-900 mb-1">
             Nom du restaurant <span className="text-red-500">*</span>
           </label>
           <input
@@ -138,7 +138,7 @@ export default function PersonnalisationPage() {
             required
             className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-          <p className="text-xs text-gray-400 mt-1">{form.nomRestaurant.length}/80</p>
+          <p className="text-xs text-gray-600 mt-1">{form.nomRestaurant.length}/80</p>
         </div>
 
         {/* Bannière via DropZone — TICK-039 */}
@@ -152,7 +152,7 @@ export default function PersonnalisationPage() {
 
         {/* Couleur principale — TICK-122 */}
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">
+          <label className="block text-sm font-semibold text-gray-900 mb-2">
             Couleur principale du site
           </label>
           <div className="flex items-center gap-3 mb-3">
@@ -189,7 +189,7 @@ export default function PersonnalisationPage() {
                   style={{ backgroundColor: palette[key] }}
                   title={`${label}: ${palette[key]}`}
                 />
-                <span className="text-xs text-gray-400">{label}</span>
+                <span className="text-xs text-gray-700">{label}</span>
               </div>
             ))}
           </div>
@@ -197,10 +197,10 @@ export default function PersonnalisationPage() {
 
         {/* Horaires d'ouverture — TICK-100 */}
         <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Horaires d&apos;ouverture</h3>
+          <h3 className="text-sm font-bold text-gray-900 mb-3">Horaires d&apos;ouverture</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
+              <label className="block text-xs font-semibold text-gray-900 mb-1">
                 Ouverture <span className="text-red-500">*</span>
               </label>
               <input
@@ -212,7 +212,7 @@ export default function PersonnalisationPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
+              <label className="block text-xs font-semibold text-gray-900 mb-1">
                 Fermeture <span className="text-red-500">*</span>
               </label>
               <input
@@ -256,13 +256,16 @@ export default function PersonnalisationPage() {
 
       {/* Colonne droite : aperçu en temps réel */}
       <div className="md:w-80 lg:w-96 shrink-0 md:sticky md:top-6">
-        <h2 className="text-sm font-medium text-gray-600 mb-3 uppercase tracking-wide">
+        <h2 className="text-sm font-semibold text-gray-900 mb-3 uppercase tracking-wide">
           Aperçu en temps réel
         </h2>
         <div className="overflow-y-auto max-h-[80vh]">
           <PersonnalisationApercu
             nomRestaurant={form.nomRestaurant}
             banniereUrl={form.banniereUrl}
+            horaireOuverture={form.horaireOuverture}
+            horaireFermeture={form.horaireFermeture}
+            palette={palette}
           />
         </div>
       </div>

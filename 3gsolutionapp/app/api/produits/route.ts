@@ -25,7 +25,7 @@ const ProduitSchema = z.object({
   prix: z.number().int().min(0, 'Le prix doit être positif'),
   taux_tva: TauxTvaSchema, // TICK-127
   options: z.array(OptionSchema).default([]),
-  imageUrl: z.string().url().optional(), // TICK-036
+  imageUrl: z.string().min(1).optional().nullable(), // TICK-036
   actif: z.boolean().default(true),
 });
 

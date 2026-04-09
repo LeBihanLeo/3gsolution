@@ -2,7 +2,7 @@
 
 // TICK-040 — Cache client RGPD (email + téléphone)
 // TICK-101 — Créneaux filtrés depuis SiteConfig (horaireOuverture / horaireFermeture) + buffer +30 min
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { z } from 'zod';
 import { useCart, CartItem } from '@/lib/cartContext';
@@ -96,12 +96,14 @@ export default function FormulaireCommande() {
   const [fermeeAujourdhui, setFermeeAujourdhui] = useState(false);
   const [loadingConfig, setLoadingConfig] = useState(true);
 
+  // ─── Champs contrôlés ───────────────────────────────────────────────────
+  const [nom, setNom] = useState('');
+  const [telephone, setTelephone] = useState('');
+  const [email, setEmail] = useState('');
+
   // ─── TICK-040 : Cache RGPD ───────────────────────────────────────────────
   const [memoriser, setMemoriser] = useState(false);
   const [cacheExists, setCacheExists] = useState(false);
-  const nomRef = useRef<HTMLInputElement>(null);
-  const telRef = useRef<HTMLInputElement>(null);
-  const emailRef = useRef<HTMLInputElement>(null);
 
   // Charger SiteConfig au montage — TICK-101 / TICK-119/120 : cache: 'no-store' pour horaires/fermeture frais
   useEffect(() => {
@@ -126,24 +128,24 @@ export default function FormulaireCommande() {
 
     if (isAuthenticated && session?.user) {
       // Utilisateur connecté : pré-remplir depuis la session (nom + email)
-      if (nomRef.current) nomRef.current.value = session.user.name ?? '';
-      if (emailRef.current) emailRef.current.value = session.user.email ?? '';
-      // Téléphone depuis la base (non exposé dans le JWT)
+      setNom(session.user.name ?? '');
+      setEmail(session.user.email ?? '');
+      // Téléphone depuis le profil en base (non stocké dans le JWT)
       fetch('/api/client/profil')
-        .then((r) => r.json())
-        .then(({ client }) => {
-          if (client?.telephone && telRef.current) telRef.current.value = client.telephone;
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (data?.client?.telephone) setTelephone(data.client.telephone);
         })
         .catch(() => {});
-    } else {
+    } else if (status === 'unauthenticated') {
       // Mode invité : pré-remplir depuis le cache localStorage si présent
       const cache = readCache();
       if (cache) {
         setCacheExists(true);
         setMemoriser(true);
-        if (nomRef.current) nomRef.current.value = cache.nom;
-        if (telRef.current) telRef.current.value = cache.telephone;
-        if (emailRef.current) emailRef.current.value = cache.email ?? '';
+        setNom(cache.nom);
+        setTelephone(cache.telephone);
+        setEmail(cache.email ?? '');
       }
     }
   }, [status, isAuthenticated, session]);
@@ -152,9 +154,9 @@ export default function FormulaireCommande() {
     clearCache();
     setCacheExists(false);
     setMemoriser(false);
-    if (nomRef.current) nomRef.current.value = '';
-    if (telRef.current) telRef.current.value = '';
-    if (emailRef.current) emailRef.current.value = '';
+    setNom('');
+    setTelephone('');
+    setEmail('');
   }
 
   const aucunCreneau = !loadingConfig && !fermeeAujourdhui && creneaux.length === 0;
@@ -165,14 +167,14 @@ export default function FormulaireCommande() {
     setServerError('');
 
     const form = e.currentTarget;
-    const getValue = (name: string) =>
+    const getField = (name: string) =>
       (form.elements.namedItem(name) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)?.value ?? '';
 
     const raw = {
-      nom: getValue('nom').trim(),
-      telephone: getValue('telephone').trim(),
-      email: getValue('email').trim(),
-      commentaire: getValue('commentaire').trim(),
+      nom: nom.trim(),
+      telephone: telephone.trim(),
+      email: email.trim(),
+      commentaire: getField('commentaire').trim(),
     };
 
     const parsed = formSchema.safeParse(raw);
@@ -185,7 +187,7 @@ export default function FormulaireCommande() {
       return;
     }
 
-    const creneau = getValue('creneau');
+    const creneau = getField('creneau');
     if (!creneau) {
       setFieldErrors({ creneau: 'Veuillez sélectionner un créneau horaire' });
       return;
@@ -195,8 +197,17 @@ export default function FormulaireCommande() {
       return;
     }
 
+
     // ─── TICK-040 : gérer le cache RGPD au submit ────────────────────────
-    if (memoriser) {
+    if (isAuthenticated) {
+      // Utilisateur connecté : persister le téléphone dans son profil (fire-and-forget)
+      // → pré-remplissage automatique à la prochaine visite
+      fetch('/api/client/profil', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telephone: raw.telephone }),
+      }).catch(() => {});
+    } else if (memoriser) {
       saveCache({
         nom: raw.nom,
         telephone: raw.telephone,
@@ -285,7 +296,15 @@ export default function FormulaireCommande() {
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Nom <span className="text-red-400">*</span>
           </label>
-          <input ref={nomRef} name="nom" type="text" required autoComplete="name" className={inputCls} />
+          <input
+            name="nom"
+            type="text"
+            required
+            autoComplete="name"
+            value={nom}
+            onChange={(e) => setNom(e.target.value)}
+            className={inputCls}
+          />
           {fieldErrors.nom && <p className="text-xs text-red-500 mt-1">{fieldErrors.nom}</p>}
         </div>
 
@@ -294,7 +313,6 @@ export default function FormulaireCommande() {
             Téléphone <span className="text-red-400">*</span>
           </label>
           <input
-            ref={telRef}
             name="telephone"
             type="tel"
             inputMode="numeric"
@@ -302,10 +320,8 @@ export default function FormulaireCommande() {
             placeholder="0612345678"
             autoComplete="tel"
             maxLength={10}
-            onInput={(e) => {
-              const el = e.currentTarget;
-              el.value = el.value.replace(/\D/g, '');
-            }}
+            value={telephone}
+            onChange={(e) => setTelephone(e.target.value.replace(/\D/g, ''))}
             className={inputCls}
           />
           {fieldErrors.telephone && (
@@ -318,11 +334,12 @@ export default function FormulaireCommande() {
             Email <span className="text-gray-400 font-normal">(optionnel, pour confirmation)</span>
           </label>
           <input
-            ref={emailRef}
             name="email"
             type="email"
             autoComplete="email"
             placeholder="vous@exemple.fr"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             className={inputCls}
           />
           {fieldErrors.email && <p className="text-xs text-red-500 mt-1">{fieldErrors.email}</p>}

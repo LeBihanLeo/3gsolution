@@ -56,39 +56,39 @@ export default function OrderCard({ commande, onAdvance }: OrderCardProps) {
       <div className="flex items-center justify-between mb-1.5">
         <div className="flex items-center gap-2">
           <span className="font-mono font-bold text-gray-900 text-sm">#{idCourt}</span>
-          <span className="text-xs text-gray-400">{heure}</span>
+          <span className="text-xs text-gray-700 font-medium">{heure}</span>
         </div>
         <span className="text-base font-bold text-gray-900">{formatPrix(commande.total)}</span>
       </div>
 
       {/* Ligne 2 — Retrait */}
-      <div className="text-xs text-gray-500 mb-1.5">{retrait}</div>
+      <div className="text-xs text-gray-800 font-medium mb-1.5">{retrait}</div>
 
       {/* Ligne 3 — Client + téléphone */}
       <div className="flex items-center gap-1.5 text-xs text-gray-700 mb-3 flex-wrap">
         <Phone size={11} className="shrink-0" />
         <span className="font-medium">{commande.client.nom}</span>
-        <span className="text-gray-400">·</span>
-        <span className="text-gray-500">{commande.client.telephone}</span>
+        <span className="text-gray-600">·</span>
+        <span className="text-gray-800">{commande.client.telephone}</span>
       </div>
 
       {/* Détail produits */}
       <div className="border-t border-gray-100 pt-2.5 mb-3 space-y-1.5">
         {commande.produits.map((p, idx) => (
-          <div key={idx} className="text-xs text-gray-700 flex justify-between gap-2">
+          <div key={idx} className="text-xs text-gray-900 flex justify-between gap-2">
             <span>
               {p.quantite}× {p.nom}
               {p.options.length > 0 && (
-                <span className="text-gray-400"> ({p.options.map((o) => o.nom).join(', ')})</span>
+                <span className="text-gray-600"> ({p.options.map((o) => o.nom).join(', ')})</span>
               )}
             </span>
-            <span className="text-gray-500 shrink-0">
+            <span className="text-gray-700 shrink-0">
               {formatPrix((p.prix + p.options.reduce((s, o) => s + o.prix, 0)) * p.quantite)}
             </span>
           </div>
         ))}
         {commande.commentaire && (
-          <p className="text-xs text-gray-400 italic mt-1">Note : {commande.commentaire}</p>
+          <p className="text-xs text-gray-700 italic mt-1">Note : {commande.commentaire}</p>
         )}
       </div>
 

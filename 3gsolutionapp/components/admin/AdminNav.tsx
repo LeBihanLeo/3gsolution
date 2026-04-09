@@ -15,7 +15,7 @@ export default function AdminNav() {
         className={`px-4 min-h-[44px] flex items-center rounded-lg text-sm font-medium transition-colors ${
           active
             ? 'bg-blue-600 text-white'
-            : 'text-gray-600 hover:bg-gray-100'
+            : 'text-gray-900 hover:bg-gray-100'
         }`}
       >
         {label}
@@ -35,7 +35,7 @@ export default function AdminNav() {
         </div>
         <button
           onClick={() => signOut({ callbackUrl: '/admin/login' })}
-          className="text-sm text-gray-500 hover:text-red-500 hover:underline transition-colors min-h-[44px]"
+          className="text-sm text-gray-800 hover:text-red-600 hover:underline transition-colors min-h-[44px] font-medium"
         >
           Se déconnecter
         </button>
