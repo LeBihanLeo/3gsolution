@@ -56,14 +56,14 @@ services:
       ME_CONFIG_MONGODB_ADMINPASSWORD: devpassword
       ME_CONFIG_MONGODB_URL: mongodb://root:devpassword@mongo:27017/
       ME_CONFIG_BASICAUTH: false
-      
+
   maildev:
-  image: maildev/maildev
-  container_name: 3gs_maildev
-  restart: unless-stopped
-  ports:
-    - "1080:1080"   # interface web
-    - "1025:1025"   # SMTP
+    image: maildev/maildev
+    container_name: 3gs_maildev
+    restart: unless-stopped
+    ports:
+      - "1080:1080"   # interface web
+      - "1025:1025"   # SMTP
 
 
 volumes:
