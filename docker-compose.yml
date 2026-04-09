@@ -28,7 +28,7 @@ services:
       mongo:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "3008:3000"
     volumes:
       - ./3gsolutionapp:/app
       - /app/node_modules
