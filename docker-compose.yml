@@ -18,6 +18,30 @@ services:
       timeout: 5s
       retries: 5
 
+  nextjs:
+    build:
+      context: ./3gsolutionapp
+      dockerfile: Dockerfile.dev
+    container_name: 3gs_nextjs
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./3gsolutionapp:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      - MONGODB_URI=mongodb://root:devpassword@mongo:27017/3gsolution?authSource=admin
+      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_SECRET=dev_secret_change_in_prod
+    env_file:
+      - path: ./3gsolutionapp/.env.local
+        required: false
+
   mongo-express:
     image: mongo-express:1
     container_name: 3gs_mongo_ui
