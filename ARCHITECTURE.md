@@ -1036,19 +1036,160 @@ Cette section recense les fonctionnalités intentionnellement exclues du scope a
 
 ### Export de données personnelles (RGPD Art. 20 — Droit à la portabilité)
 
-**Mis de côté lors de :** Sprint 10.2 (2026-03-24)
-**Pourquoi :** Priorité produit revue — la valeur utilisateur de l'export JSON est faible à ce stade. La conformité RGPD Art. 20 peut être satisfaite ultérieurement.
-**À reprendre quand :** Volume d'utilisateurs actifs significatif ou demande explicite utilisateur.
+> ✅ **Implémenté en Sprint 18 (TICK-140)** — Cette section n'est plus "mise de côté".
 
-**Périmètre mis de côté :**
-- `GET /api/client/export` — route API d'export (non implémentée)
-- Bouton "Télécharger mes données" sur la page `/profil` (retiré du code)
-- Rate limiting spécifique à cet endpoint (3 req/15min)
-
-**Ce qui reste actif (droit d'accès, Art. 15) :**
-- `GET /api/client/commandes` — le client peut voir ses commandes depuis le profil
-- Suppression de compte `DELETE /api/client/account` — toujours disponible (RGPD Art. 17)
+`GET /api/client/export` : toutes les commandes du client **tous restaurants confondus** (portabilité totale — Art. 20 RGPD), avec le nom du restaurant dans chaque entrée (`restaurant: "Le Bistrot du Coin"`). Route protégée par session client. Log `client_data_exported` via `lib/logger.ts`.
 
 ---
 
-*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19) — Version 1.8 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20 : validation prix serveur, headers HTTP, rate limiting, magic bytes upload, middleware étendu, mock guard, CNIL, rétention RGPD, sous-traitants, logs structurés) — Version 1.9 (Sprint 9 Correctifs post-audit ajoutés le 2026-03-20 : index TTL MongoDB purgeAt, CSP sans unsafe-eval en prod, middleware /api/commandes/:id + IP non-spoofable, rate limiting fail-safe, Zod validation metadata webhook, logger mock-checkout) — Version 1.10 (Conventions de mock complétées le 2026-03-20 : file-type ESM mocké, vi.hoisted() pour factories dépendant de variables externes, connectDB + Produit mockés dans checkout) — Version 2.0 (Sprint 10–11 Compte Client ajouté le 2026-03-24 : modèle Client, auth étendue NextAuth Google + credentials client, inscription + vérification email, reset mdp, page profil, historique commandes, suppression compte RGPD, rate limiting étendu) — Version 2.1 (Re-commande rapide + Export RGPD Art. 20 ajoutés le 2026-03-24) — Version 2.2 (Sprint 10.2 ajouté le 2026-03-24 : écran choix invité/connexion, design system Button/BackLink, nom client obligatoire, historique commandes avancé, fix confirmation post-paiement, navigation retour, Mes données mis de côté) — Version 2.3 (Sprint 14 ajouté le 2026-03-26 : anonymisation manuelle commandes mise de côté, 7 correctifs UX & Auth admin + client) — Version 2.4 (Sprint 15 ajouté le 2026-03-26 : fix re-commande rapide + bouton discret TICK-114, contraste input + curseur profil TICK-115, bouton "Mon profil" déplacé header→main TICK-116)*
+## Architecture Multi-Tenant (Sprint 18 — TICK-131→141)
+
+> **Version 2.5** — Implémentée le 2026-04-07.
+
+### Vue d'ensemble
+
+La plateforme 3G Solution est une application **Next.js unique** servant **N restaurants** sur des domaines personnalisés, avec une base MongoDB partagée. Chaque restaurant est isolé logiquement via un champ `restaurantId` sur tous les documents métier.
+
+```
+restaurant-a.fr → Next.js app → resolveTenant("restaurant-a.fr") → ObjectId A
+restaurant-b.com → Next.js app → resolveTenant("restaurant-b.com") → ObjectId B
+```
+
+### Modèle `Restaurant`
+
+Remplace `SiteConfig` (gardé avec `@deprecated`). Stocke les données vitrine + credentials admin + clés Stripe par restaurant.
+
+```typescript
+{
+  _id: ObjectId,
+  nom: string,                    // "Le Bistrot du Coin"
+  domaine: string,                // "restaurant-a.fr" (unique, index)
+  slug: string,                   // "restaurant-a" (unique, index)
+  banniere?: string,
+  couleurPrimaire: string,        // hex "#E63946"
+  couleurSecondaire: string,      // hex "#ffffff"
+  horaireOuverture: string,       // "11:30"
+  horaireFermeture: string,       // "14:00"
+  fermeeAujourdhui: boolean,
+  adminEmail: string,
+  adminPasswordHash: string,      // select: false — jamais exposé en API
+  stripePublishableKey?: string,
+  stripeSecretKey?: string,       // select: false
+  stripeWebhookSecret?: string,   // select: false
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### Résolution du tenant (deux étapes)
+
+**Contrainte :** Le middleware Next.js tourne sur **Edge Runtime** — Mongoose/MongoDB est incompatible. La résolution DB se fait donc en Node.js runtime.
+
+```
+[Edge — middleware.ts]
+  extractHost(request) → "restaurant-a.fr"
+  request.headers.set("x-tenant-host", host)
+  → passe la main au runtime Node.js
+
+[Node.js — lib/tenant.ts]
+  resolveTenantId(host) → lookup Restaurant.findOne({ domaine: host })
+                        → Map cache TTL 60s (évite un lookup par requête)
+  getTenantId()         → lit x-tenant-host + appelle resolveTenantId()
+  getTenantRestaurant() → retourne le doc Restaurant complet (sans champs select:false)
+
+[Dev] Si DEV_TENANT_ID est défini → court-circuit DB, retourne cet _id directement.
+      Sinon → premier Restaurant en base (seed dev).
+```
+
+### Champs `restaurantId` ajoutés
+
+| Modèle | Type | Commentaire |
+|--------|------|-------------|
+| `Produit` | `ObjectId` ref Restaurant, required, index | Isolation menu par restaurant |
+| `Commande` | `ObjectId` ref Restaurant, required, index | Isolation commandes |
+| `PendingOrder` | `String` (stringifié) | Utilisé par le webhook Stripe |
+
+### Isolation des API Routes
+
+| Route | Filtre appliqué |
+|-------|----------------|
+| `GET /api/produits` | `{ restaurantId, actif: true }` |
+| `POST /api/produits` | Injecte `restaurantId: getTenantId()` |
+| `PUT/DELETE /api/produits/[id]` | `findOneAndUpdate/Delete({ _id, restaurantId })` |
+| `GET /api/commandes` (admin) | `{ restaurantId }` |
+| `POST /api/checkout` | Lit `restaurant.stripeSecretKey` via `getStripeClient(restaurantId)` |
+| `POST /api/webhooks/stripe` | `restaurantId` lu depuis `PendingOrder` avant vérif signature |
+| `GET /api/client/commandes` | `{ clientId, restaurantId }` — historique scopé au restaurant courant |
+| `GET /api/client/export` | `{ clientId }` uniquement — portabilité totale tous restaurants (Art. 20) |
+| `GET/PUT /api/site-config` | `getTenantRestaurant()` / `Restaurant.findByIdAndUpdate(restaurantId, ...)` |
+
+### Stripe multi-tenant (`lib/stripe.ts`)
+
+```typescript
+// Retourne un client Stripe initialisé avec la clé du restaurant
+// Map cache module-level (évite un lookup DB par requête)
+export async function getStripeClient(restaurantId: string | null): Promise<Stripe>
+
+// Retourne le webhook secret du restaurant (fallback env var)
+export async function getStripeWebhookSecret(restaurantId: string): Promise<string | null>
+
+// @deprecated — fallback env var uniquement
+export function getStripe(): Stripe
+```
+
+**Webhook :** le `restaurantId` est résolu depuis `PendingOrder.restaurantId` (inclus dans les metadata Stripe) **avant** la vérification de signature — chaque restaurant utilise son propre `webhookSecret`.
+
+### Auth admin multi-tenant (`lib/auth.ts`)
+
+Le provider `credentials` (admin) lit `adminEmail` + `adminPasswordHash` depuis le document `Restaurant` identifié par `x-tenant-host`. Il retourne `restaurantId` et `restaurantDomain` dans le JWT.
+
+**Protection cross-tenant :** le middleware compare `token.restaurantDomain` au `Host` courant. Un admin authentifié sur `restaurant-a.fr` ne peut pas accéder à `restaurant-b.com`. (Bypass sur `localhost` en dev.)
+
+### Super-admin (`/superadmin/*`)
+
+Compte unique pour le gestionnaire de la plateforme 3G Solution. Credentials en variables d'env (`SUPERADMIN_EMAIL`, `SUPERADMIN_PASSWORD_HASH`).
+
+| Route | Accès |
+|-------|-------|
+| `GET /superadmin/login` | Public |
+| `GET /superadmin/restaurants` | `role === "superadmin"` |
+| `GET /superadmin/restaurants/nouveau` | `role === "superadmin"` |
+| `GET /superadmin/restaurants/[id]` | `role === "superadmin"` |
+| `GET /api/superadmin/restaurants` | `role === "superadmin"` — liste |
+| `POST /api/superadmin/restaurants` | `role === "superadmin"` — création |
+| `GET /api/superadmin/restaurants/[id]` | `role === "superadmin"` — détail |
+| `PUT /api/superadmin/restaurants/[id]` | `role === "superadmin"` — mise à jour |
+| `DELETE /api/superadmin/restaurants/[id]` | `role === "superadmin"` — suppression |
+
+Les champs `adminPasswordHash`, `stripeSecretKey`, `stripeWebhookSecret` ne sont **jamais** retournés dans les réponses API.
+
+### Variables d'environnement v18
+
+```env
+# Runtime (obligatoires)
+MONGODB_URI=...
+NEXTAUTH_URL=http://localhost:3000   # domaine courant en dev
+NEXTAUTH_SECRET=...
+SUPERADMIN_EMAIL=superadmin@3gsolution.fr
+SUPERADMIN_PASSWORD_HASH=$2b$10$...
+SUPERADMIN_JWT_SECRET=...
+
+# Développement — tenant par défaut
+DEV_TENANT_ID=<_id MongoDB du restaurant de dev>
+
+# Variables retirées en v18 (désormais stockées par Restaurant en DB) :
+# ADMIN_EMAIL, ADMIN_PASSWORD_HASH
+# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+```
+
+### Checklist onboarding nouveau restaurant
+
+1. **Connexion super-admin** → `/superadmin/login`
+2. **Création restaurant** → `/superadmin/restaurants/nouveau` (nom, domaine, slug, admin email/mdp, clés Stripe)
+3. **Configuration DNS** → pointer le domaine vers le déploiement Vercel (CNAME ou A record)
+4. **Vercel** → ajouter le domaine dans *Project Settings → Domains*
+5. **Stripe** → configurer le webhook endpoint `https://<domaine>/api/webhooks/stripe` (event : `checkout.session.completed`) et copier le `whsec_` dans le champ `stripeWebhookSecret` du restaurant
+
+---
+
+*Document généré le 2026-03-17 — Version 1.4 (Images + Cache RGPD + Stratégie de tests ajoutés le 2026-03-18) — Version 1.5 (Fallback upload local + stack réelle ajoutés le 2026-03-19) — Version 1.6 (Numéro de commande client ajouté le 2026-03-19) — Version 1.7 (Conventions de mock étendues + data-testid hero ajoutés le 2026-03-19) — Version 1.8 (Sprint 8 Sécurité & RGPD ajouté le 2026-03-20 : validation prix serveur, headers HTTP, rate limiting, magic bytes upload, middleware étendu, mock guard, CNIL, rétention RGPD, sous-traitants, logs structurés) — Version 1.9 (Sprint 9 Correctifs post-audit ajoutés le 2026-03-20 : index TTL MongoDB purgeAt, CSP sans unsafe-eval en prod, middleware /api/commandes/:id + IP non-spoofable, rate limiting fail-safe, Zod validation metadata webhook, logger mock-checkout) — Version 1.10 (Conventions de mock complétées le 2026-03-20 : file-type ESM mocké, vi.hoisted() pour factories dépendant de variables externes, connectDB + Produit mockés dans checkout) — Version 2.0 (Sprint 10–11 Compte Client ajouté le 2026-03-24 : modèle Client, auth étendue NextAuth Google + credentials client, inscription + vérification email, reset mdp, page profil, historique commandes, suppression compte RGPD, rate limiting étendu) — Version 2.1 (Re-commande rapide + Export RGPD Art. 20 ajoutés le 2026-03-24) — Version 2.2 (Sprint 10.2 ajouté le 2026-03-24 : écran choix invité/connexion, design system Button/BackLink, nom client obligatoire, historique commandes avancé, fix confirmation post-paiement, navigation retour, Mes données mis de côté) — Version 2.3 (Sprint 14 ajouté le 2026-03-26 : anonymisation manuelle commandes mise de côté, 7 correctifs UX & Auth admin + client) — Version 2.4 (Sprint 15 ajouté le 2026-03-26 : fix re-commande rapide + bouton discret TICK-114, contraste input + curseur profil TICK-115, bouton "Mon profil" déplacé header→main TICK-116) — Version 2.5 (Sprint 18 ajouté le 2026-04-07 : architecture multi-tenant complète, modèle Restaurant, résolution tenant deux étapes Edge+Node.js, restaurantId sur Produit/Commande/PendingOrder, Stripe multi-tenant, super-admin CRUD restaurants, auth admin multi-tenant + protection cross-tenant, export RGPD Art. 20 implémenté, .env.local.example v18)*

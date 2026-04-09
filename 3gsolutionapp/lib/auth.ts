@@ -1,18 +1,24 @@
 // TICK-005 — Auth admin (credentials)
 // TICK-066 — Extension : Google + client credentials
+// TICK-136 — Auth admin multi-tenant : credentials lus depuis Restaurant en DB
+// TICK-147 — Callback redirect : émission AuthCode post-Google pour flow cross-domain
+// TICK-150 — Provider cross-domain : échange RelayToken → session NextAuth
 import { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
 import bcrypt from 'bcryptjs';
+import { randomBytes } from 'crypto';
+import { cookies } from 'next/headers';
 import { connectDB } from '@/lib/mongodb';
 import Client from '@/models/Client';
+import Restaurant from '@/models/Restaurant';
+import AuthCode from '@/models/AuthCode';
+import RelayToken from '@/models/RelayToken';
 import { verifyTurnstile } from '@/lib/turnstile';
+import { resolveTenantId } from '@/lib/tenant';
+import { assertKnownDomain } from '@/lib/auth/assert-known-domain';
+import { logger } from '@/lib/logger';
 
-// CVE-10 — Vérifier la présence de NEXTAUTH_SECRET au démarrage.
-// Sans cette variable, NextAuth dérive une clé faible pour signer les JWT,
-// ce qui peut permettre la falsification de tokens en environnement prévisible.
-// Cette assertion lève une erreur au démarrage du serveur plutôt qu'à la première
-// requête, ce qui rend le problème visible immédiatement en CI/CD.
 if (!process.env.NEXTAUTH_SECRET) {
   throw new Error(
     '[auth] NEXTAUTH_SECRET est manquant. Définissez cette variable dans .env.local ' +
@@ -23,7 +29,7 @@ if (!process.env.NEXTAUTH_SECRET) {
 
 export const authOptions: NextAuthOptions = {
   providers: [
-    // ── Provider admin (credentials) ────────────────────────────────────────
+    // ── Provider admin (credentials) — TICK-136 multi-tenant ────────────────
     CredentialsProvider({
       id: 'credentials',
       name: 'Admin',
@@ -31,6 +37,8 @@ export const authOptions: NextAuthOptions = {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Mot de passe', type: 'password' },
         turnstileToken: { label: 'Turnstile', type: 'text' },
+        // Le host est transmis par le formulaire login pour identifier le tenant
+        tenantHost: { label: 'Tenant Host', type: 'text' },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
@@ -38,20 +46,40 @@ export const authOptions: NextAuthOptions = {
         const turnstileOk = await verifyTurnstile(credentials.turnstileToken);
         if (!turnstileOk) return null;
 
-        const adminEmail = process.env.ADMIN_EMAIL;
-        const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+        await connectDB();
 
-        if (!adminEmail || !adminPasswordHash) {
-          console.error('Variables ADMIN_EMAIL ou ADMIN_PASSWORD_HASH manquantes');
+        // TICK-136 — Résoudre le tenant depuis le host transmis par le formulaire
+        const host = credentials.tenantHost ?? 'localhost';
+        const restaurantId = await resolveTenantId(host);
+
+        if (!restaurantId) {
+          console.error('[auth] Tenant non résolu pour le host:', host);
           return null;
         }
 
-        if (credentials.email !== adminEmail) return null;
+        // Charger le restaurant avec adminPasswordHash (select: false par défaut)
+        const restaurant = await Restaurant.findById(restaurantId)
+          .select('+adminPasswordHash')
+          .lean();
 
-        const isValid = await bcrypt.compare(credentials.password, adminPasswordHash);
+        if (!restaurant) {
+          console.error('[auth] Restaurant introuvable:', restaurantId);
+          return null;
+        }
+
+        if (credentials.email !== restaurant.adminEmail) return null;
+
+        const isValid = await bcrypt.compare(credentials.password, restaurant.adminPasswordHash);
         if (!isValid) return null;
 
-        return { id: '1', email: adminEmail, name: 'Admin', role: 'admin' };
+        return {
+          id: restaurantId,
+          email: restaurant.adminEmail,
+          name: restaurant.nom,
+          role: 'admin',
+          restaurantId,
+          restaurantDomain: restaurant.domaine,
+        };
       },
     }),
 
@@ -93,21 +121,91 @@ export const authOptions: NextAuthOptions = {
       },
     }),
 
+    // ── Provider super-admin (credentials) — TICK-138 ───────────────────────
+    CredentialsProvider({
+      id: 'superadmin-credentials',
+      name: 'SuperAdmin',
+      credentials: {
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Mot de passe', type: 'password' },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) return null;
+
+        const superEmail = process.env.SUPERADMIN_EMAIL;
+        const superHash = process.env.SUPERADMIN_PASSWORD_HASH;
+
+        if (!superEmail || !superHash) {
+          console.error('[auth] SUPERADMIN_EMAIL ou SUPERADMIN_PASSWORD_HASH manquants');
+          return null;
+        }
+
+        if (credentials.email !== superEmail) return null;
+
+        const isValid = await bcrypt.compare(credentials.password, superHash);
+        if (!isValid) return null;
+
+        return {
+          id: 'superadmin',
+          email: superEmail,
+          name: 'Super Admin',
+          role: 'superadmin',
+        };
+      },
+    }),
+
     // ── Provider Google ──────────────────────────────────────────────────────
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID ?? '',
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
     }),
+
+    // ── Provider cross-domain (TICK-150) ─────────────────────────────────────
+    // Reçoit un RelayToken (TTL 10s) et crée la session NextAuth côté restaurant.
+    // Appelé uniquement depuis la page /auth/completing après l'échange server-to-server.
+    CredentialsProvider({
+      id: 'cross-domain',
+      name: 'Cross-Domain',
+      credentials: { t: { label: 'Relay Token', type: 'text' } },
+      async authorize(credentials) {
+        if (!credentials?.t) return null;
+        await connectDB();
+        // findOneAndDelete = atomique : lit ET supprime (usage unique garanti)
+        const relay = await RelayToken.findOneAndDelete({ token: credentials.t });
+        if (!relay) return null;
+        // Upsert client — cohérent avec le provider Google existant
+        const client = await Client.findOneAndUpdate(
+          { email: relay.email.toLowerCase() },
+          {
+            $set: {
+              email: relay.email.toLowerCase(),
+              provider: 'google',
+              emailVerified: true,
+              role: 'client',
+            },
+            $setOnInsert: { nom: relay.name },
+          },
+          { upsert: true, new: true }
+        );
+        logger.info('cross_domain_session_created', { email: relay.email });
+        return {
+          id: client._id.toString(),
+          email: client.email,
+          name: client.nom ?? relay.name ?? client.email,
+          role: 'client',
+        };
+      },
+    }),
   ],
 
   session: {
     strategy: 'jwt',
-    maxAge: 30 * 24 * 60 * 60, // 30 jours max
+    maxAge: 30 * 24 * 60 * 60,
   },
 
   pages: {
     signIn: '/admin/login',
-    error: '/auth/login', // TICK-111 — erreur OAuth redirige vers login client (pas admin)
+    error: '/auth/login',
   },
 
   callbacks: {
@@ -120,13 +218,11 @@ export const authOptions: NextAuthOptions = {
           const existing = await Client.findOne({ email });
 
           if (existing && existing.provider === 'credentials') {
-            // Compte credentials existant → liaison Google (garde le passwordHash)
             await Client.findOneAndUpdate(
               { email },
               { $set: { provider: 'both', emailVerified: true } }
             );
           } else {
-            // Nouveau compte Google ou compte Google déjà connu → upsert
             await Client.findOneAndUpdate(
               { email },
               {
@@ -148,21 +244,22 @@ export const authOptions: NextAuthOptions = {
       return true;
     },
 
-    // ── jwt : injecte role + id + expiry ───────────────────────────────────
+    // ── jwt : injecte role + id + restaurantId + expiry ────────────────────
     async jwt({ token, user, account }) {
       if (user) {
-        // CVE-01 — Le fallback 'client' est délibéré : le rôle 'admin' est
-        // assigné uniquement par le CredentialsProvider admin (qui retourne
-        // explicitement { role: 'admin' }). Utiliser 'admin' comme fallback
-        // exposerait tous les utilisateurs Google à une escalade de privilège
-        // si MongoDB est indisponible lors du callback signIn.
         token.role = (user as { role?: string }).role ?? 'client';
         token.id = user.id;
 
-        // Expiry dynamique selon rôle / rememberMe
-        const rememberMe = (user as { rememberMe?: boolean }).rememberMe;
+        // TICK-136 — restaurantId et restaurantDomain pour la protection cross-tenant
+        const u = user as { restaurantId?: string; restaurantDomain?: string; rememberMe?: boolean };
+        if (u.restaurantId) token.restaurantId = u.restaurantId;
+        if (u.restaurantDomain) token.restaurantDomain = u.restaurantDomain;
+
+        const rememberMe = u.rememberMe;
         if (token.role === 'admin') {
           token.exp = Math.floor(Date.now() / 1000) + 8 * 60 * 60;
+        } else if (token.role === 'superadmin') {
+          token.exp = Math.floor(Date.now() / 1000) + 4 * 60 * 60;
         } else if (rememberMe) {
           token.exp = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
         } else {
@@ -171,8 +268,6 @@ export const authOptions: NextAuthOptions = {
       }
 
       // Pour la connexion Google : résoudre l'ID MongoDB depuis la base
-      // CVE-01 — En cas d'échec DB, on invalide le token plutôt que de laisser
-      // passer l'utilisateur avec un rôle incorrect (fail-closed).
       if (account?.provider === 'google' && user?.email) {
         try {
           await connectDB();
@@ -182,12 +277,9 @@ export const authOptions: NextAuthOptions = {
             token.role = 'client';
             token.exp = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
           } else {
-            // Compte Google introuvable en base (ne devrait pas arriver après signIn)
             return { ...token, error: 'AccountNotFound' };
           }
         } catch {
-          // CVE-01 — Fail-closed : si MongoDB est indisponible, invalider le token
-          // plutôt que de risquer une escalade de privilège.
           return { ...token, error: 'DatabaseUnavailable' };
         }
       }

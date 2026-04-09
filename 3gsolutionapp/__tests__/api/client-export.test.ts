@@ -1,12 +1,14 @@
 // TICK-081 — Tests GET /api/client/export
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockSelect, mockLean, mockSort, mockFindCommandes } = vi.hoisted(() => {
+const { mockSelect, mockLean, mockSort, mockPopulate, mockFindCommandes } = vi.hoisted(() => {
   const mockLean = vi.fn();
   const mockSort = vi.fn(() => ({ lean: mockLean }));
-  const mockFindCommandes = vi.fn(() => ({ select: vi.fn(() => ({ sort: mockSort })) }));
+  const mockPopulate = vi.fn(() => ({ sort: mockSort }));
+  // TICK-140 — route utilise .select().populate().sort().lean()
+  const mockFindCommandes = vi.fn(() => ({ select: vi.fn(() => ({ populate: mockPopulate })) }));
   const mockSelect = vi.fn();
-  return { mockSelect, mockLean, mockSort, mockFindCommandes };
+  return { mockSelect, mockLean, mockSort, mockPopulate, mockFindCommandes };
 });
 
 const mockFindByIdSelect = vi.hoisted(() => vi.fn());

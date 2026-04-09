@@ -18,6 +18,8 @@ vi.mock('next-auth', () => ({ getServerSession: vi.fn() }));
 vi.mock('@/models/Commande', () => ({
   default: { find: mockFind },
 }));
+// TICK-140 — getTenantId utilisé par la route (multi-tenant)
+vi.mock('@/lib/tenant', () => ({ getTenantId: vi.fn().mockResolvedValue('restaurant_test_id') }));
 
 import { getServerSession } from 'next-auth';
 import { GET } from '@/app/api/client/commandes/route';
@@ -128,12 +130,12 @@ describe('GET /api/client/commandes', () => {
     expect(projection.total).toBe(1);
   });
 
-  it('requête Commande.find avec clientId', async () => {
+  it('requête Commande.find avec clientId et restaurantId', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce(clientSession);
     mockLean.mockResolvedValueOnce([]);
     await GET();
     expect(mockFind).toHaveBeenCalledWith(
-      { clientId: 'client123' },
+      { clientId: 'client123', restaurantId: 'restaurant_test_id' },
       expect.objectContaining({ _id: 1, statut: 1 })
     );
   });

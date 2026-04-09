@@ -1,32 +1,26 @@
 // TICK-050 — SEC-01 : Validation des prix côté serveur (OWASP A04:2021)
-// Les prix des produits et options sont systématiquement récupérés depuis MongoDB.
-// Les valeurs `prix` envoyées par le client sont ignorées.
 // TICK-075 — clientId injecté dans metadata si client connecté
-//
-// Stripe best practices appliquées :
-//   - PendingOrder (MongoDB TTL 1h) : évite la limite 500 chars/valeur metadata Stripe
-//   - customer_email : pré-remplit le formulaire Stripe si l'email est fourni
-//   - expires_at : session Stripe expire après 30 min (créneaux restaurant)
+// TICK-134 — restaurantId injecté dans PendingOrder (multi-tenant)
+// TICK-135 — SiteConfig remplacé par getTenantRestaurant()
+// TICK-139 — getStripeClient(restaurantId) remplace getStripe()
+// TICK-142 — baseUrl dynamique depuis Host header (fix Stripe success_url/cancel_url)
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getStripe } from '@/lib/stripe';
+import { getStripeClient } from '@/lib/stripe';
 import { mockSessions } from '@/lib/mockStore';
 import { connectDB } from '@/lib/mongodb';
 import Produit from '@/models/Produit';
-import SiteConfig from '@/models/SiteConfig';
 import PendingOrder from '@/models/PendingOrder';
 import { randomUUID } from 'crypto';
 import { logger } from '@/lib/logger';
+import { getTenantId, getTenantRestaurant } from '@/lib/tenant';
 
 // ─── Validation ───────────────────────────────────────────────────────────────
-// Note : les champs `prix` côté client sont intentionnellement exclus du schéma.
-// Les prix sont chargés depuis la base de données (source de vérité).
 
 const OptionClientSchema = z.object({
   nom: z.string().min(1),
-  // `prix` client volontairement absent — sera résolu depuis la BDD
 });
 
 const ProduitCheckoutSchema = z.object({
@@ -53,15 +47,11 @@ const CheckoutSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    // TICK-105 — Vérifier si la boutique est fermée pour aujourd'hui
+    // TICK-135 — Charger la config du restaurant courant (remplace SiteConfig)
     await connectDB();
-    const siteConfig = await SiteConfig.findOne().lean() as {
-      fermeeAujourdhui?: boolean;
-      horaireOuverture?: string;
-      horaireFermeture?: string;
-    } | null;
+    const restaurant = await getTenantRestaurant();
 
-    if (siteConfig?.fermeeAujourdhui) {
+    if (restaurant?.fermeeAujourdhui) {
       return NextResponse.json(
         { error: 'La boutique est fermée pour aujourd\'hui.' },
         { status: 503 }
@@ -69,12 +59,9 @@ export async function POST(request: NextRequest) {
     }
 
     // CVE-03 — Vérifier les heures d'ouverture en heure locale Paris (pas UTC)
-    // Les serveurs Vercel opèrent en UTC. Date.getHours() retourne l'heure UTC,
-    // ce qui cause un décalage de 1h (hiver) à 2h (été) par rapport à l'heure française.
-    const ouvertureStr = siteConfig?.horaireOuverture ?? '11:30';
-    const fermetureStr = siteConfig?.horaireFermeture ?? '14:00';
+    const ouvertureStr = restaurant?.horaireOuverture ?? '11:30';
+    const fermetureStr = restaurant?.horaireFermeture ?? '14:00';
     const now = new Date();
-    // Extraire heure et minutes dans le fuseau Europe/Paris via Intl
     const parisFormatter = new Intl.DateTimeFormat('fr-FR', {
       timeZone: 'Europe/Paris',
       hour: '2-digit',
@@ -102,21 +89,28 @@ export async function POST(request: NextRequest) {
     }
 
     const { client, retrait, commentaire, produits: produitsClient } = parsed.data;
-    const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
 
-    // TICK-075 — Récupération clientId si client connecté (session JWT)
+    // TICK-142 — baseUrl dynamique depuis Host header (fix Stripe multi-tenant)
+    const host = request.headers.get('host') ?? 'localhost:3000';
+    const proto = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+    const baseUrl = `${proto}://${host}`;
+
+    // TICK-075 — Récupération clientId si client connecté
     const authSession = await getServerSession(authOptions);
     const clientId =
       authSession?.user?.role === 'client' && authSession.user.id
         ? authSession.user.id
         : undefined;
 
+    // TICK-134 — restaurantId du tenant courant
+    const restaurantId = await getTenantId();
+
     // ── Récupération et validation des prix depuis la BDD ─────────────────────
-    // SEC-01 : on ne fait jamais confiance aux prix envoyés par le client
     const produitIds = produitsClient.map((p) => p.produitId);
     const produitIdsUniques = [...new Set(produitIds)];
     const produitsDB = await Produit.find({
       _id: { $in: produitIdsUniques },
+      restaurantId,   // TICK-133 — filtre par tenant
       actif: true,
     }).lean();
 
@@ -129,34 +123,32 @@ export async function POST(request: NextRequest) {
 
     const produitMap = new Map(produitsDB.map((p) => [p._id.toString(), p]));
 
-    // Résolution des prix BDD pour chaque ligne du panier
     const produitsVerifies = produitsClient.map((p) => {
       const produitDB = produitMap.get(p.produitId);
-      if (!produitDB) {
-        throw new Error(`Produit introuvable: ${p.produitId}`);
-      }
+      if (!produitDB) throw new Error(`Produit introuvable: ${p.produitId}`);
 
-      // Résolution des options — on vérifie que chaque option demandée existe bien
       const optionsVerifiees = p.options.map((optClient) => {
         const optDB = produitDB.options.find((o) => o.nom === optClient.nom);
-        if (!optDB) {
-          throw new Error(`Option inconnue "${optClient.nom}" pour le produit "${produitDB.nom}"`);
-        }
-        return { nom: optDB.nom, prix: optDB.prix }; // prix issu de la BDD
+        if (!optDB) throw new Error(`Option inconnue "${optClient.nom}" pour le produit "${produitDB.nom}"`);
+        return { nom: optDB.nom, prix: optDB.prix };
       });
 
       return {
         produitId: p.produitId,
-        nom: produitDB.nom,              // nom issu de la BDD
-        prix: produitDB.prix,            // prix issu de la BDD
+        nom: produitDB.nom,
+        prix: produitDB.prix,
         quantite: p.quantite,
-        taux_tva: produitDB.taux_tva ?? 10, // TICK-129 — snapshot fiscal
+        taux_tva: produitDB.taux_tva ?? 10,
         options: optionsVerifiees,
       };
     });
 
-    // ── Mode mock (STRIPE_SECRET_KEY absent) ──────────────────────────────────
-    if (!process.env.STRIPE_SECRET_KEY) {
+    // ── Mode mock (pas de clé Stripe configurée pour ce restaurant) ───────────
+    const hasMockMode = !restaurant?.stripeSecretKey && !process.env.STRIPE_SECRET_KEY;
+    if (hasMockMode) {
+      if (process.env.NODE_ENV === 'production') {
+        return NextResponse.json({ error: 'Stripe non configuré pour ce restaurant' }, { status: 500 });
+      }
       const mockId = `mock_${randomUUID()}`;
       mockSessions.set(mockId, {
         client: {
@@ -166,18 +158,14 @@ export async function POST(request: NextRequest) {
         },
         retrait,
         ...(commentaire ? { commentaire } : {}),
-        produits: produitsVerifies, // produits avec prix BDD
+        produits: produitsVerifies,
         ...(clientId ? { clientId } : {}),
+        restaurantId,
       });
       return NextResponse.json({ url: `${baseUrl}/mock-checkout?session_id=${mockId}` });
     }
 
-    // ── Mode réel (Stripe) — avec prix vérifiés BDD ───────────────────────────
-
-    // Stocker le snapshot complet en BDD avant de créer la session Stripe.
-    // Stripe limite chaque valeur de métadonnée à 500 chars : le JSON de 4+ items
-    // avec options dépasserait la limite, causant une troncature silencieuse et
-    // l'échec du parse dans le webhook. On ne passe que l'ID (24 chars) en metadata.
+    // ── Mode réel (Stripe) ────────────────────────────────────────────────────
     const pendingOrder = await PendingOrder.create({
       client: {
         nom: client.nom,
@@ -188,6 +176,7 @@ export async function POST(request: NextRequest) {
       ...(commentaire ? { commentaire } : {}),
       produits: produitsVerifies,
       ...(clientId ? { clientId } : {}),
+      restaurantId, // TICK-134
     });
 
     const lineItems = produitsVerifies.map((p) => {
@@ -200,37 +189,26 @@ export async function POST(request: NextRequest) {
         price_data: {
           currency: 'eur',
           product_data: { name: nomComplet },
-          unit_amount: prixUnitaire, // ← prix BDD, non manipulable par le client
+          unit_amount: prixUnitaire,
         },
         quantity: p.quantite,
       };
     });
 
-    const stripe = getStripe();
+    // TICK-139 — getStripeClient(restaurantId) : clé Stripe par restaurant
+    const stripe = await getStripeClient(restaurantId);
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
-      // Restreindre aux méthodes de paiement synchrones uniquement.
-      // Exclut tout ce qui est delayed/async (SEPA, BACS, ACH, Sofort…) —
-      // incompatible avec un restaurant où la commande doit être confirmée immédiatement.
-      // `card` inclut automatiquement Apple Pay et Google Pay via Stripe Checkout.
       payment_method_types: ['card'],
       line_items: lineItems,
       success_url: `${baseUrl}/confirmation?session_id={CHECKOUT_SESSION_ID}`,
-      // {CHECKOUT_SESSION_ID} est un template Stripe remplacé automatiquement.
-      // Permet à la page commande de récupérer la raison de refus si disponible.
       cancel_url: `${baseUrl}/commande?payment=cancelled&session_id={CHECKOUT_SESSION_ID}`,
-      // Pré-remplit le champ email sur la page de paiement Stripe si fourni
       ...(client.email ? { customer_email: client.email } : {}),
-      // Session expire après 30 min — adapté aux créneaux horaires restaurant
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
       metadata: {
-        // Référence vers le snapshot complet (évite la limite 500 chars/valeur Stripe)
         pending_order_id: pendingOrder._id.toString(),
       },
     }, {
-      // Idempotency key : si la requête est répétée (retry réseau, double-clic),
-      // Stripe retourne la même session au lieu d'en créer une nouvelle.
-      // On utilise l'ID du PendingOrder (déjà unique en BDD) comme clé stable.
       idempotencyKey: `checkout_${pendingOrder._id.toString()}`,
     });
 

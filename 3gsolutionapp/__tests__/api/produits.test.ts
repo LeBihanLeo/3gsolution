@@ -20,6 +20,8 @@ vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined
 vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }));
 vi.mock('@/models/Produit', () => ({ default: mockProduitModel }));
+// TICK-133 — getTenantId utilisé par les routes produits (multi-tenant)
+vi.mock('@/lib/tenant', () => ({ getTenantId: vi.fn().mockResolvedValue('restaurant_test_id') }));
 
 import { getServerSession } from 'next-auth';
 import { GET, POST } from '@/app/api/produits/route';
@@ -44,7 +46,7 @@ describe('GET /api/produits', () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data).toHaveLength(1);
-    expect(mockProduitModel.find).toHaveBeenCalledWith({ actif: true });
+    expect(mockProduitModel.find).toHaveBeenCalledWith({ restaurantId: 'restaurant_test_id', actif: true });
   });
 
   it('base vide → 200 + tableau vide', async () => {
@@ -62,11 +64,11 @@ describe('GET /api/produits', () => {
   });
 
   it('?all=true avec session admin → 200 + tous les produits', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { email: 'admin@test.com' } } as Parameters<typeof vi.mocked<typeof getServerSession>>[0] extends infer T ? T : never);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin', email: 'admin@test.com' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     mockProduitChain.lean.mockResolvedValueOnce(mockProduits);
     const res = await GET(makeReq('http://localhost/api/produits?all=true'));
     expect(res.status).toBe(200);
-    expect(mockProduitModel.find).toHaveBeenCalledWith({});
+    expect(mockProduitModel.find).toHaveBeenCalledWith({ restaurantId: 'restaurant_test_id' });
   });
 });
 
@@ -80,7 +82,7 @@ describe('POST /api/produits', () => {
   });
 
   it('body invalide (prix manquant) → 400', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
       nom: 'Test', description: 'Desc', categorie: 'Cat',
     }));
@@ -88,7 +90,7 @@ describe('POST /api/produits', () => {
   });
 
   it('body valide + session → 201 + produit créé', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     mockProduitModel.create.mockResolvedValueOnce({ _id: 'new1', nom: 'Burger', prix: 850, taux_tva: 10 });
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
       nom: 'Burger', description: 'Desc', categorie: 'Burgers', prix: 850,
@@ -100,7 +102,7 @@ describe('POST /api/produits', () => {
 
   // TICK-127 — taux_tva Zod
   it('body avec taux_tva valide (20) → 201', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     mockProduitModel.create.mockResolvedValueOnce({ _id: 'new2', nom: 'Bière', prix: 500, taux_tva: 20 });
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
       nom: 'Bière', description: 'Desc', categorie: 'Boissons', prix: 500, taux_tva: 20,
@@ -109,7 +111,7 @@ describe('POST /api/produits', () => {
   });
 
   it('body avec taux_tva invalide (7) → 400', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
       nom: 'Test', description: 'Desc', categorie: 'Cat', prix: 500, taux_tva: 7,
     }));
@@ -117,7 +119,7 @@ describe('POST /api/produits', () => {
   });
 
   it('body sans taux_tva → 201 (défaut 10 appliqué)', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     mockProduitModel.create.mockResolvedValueOnce({ _id: 'new3', nom: 'Pizza', prix: 900, taux_tva: 10 });
     const res = await POST(makeReq('http://localhost/api/produits', 'POST', {
       nom: 'Pizza', description: 'Desc', categorie: 'Plats', prix: 900,

@@ -1,10 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-// Mock Stripe
-const mockCreateSession = vi.fn();
+// vi.hoisted() garantit que les variables sont initialisées avant le hoist de vi.mock
+const {
+  mockCreateSession,
+  mockProduitFind,
+  mockGetTenantRestaurant,
+  mockGetTenantId,
+  mockPendingOrderCreate,
+} = vi.hoisted(() => ({
+  mockCreateSession: vi.fn(),
+  mockProduitFind: vi.fn(),
+  mockGetTenantRestaurant: vi.fn(),
+  mockGetTenantId: vi.fn().mockResolvedValue('restaurant_test_id'),
+  mockPendingOrderCreate: vi.fn(),
+}));
+
+// TICK-139 — getStripeClient(restaurantId) remplace getStripe()
 vi.mock('@/lib/stripe', () => ({
-  getStripe: () => ({
+  getStripeClient: vi.fn().mockResolvedValue({
     checkout: { sessions: { create: mockCreateSession } },
   }),
 }));
@@ -20,18 +34,13 @@ vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined
 vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 vi.mock('next-auth', () => ({ getServerSession: vi.fn().mockResolvedValue(null) }));
 
-// vi.hoisted() garantit que la variable est initialisée avant le hoist de vi.mock
-const { mockProduitFind, mockSiteConfigFindOne, mockPendingOrderCreate } = vi.hoisted(() => ({
-  mockProduitFind: vi.fn(),
-  mockSiteConfigFindOne: vi.fn(),
-  mockPendingOrderCreate: vi.fn(),
-}));
 vi.mock('@/models/Produit', () => ({
   default: { find: mockProduitFind },
 }));
-// TICK-105 — SiteConfig mock pour vérifier fermeeAujourdhui + horaires
-vi.mock('@/models/SiteConfig', () => ({
-  default: { findOne: mockSiteConfigFindOne },
+// TICK-135 — getTenantRestaurant remplace SiteConfig (multi-tenant)
+vi.mock('@/lib/tenant', () => ({
+  getTenantId: mockGetTenantId,
+  getTenantRestaurant: mockGetTenantRestaurant,
 }));
 // PendingOrder mock — stockage snapshot produits (évite la limite 500 chars metadata Stripe)
 vi.mock('@/models/PendingOrder', () => ({
@@ -66,11 +75,12 @@ const mockProduitDB = {
   options: [],
 };
 
-// SiteConfig ouvert toute la journée pour que les tests passent à n'importe quelle heure
+// Restaurant ouvert toute la journée pour que les tests passent à n'importe quelle heure
 const openConfig = {
   fermeeAujourdhui: false,
   horaireOuverture: '00:00',
   horaireFermeture: '23:59',
+  stripeSecretKey: 'sk_test_from_restaurant', // pas de mode mock
 };
 
 // PendingOrder retourné par create() (simule le document MongoDB créé)
@@ -79,10 +89,10 @@ const mockPendingOrderDoc = { _id: { toString: () => 'pending123' } };
 describe('POST /api/checkout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_fake');
     vi.stubEnv('NEXTAUTH_URL', 'http://localhost:3000');
-    // Par défaut : boutique ouverte toute la journée
-    mockSiteConfigFindOne.mockReturnValue({ lean: vi.fn().mockResolvedValue(openConfig) });
+    // Par défaut : restaurant ouvert toute la journée
+    mockGetTenantRestaurant.mockResolvedValue(openConfig);
+    mockGetTenantId.mockResolvedValue('restaurant_test_id');
     // Par défaut : la BDD retourne le produit valide
     mockProduitFind.mockReturnValue({ lean: vi.fn().mockResolvedValue([mockProduitDB]) });
     // Par défaut : PendingOrder créé avec succès
@@ -111,9 +121,7 @@ describe('POST /api/checkout', () => {
 
   // TICK-105 — Boutique fermée → 503
   it('boutique fermée (fermeeAujourdhui: true) → 503', async () => {
-    mockSiteConfigFindOne.mockReturnValueOnce({
-      lean: vi.fn().mockResolvedValue({ ...openConfig, fermeeAujourdhui: true }),
-    });
+    mockGetTenantRestaurant.mockResolvedValueOnce({ ...openConfig, fermeeAujourdhui: true });
     const res = await POST(makeReq(validBody));
     expect(res.status).toBe(503);
     const json = await res.json();
@@ -124,12 +132,11 @@ describe('POST /api/checkout', () => {
     vi.useFakeTimers();
     // Fixer l'heure à 10:00, boutique ouvre à 11:30
     vi.setSystemTime(new Date('2025-01-01T10:00:00'));
-    mockSiteConfigFindOne.mockReturnValueOnce({
-      lean: vi.fn().mockResolvedValue({
-        fermeeAujourdhui: false,
-        horaireOuverture: '11:30',
-        horaireFermeture: '14:00',
-      }),
+    mockGetTenantRestaurant.mockResolvedValueOnce({
+      ...openConfig,
+      fermeeAujourdhui: false,
+      horaireOuverture: '11:30',
+      horaireFermeture: '14:00',
     });
     const res = await POST(makeReq(validBody));
     expect(res.status).toBe(503);

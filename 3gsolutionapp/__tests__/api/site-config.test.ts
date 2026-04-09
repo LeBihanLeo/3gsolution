@@ -1,17 +1,24 @@
+// TICK-135 — La route /api/site-config utilise maintenant Restaurant + lib/tenant (multi-tenant Sprint 18)
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const { mockSiteConfigModel } = vi.hoisted(() => ({
-  mockSiteConfigModel: {
-    findOne: vi.fn(),
-    findOneAndUpdate: vi.fn(),
-  },
+const { mockRestaurantModel, mockGetTenantRestaurant } = vi.hoisted(() => ({
+  mockRestaurantModel: { findByIdAndUpdate: vi.fn() },
+  mockGetTenantRestaurant: vi.fn(),
 }));
 
 vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }));
-vi.mock('@/models/SiteConfig', () => ({ default: mockSiteConfigModel }));
+vi.mock('@/models/Restaurant', () => ({ default: mockRestaurantModel }));
+vi.mock('@/lib/tenant', () => ({
+  getTenantId: vi.fn().mockResolvedValue('restaurant_test_id'),
+  getTenantRestaurant: mockGetTenantRestaurant,
+}));
+// generatePalette est une fonction pure — on la mock pour éviter des dépendances internes
+vi.mock('@/lib/palette', () => ({
+  generatePalette: vi.fn().mockReturnValue({ primary: '#E63946', light: '#f5c6ca' }),
+}));
 
 import { getServerSession } from 'next-auth';
 import { GET, PUT } from '@/app/api/site-config/route';
@@ -27,10 +34,7 @@ describe('GET /api/site-config', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('aucun document en base → retourne valeurs par défaut', async () => {
-    mockSiteConfigModel.findOne.mockReturnValueOnce({
-      select: vi.fn().mockReturnThis(),
-      lean: vi.fn().mockResolvedValue(null),
-    });
+    mockGetTenantRestaurant.mockResolvedValueOnce(null);
     const res = await GET();
     expect(res.status).toBe(200);
     const json = await res.json();
@@ -43,15 +47,12 @@ describe('GET /api/site-config', () => {
   });
 
   it('document existant → retourne la config avec horaires', async () => {
-    mockSiteConfigModel.findOne.mockReturnValueOnce({
-      select: vi.fn().mockReturnThis(),
-      lean: vi.fn().mockResolvedValue({
-        nomRestaurant: 'Le Bistrot',
-        horaireOuverture: '12:00',
-        horaireFermeture: '15:00',
-        fermeeAujourdhui: true,
-        updatedAt: new Date(),
-      }),
+    mockGetTenantRestaurant.mockResolvedValueOnce({
+      nom: 'Le Bistrot',
+      horaireOuverture: '12:00',
+      horaireFermeture: '15:00',
+      fermeeAujourdhui: true,
+      couleurPrimaire: '#E63946',
     });
     const res = await GET();
     expect(res.status).toBe(200);
@@ -63,13 +64,10 @@ describe('GET /api/site-config', () => {
   });
 
   it('document ancien sans horaires → merge defaults HH:MM', async () => {
-    mockSiteConfigModel.findOne.mockReturnValueOnce({
-      select: vi.fn().mockReturnThis(),
-      lean: vi.fn().mockResolvedValue({
-        nomRestaurant: 'Ancien Restaurant',
-        fermeeAujourdhui: false,
-        // horaireOuverture et horaireFermeture absents (vieux document)
-      }),
+    mockGetTenantRestaurant.mockResolvedValueOnce({
+      nom: 'Ancien Restaurant',
+      fermeeAujourdhui: false,
+      // horaireOuverture et horaireFermeture absents (vieux document)
     });
     const res = await GET();
     expect(res.status).toBe(200);
@@ -90,40 +88,41 @@ describe('PUT /api/site-config', () => {
   });
 
   it('banniereUrl invalide (ni https ni /) → 400', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     const res = await PUT(makeReq({ nomRestaurant: 'Test', banniereUrl: 'ftp://invalid.com' }));
     expect(res.status).toBe(400);
   });
 
-  it('body valide → 200 + config upserted', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
-    const updated = { nomRestaurant: 'Le Bistrot', horaireOuverture: '11:30', horaireFermeture: '14:00', fermeeAujourdhui: false, updatedAt: new Date() };
-    mockSiteConfigModel.findOneAndUpdate.mockReturnValueOnce({
+  it('body valide → 200 + restaurant mis à jour', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    const updated = { nom: 'Le Bistrot', horaireOuverture: '11:30', horaireFermeture: '14:00', fermeeAujourdhui: false };
+    mockRestaurantModel.findByIdAndUpdate.mockReturnValueOnce({
       lean: vi.fn().mockResolvedValue(updated),
     });
     const res = await PUT(makeReq({ nomRestaurant: 'Le Bistrot' }));
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.data.nomRestaurant).toBe('Le Bistrot');
+    // La route retourne le document Restaurant brut — champ `nom` (pas `nomRestaurant`)
+    expect(json.data.nom).toBe('Le Bistrot');
   });
 
   // TICK-100 — Horaires d'ouverture
   it('horaireOuverture format invalide → 400', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     const res = await PUT(makeReq({ nomRestaurant: 'Test', horaireOuverture: '25:00', horaireFermeture: '14:00' }));
     expect(res.status).toBe(400);
   });
 
   it('fermeture <= ouverture → 400', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     const res = await PUT(makeReq({ nomRestaurant: 'Test', horaireOuverture: '14:00', horaireFermeture: '12:00' }));
     expect(res.status).toBe(400);
   });
 
   it('horaires valides → 200', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
-    const updated = { nomRestaurant: 'Test', horaireOuverture: '11:00', horaireFermeture: '14:00' };
-    mockSiteConfigModel.findOneAndUpdate.mockReturnValueOnce({
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    const updated = { nom: 'Test', horaireOuverture: '11:00', horaireFermeture: '14:00' };
+    mockRestaurantModel.findByIdAndUpdate.mockReturnValueOnce({
       lean: vi.fn().mockResolvedValue(updated),
     });
     const res = await PUT(makeReq({ nomRestaurant: 'Test', horaireOuverture: '11:00', horaireFermeture: '14:00' }));
@@ -132,9 +131,9 @@ describe('PUT /api/site-config', () => {
 
   // TICK-105 — fermeeAujourdhui
   it('fermeeAujourdhui: true → 200', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
-    const updated = { nomRestaurant: 'Test', fermeeAujourdhui: true };
-    mockSiteConfigModel.findOneAndUpdate.mockReturnValueOnce({
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    const updated = { nom: 'Test', fermeeAujourdhui: true };
+    mockRestaurantModel.findByIdAndUpdate.mockReturnValueOnce({
       lean: vi.fn().mockResolvedValue(updated),
     });
     const res = await PUT(makeReq({ nomRestaurant: 'Test', fermeeAujourdhui: true }));
@@ -145,9 +144,9 @@ describe('PUT /api/site-config', () => {
 
   // Toggle fermeeAujourdhui sans les autres champs (mise à jour partielle)
   it('fermeeAujourdhui seul (sans nomRestaurant) → 200 update partiel', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
-    const updated = { nomRestaurant: 'Existant', fermeeAujourdhui: false };
-    mockSiteConfigModel.findOneAndUpdate.mockReturnValueOnce({
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    const updated = { nom: 'Existant', fermeeAujourdhui: false };
+    mockRestaurantModel.findByIdAndUpdate.mockReturnValueOnce({
       lean: vi.fn().mockResolvedValue(updated),
     });
     const res = await PUT(makeReq({ fermeeAujourdhui: false }));
@@ -155,9 +154,9 @@ describe('PUT /api/site-config', () => {
   });
 
   it('banniereUrl avec chemin relatif (/images/...) → 200', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
-    mockSiteConfigModel.findOneAndUpdate.mockReturnValueOnce({
-      lean: vi.fn().mockResolvedValue({ nomRestaurant: 'Test' }),
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    mockRestaurantModel.findByIdAndUpdate.mockReturnValueOnce({
+      lean: vi.fn().mockResolvedValue({ nom: 'Test', banniere: '/images/banner.jpg' }),
     });
     const res = await PUT(makeReq({ nomRestaurant: 'Test', banniereUrl: '/images/banner.jpg' }));
     expect(res.status).toBe(200);

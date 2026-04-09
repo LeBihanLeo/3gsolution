@@ -1,7 +1,9 @@
+// TICK-133 — Vérification ownership produit par restaurantId (multi-tenant)
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
 import { requireAdmin } from '@/lib/assertAdmin';
+import { getTenantId } from '@/lib/tenant';
 import Produit from '@/models/Produit';
 
 const OptionSchema = z.object({
@@ -21,7 +23,7 @@ const ProduitUpdateSchema = z.object({
   description: z.string().min(1).optional(),
   categorie: z.string().min(1).optional(),
   prix: z.number().int().min(0).optional(),
-  taux_tva: TauxTvaSchema.optional(), // TICK-127 — inchangé si absent du body
+  taux_tva: TauxTvaSchema.optional(), // TICK-127
   options: z.array(OptionSchema).optional(),
   imageUrl: z.string().min(1).optional().nullable(), // TICK-036 — null pour supprimer l'image
   actif: z.boolean().optional(),
@@ -29,14 +31,14 @@ const ProduitUpdateSchema = z.object({
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-// PUT /api/produits/[id] — admin : modifier un produit complet
+// PUT /api/produits/[id] — admin : modifier un produit (ownership vérifié)
 export async function PUT(request: NextRequest, { params }: RouteParams) {
-  // CVE-02 — vérification de rôle 'admin'
   const check = await requireAdmin();
   if (check.error) return check.error;
 
   try {
     const { id } = await params;
+    const restaurantId = await getTenantId();
     const body = await request.json();
     const parsed = ProduitUpdateSchema.safeParse(body);
 
@@ -45,10 +47,12 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     }
 
     await connectDB();
-    const produit = await Produit.findByIdAndUpdate(id, parsed.data, {
-      new: true,
-      runValidators: true,
-    });
+    // TICK-133 — vérifier que le produit appartient au tenant courant
+    const produit = await Produit.findOneAndUpdate(
+      { _id: id, restaurantId },
+      parsed.data,
+      { new: true, runValidators: true }
+    );
 
     if (!produit) {
       return NextResponse.json({ error: 'Produit introuvable' }, { status: 404 });
@@ -60,14 +64,14 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// PATCH /api/produits/[id] — admin : toggle actif/inactif
+// PATCH /api/produits/[id] — admin : toggle actif/inactif (ownership vérifié)
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
-  // CVE-02 — vérification de rôle 'admin'
   const check = await requireAdmin();
   if (check.error) return check.error;
 
   try {
     const { id } = await params;
+    const restaurantId = await getTenantId();
     const body = await request.json();
     const parsed = z.object({ actif: z.boolean() }).safeParse(body);
 
@@ -76,8 +80,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     await connectDB();
-    const produit = await Produit.findByIdAndUpdate(
-      id,
+    const produit = await Produit.findOneAndUpdate(
+      { _id: id, restaurantId },
       { actif: parsed.data.actif },
       { new: true }
     );
@@ -92,16 +96,16 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// DELETE /api/produits/[id] — admin : supprimer un produit
+// DELETE /api/produits/[id] — admin : supprimer un produit (ownership vérifié)
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
-  // CVE-02 — vérification de rôle 'admin'
   const check = await requireAdmin();
   if (check.error) return check.error;
 
   try {
     const { id } = await params;
+    const restaurantId = await getTenantId();
     await connectDB();
-    const produit = await Produit.findByIdAndDelete(id);
+    const produit = await Produit.findOneAndDelete({ _id: id, restaurantId });
 
     if (!produit) {
       return NextResponse.json({ error: 'Produit introuvable' }, { status: 404 });

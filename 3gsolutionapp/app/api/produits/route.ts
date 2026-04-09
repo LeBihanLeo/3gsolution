@@ -1,7 +1,9 @@
+// TICK-133 — Scoping produits par restaurantId (multi-tenant)
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
 import { requireAdmin } from '@/lib/assertAdmin';
+import { getTenantId } from '@/lib/tenant';
 import Produit from '@/models/Produit';
 
 const OptionSchema = z.object({
@@ -28,8 +30,8 @@ const ProduitSchema = z.object({
 });
 
 // GET /api/produits
-//   - Public (sans ?all=true) : produits actifs uniquement
-//   - Admin (?all=true avec session) : tous les produits
+//   - Public (sans ?all=true) : produits actifs du tenant courant uniquement
+//   - Admin (?all=true avec session) : tous les produits du tenant courant
 export async function GET(request: NextRequest) {
   try {
     const all = request.nextUrl.searchParams.get('all') === 'true';
@@ -40,8 +42,9 @@ export async function GET(request: NextRequest) {
       if (check.error) return check.error;
     }
 
+    const restaurantId = await getTenantId();
     await connectDB();
-    const filtre = all ? {} : { actif: true };
+    const filtre = all ? { restaurantId } : { restaurantId, actif: true };
     const produits = await Produit.find(filtre).sort({ categorie: 1, nom: 1 }).lean();
     return NextResponse.json({ data: produits });
   } catch {
@@ -49,13 +52,14 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/produits — admin : créer un produit
+// POST /api/produits — admin : créer un produit pour le tenant courant
 export async function POST(request: NextRequest) {
   // CVE-02 — vérification de rôle 'admin'
   const check = await requireAdmin();
   if (check.error) return check.error;
 
   try {
+    const restaurantId = await getTenantId();
     const body = await request.json();
     const parsed = ProduitSchema.safeParse(body);
 
@@ -64,7 +68,7 @@ export async function POST(request: NextRequest) {
     }
 
     await connectDB();
-    const produit = await Produit.create(parsed.data);
+    const produit = await Produit.create({ ...parsed.data, restaurantId });
     return NextResponse.json({ data: produit }, { status: 201 });
   } catch {
     return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 });

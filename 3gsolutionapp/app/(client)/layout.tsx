@@ -1,3 +1,5 @@
+// TICK-137 — Layout tenant-aware : charge la config depuis Restaurant (multi-tenant)
+// Remplace SiteConfig.findOne() par getTenantRestaurant()
 import type { ReactNode } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
@@ -5,13 +7,12 @@ import { CartProvider } from '@/lib/cartContext';
 import CookieBanner from '@/components/client/CookieBanner';
 import UserNavButton from '@/components/client/UserNavButton';
 import DesktopMenuShell from '@/components/client/DesktopMenuShell';
-import { connectDB } from '@/lib/mongodb';
-import SiteConfig from '@/models/SiteConfig';
+import { getTenantRestaurant } from '@/lib/tenant';
 import { generatePalette, SitePalette } from '@/lib/palette';
 
 const DEFAULT_COULEUR = '#E63946';
 
-interface SiteConfigData {
+interface TenantConfigData {
   nomRestaurant: string;
   banniereUrl?: string;
   palette: SitePalette;
@@ -20,7 +21,7 @@ interface SiteConfigData {
   fermeeAujourdhui: boolean;
 }
 
-const DEFAULT_CONFIG: SiteConfigData = {
+const DEFAULT_CONFIG: TenantConfigData = {
   nomRestaurant: 'Mon Restaurant',
   palette: generatePalette(DEFAULT_COULEUR),
   horaireOuverture: '11:30',
@@ -28,20 +29,18 @@ const DEFAULT_CONFIG: SiteConfigData = {
   fermeeAujourdhui: false,
 };
 
-// TICK-123 — no-store : palette fraîche à chaque requête
-async function getSiteConfig(): Promise<SiteConfigData> {
+async function getConfig(): Promise<TenantConfigData> {
   try {
-    await connectDB();
-    const config = await SiteConfig.findOne().lean();
-    if (!config) return DEFAULT_CONFIG;
-    const couleur = (config as { couleurPrincipale?: string }).couleurPrincipale ?? DEFAULT_COULEUR;
+    const restaurant = await getTenantRestaurant();
+    if (!restaurant) return DEFAULT_CONFIG;
+    const couleur = restaurant.couleurPrimaire ?? DEFAULT_COULEUR;
     return {
-      nomRestaurant: config.nomRestaurant,
-      banniereUrl: config.banniereUrl,
+      nomRestaurant: restaurant.nom ?? DEFAULT_CONFIG.nomRestaurant,
+      banniereUrl: restaurant.banniere,
       palette: generatePalette(couleur),
-      horaireOuverture: config.horaireOuverture ?? '11:30',
-      horaireFermeture: config.horaireFermeture ?? '14:00',
-      fermeeAujourdhui: config.fermeeAujourdhui ?? false,
+      horaireOuverture: restaurant.horaireOuverture ?? '11:30',
+      horaireFermeture: restaurant.horaireFermeture ?? '14:00',
+      fermeeAujourdhui: restaurant.fermeeAujourdhui ?? false,
     };
   } catch {
     return DEFAULT_CONFIG;
@@ -49,14 +48,17 @@ async function getSiteConfig(): Promise<SiteConfigData> {
 }
 
 export async function generateMetadata(): Promise<Metadata> {
-  const config = await getSiteConfig();
-  return { title: config.nomRestaurant };
+  const config = await getConfig();
+  return {
+    title: config.nomRestaurant,
+    description: `Commandez en ligne chez ${config.nomRestaurant}`,
+  };
 }
 
 export default async function ClientLayout({ children }: { children: ReactNode }) {
-  const config = await getSiteConfig();
+  const config = await getConfig();
 
-  // TICK-123 — CSS custom properties injectées sur le conteneur principal (Server Component)
+  // TICK-137 — CSS custom properties injectées depuis la config du restaurant courant
   const cssVars = {
     '--color-primary': config.palette.primary,
     '--color-primary-light': config.palette.primaryLight,
@@ -70,7 +72,6 @@ export default async function ClientLayout({ children }: { children: ReactNode }
     <CartProvider>
       <div className="min-h-screen flex flex-col bg-stone-50" style={cssVars}>
 
-        {/* ── Top bar blanche (commune aux deux cas) ── */}
         <header className="bg-white border-b border-gray-100 sticky top-0 z-40">
           <div className="max-w-2xl lg:max-w-7xl mx-auto px-4 lg:px-6 h-14 flex items-center justify-between">
             <Link

@@ -9,8 +9,10 @@ const { mockConstructEvent, mockCommandeModel, mockPendingOrderModel, mockSendEm
   mockSendEmail: vi.fn().mockResolvedValue(undefined),
 }));
 
+// TICK-139 — getStripeClient remplace getStripe (multi-tenant Sprint 18)
 vi.mock('@/lib/stripe', () => ({
-  getStripe: () => ({ webhooks: { constructEvent: mockConstructEvent } }),
+  getStripeClient: vi.fn().mockResolvedValue({ webhooks: { constructEvent: mockConstructEvent } }),
+  getStripeWebhookSecret: vi.fn().mockResolvedValue('whsec_test'),
 }));
 vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/email', () => ({ sendConfirmationEmail: mockSendEmail }));
@@ -215,10 +217,11 @@ describe('POST /api/webhooks/stripe', () => {
     expect(mockCommande.save).toHaveBeenCalledOnce();
   });
 
-  it('charge.refunded partiel (refunded: false) → statut inchangé, pas de save', async () => {
+  it('charge.refunded partiel (refunded: false) → statut partiellement_remboursee + save appelé', async () => {
     const mockCommande = {
       _id: 'cmd1',
       statut: 'payee',
+      montantRembourse: undefined as number | undefined,
       save: vi.fn().mockResolvedValue(undefined),
     };
     mockCommandeModel.findOne.mockResolvedValueOnce(mockCommande);
@@ -228,8 +231,8 @@ describe('POST /api/webhooks/stripe', () => {
     };
     mockConstructEvent.mockReturnValueOnce(partialRefundEvent);
     await POST(makeWebhookReq('{}', 'valid_sig'));
-    expect(mockCommande.statut).toBe('payee');
-    expect(mockCommande.save).not.toHaveBeenCalled();
+    expect(mockCommande.statut).toBe('partiellement_remboursee');
+    expect(mockCommande.save).toHaveBeenCalledOnce();
   });
 
   it('charge.refunded — commande déjà remboursee → idempotent, pas de double save', async () => {

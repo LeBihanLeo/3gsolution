@@ -3,8 +3,12 @@ import { NextRequest } from 'next/server';
 
 const { mockModel } = vi.hoisted(() => ({
   mockModel: {
-    findByIdAndUpdate: vi.fn(),
-    findByIdAndDelete: vi.fn(),
+    // TICK-133 — la route utilise findOneAndUpdate/findOneAndDelete (filtre { _id, restaurantId })
+    findOneAndUpdate: vi.fn(),
+    findOneAndDelete: vi.fn(),
+    // Alias pour rétrocompatibilité des tests qui utilisent l'ancienne API
+    get findByIdAndUpdate() { return this.findOneAndUpdate; },
+    get findByIdAndDelete() { return this.findOneAndDelete; },
   },
 }));
 
@@ -12,6 +16,8 @@ vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined
 vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 vi.mock('next-auth', () => ({ getServerSession: vi.fn() }));
 vi.mock('@/models/Produit', () => ({ default: mockModel }));
+// TICK-133 — getTenantId utilisé par les routes produits (multi-tenant)
+vi.mock('@/lib/tenant', () => ({ getTenantId: vi.fn().mockResolvedValue('restaurant_test_id') }));
 
 import { getServerSession } from 'next-auth';
 import { PUT, PATCH, DELETE } from '@/app/api/produits/[id]/route';
@@ -37,14 +43,14 @@ describe('PUT /api/produits/[id]', () => {
   });
 
   it('ID inexistant → 404', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     mockModel.findByIdAndUpdate.mockResolvedValueOnce(null);
     const res = await PUT(makeReq('PUT', { nom: 'Nouveau' }), params);
     expect(res.status).toBe(404);
   });
 
   it('mise à jour valide → 200 + produit mis à jour', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     mockModel.findByIdAndUpdate.mockResolvedValueOnce({ ...mockProduit, nom: 'Nouveau' });
     const res = await PUT(makeReq('PUT', { nom: 'Nouveau' }), params);
     expect(res.status).toBe(200);
@@ -63,7 +69,7 @@ describe('PATCH /api/produits/[id] (toggle actif)', () => {
   });
 
   it('toggle actif → valeur inversée retournée', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     mockModel.findByIdAndUpdate.mockResolvedValueOnce({ ...mockProduit, actif: false });
     const res = await PATCH(makeReq('PATCH', { actif: false }), params);
     expect(res.status).toBe(200);
@@ -82,14 +88,14 @@ describe('DELETE /api/produits/[id]', () => {
   });
 
   it('ID inexistant → 404', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     mockModel.findByIdAndDelete.mockResolvedValueOnce(null);
     const res = await DELETE(makeReq('DELETE'), params);
     expect(res.status).toBe(404);
   });
 
   it('suppression réussie → 200', async () => {
-    vi.mocked(getServerSession).mockResolvedValueOnce({ user: {} } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    vi.mocked(getServerSession).mockResolvedValueOnce({ user: { role: 'admin' } } as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     mockModel.findByIdAndDelete.mockResolvedValueOnce(mockProduit);
     const res = await DELETE(makeReq('DELETE'), params);
     expect(res.status).toBe(200);

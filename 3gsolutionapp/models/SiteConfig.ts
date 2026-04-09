@@ -1,3 +1,5 @@
+// @deprecated TICK-135 — SiteConfig remplacé par Restaurant (multi-tenant).
+// Conservé pour compatibilité descendante. Utiliser getTenantRestaurant() à la place.
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
 export interface ISiteConfig extends Document {

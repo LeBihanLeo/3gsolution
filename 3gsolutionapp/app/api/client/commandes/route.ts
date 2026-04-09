@@ -1,9 +1,11 @@
 // TICK-076 — GET /api/client/commandes : historique des commandes du client connecté
+// TICK-140 — Filtrage par restaurantId (multi-tenant)
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { connectDB } from '@/lib/mongodb';
 import Commande from '@/models/Commande';
+import { getTenantId } from '@/lib/tenant';
 import { logger } from '@/lib/logger';
 
 // Champs exposés — NE PAS exposer client.telephone ni client.email (RGPD)
@@ -28,10 +30,12 @@ export async function GET() {
 
   try {
     await connectDB();
+    const restaurantId = await getTenantId();
 
     // TICK-099 — enCours : tous les statuts non terminaux
     // TICK-098 — limit 200 pour la page historique complète
-    const commandes = await Commande.find({ clientId }, PROJECTION)
+    // TICK-140 — filtrage par restaurantId pour isolation multi-tenant
+    const commandes = await Commande.find({ clientId, restaurantId }, PROJECTION)
       .sort({ createdAt: -1 })
       .limit(200)
       .lean();

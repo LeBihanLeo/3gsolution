@@ -15,6 +15,9 @@ const validProduitSnapshot = {
   options: [],
 };
 
+// TICK-133 — restaurantId est requis depuis Sprint 18 (multi-tenant)
+const RESTAURANT_ID = new mongoose.Types.ObjectId().toString();
+
 const validCommande = {
   stripeSessionId: 'cs_test_abc123',
   statut: 'payee' as const,
@@ -22,6 +25,7 @@ const validCommande = {
   retrait: { type: 'immediat' as const },
   produits: [validProduitSnapshot],
   total: 850,
+  restaurantId: RESTAURANT_ID,
 };
 
 describe('Modèle Commande', () => {

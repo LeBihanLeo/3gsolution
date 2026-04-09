@@ -1,4 +1,5 @@
 // TICK-081 — Export de données RGPD (droit à la portabilité — Art. 20 RGPD)
+// TICK-140 — Multi-tenant : export toutes commandes du client (tous restaurants) + nomRestaurant
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
@@ -28,9 +29,11 @@ export async function GET() {
       return NextResponse.json({ error: 'Compte introuvable.' }, { status: 404 });
     }
 
-    // Récupérer les commandes liées au compte
+    // Récupérer TOUTES les commandes du client (tous restaurants) — RGPD Art. 20 : portabilité totale
+    // populate restaurantId pour inclure le nom du restaurant dans l'export
     const commandes = await Commande.find({ clientId })
-      .select('_id createdAt statut produits total retrait')
+      .select('_id createdAt statut produits total retrait restaurantId')
+      .populate<{ restaurantId: { nom: string } | null }>('restaurantId', 'nom')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -50,6 +53,7 @@ export async function GET() {
         produits: c.produits,
         total: c.total,
         retrait: c.retrait,
+        restaurant: (c.restaurantId as unknown as { nom?: string } | null)?.nom ?? null,
       })),
     };
 

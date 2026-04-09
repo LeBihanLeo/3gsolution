@@ -18,9 +18,11 @@ const makeReq = (sessionId?: string) => {
   return new NextRequest(url);
 };
 
+// CVE-07 — session_id doit correspondre au regex (cs_test_ + 20+ chars)
+const VALID_SESSION_ID = 'cs_test_AbCdEfGhIjKlMnOpQrStUv12345';
 const mockCommandePayee = {
   _id: new mongoose.Types.ObjectId('aaaaaaaaaaaaaaaaaaaaaaaa'),
-  stripeSessionId: 'cs_test_123',
+  stripeSessionId: VALID_SESSION_ID,
   statut: 'payee',
   retrait: { type: 'immediat' },
   produits: [{ nom: 'Burger', quantite: 2 }],
@@ -39,7 +41,7 @@ describe('GET /api/commandes/suivi', () => {
 
   it('session_id inconnu → 404', async () => {
     mockFindOne.mockReturnValueOnce({ lean: vi.fn().mockResolvedValue(null) });
-    const res = await GET(makeReq('cs_test_inconnu'));
+    const res = await GET(makeReq(VALID_SESSION_ID));
     expect(res.status).toBe(404);
   });
 
@@ -47,7 +49,7 @@ describe('GET /api/commandes/suivi', () => {
     mockFindOne.mockReturnValueOnce({
       lean: vi.fn().mockResolvedValue({ ...mockCommandePayee, statut: 'en_attente_paiement' }),
     });
-    const res = await GET(makeReq('cs_test_123'));
+    const res = await GET(makeReq(VALID_SESSION_ID));
     expect(res.status).toBe(404);
   });
 
@@ -55,7 +57,7 @@ describe('GET /api/commandes/suivi', () => {
     mockFindOne.mockReturnValueOnce({
       lean: vi.fn().mockResolvedValue(mockCommandePayee),
     });
-    const res = await GET(makeReq('cs_test_123'));
+    const res = await GET(makeReq(VALID_SESSION_ID));
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.statut).toBe('payee');
@@ -69,7 +71,7 @@ describe('GET /api/commandes/suivi', () => {
     mockFindOne.mockReturnValueOnce({
       lean: vi.fn().mockResolvedValue({ ...mockCommandePayee, statut: 'prete' }),
     });
-    const res = await GET(makeReq('cs_test_123'));
+    const res = await GET(makeReq(VALID_SESSION_ID));
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.statut).toBe('prete');

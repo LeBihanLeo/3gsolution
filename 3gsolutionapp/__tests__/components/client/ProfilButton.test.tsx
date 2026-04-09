@@ -6,22 +6,23 @@
  * - Accessible (aria-label)
  */
 import React from 'react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import ProfilButton from '@/components/client/ProfilButton';
 
-const mockPush = jest.fn();
-jest.mock('next/navigation', () => ({
+const mockPush = vi.fn();
+vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
 // ── Mock useSession ───────────────────────────────────────────────────────────
 
-const mockUseSession = jest.fn();
-jest.mock('next-auth/react', () => ({
+const mockUseSession = vi.fn();
+vi.mock('next-auth/react', () => ({
   useSession: () => mockUseSession(),
 }));
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => vi.clearAllMocks());
 
 describe('ProfilButton', () => {
   it('ne rend rien pendant le chargement de la session', () => {

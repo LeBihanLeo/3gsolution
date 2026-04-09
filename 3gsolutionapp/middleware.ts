@@ -3,6 +3,8 @@
 // TICK-071 — Routes client protégées + vérification de rôle
 // TICK-078 — Rate limiting endpoints auth client
 // CVE-06  — CSP dynamique avec nonce par requête (suppression de unsafe-inline)
+// TICK-132 — Tenant-resolver : injecte x-tenant-host depuis le Host header
+//            (la résolution DB restaurantId est faite dans lib/tenant.ts — Node.js runtime)
 import { withAuth } from 'next-auth/middleware';
 import { NextRequest, NextResponse } from 'next/server';
 import {
@@ -35,14 +37,16 @@ function rateLimitResponse(reset: number): NextResponse {
 }
 
 // ── CVE-06 : Génération CSP dynamique avec nonce par requête ───────────────
-// Stratégie nonce (recommandée par OWASP / Google CSP Evaluator) :
-//   • 'nonce-{nonce}'  → seuls les scripts portant ce nonce s'exécutent
-//   • 'strict-dynamic' → les scripts chargés par un script noncé sont aussi autorisés
-//   • 'unsafe-inline'  → ignoré par les navigateurs CSP3 (présence du nonce),
-//                         conservé comme fallback pour les navigateurs CSP2
-//   • 'unsafe-eval'    → uniquement en dev pour Turbopack HMR
 function generateCsp(nonce: string): string {
   const isDev = process.env.NODE_ENV === 'development';
+  // TICK-152 — Auth Hub host pour connect-src (si configuré)
+  const authHubHost = process.env.AUTH_HUB_HOST ?? '';
+  const connectSrc = [
+    "'self'",
+    'https://api.stripe.com',
+    'https://challenges.cloudflare.com',
+    ...(authHubHost ? [`https://${authHubHost}`] : []),
+  ].join(' ');
   return [
     "default-src 'self'",
     isDev
@@ -51,14 +55,25 @@ function generateCsp(nonce: string): string {
     "style-src 'self' 'unsafe-inline'",  // Tailwind inline styles
     "img-src 'self' data: blob: https://*.public.blob.vercel-storage.com",
     "font-src 'self'",
-    "connect-src 'self' https://api.stripe.com https://challenges.cloudflare.com",
+    `connect-src ${connectSrc}`,
     "frame-src https://js.stripe.com https://hooks.stripe.com https://challenges.cloudflare.com",
     "worker-src 'self' blob:", // Service worker PWA
   ].join('; ');
 }
 
+// ── TICK-132 : Extraction du host normalisé ────────────────────────────────
+// Retourne le host sans port pour la comparaison de domaine.
+function extractHost(request: NextRequest): string {
+  // En production sur Vercel, x-forwarded-host est le domaine public.
+  // En développement, on utilise le Host header.
+  const forwarded = request.headers.get('x-forwarded-host');
+  const host = forwarded ?? request.headers.get('host') ?? 'localhost';
+  // Supprimer le port pour normaliser (localhost:3000 → localhost:3000 gardé tel quel)
+  return host;
+}
+
 export default withAuth(
-  async function middleware(request: NextRequest & { nextauth?: { token?: { role?: string } } }) {
+  async function middleware(request: NextRequest & { nextauth?: { token?: { role?: string; restaurantDomain?: string } } }) {
     const { pathname } = request.nextUrl;
     const ip = extractIp(request);
 
@@ -80,29 +95,21 @@ export default withAuth(
       if (!success) return rateLimitResponse(reset);
     }
 
-    // ── Rate limiting checkout — protège le quota Stripe API ──────────────
-    // 10 sessions max / 15 min par IP : couvre les retries légitimes tout en
-    // bloquant les bots qui créeraient des sessions en masse.
+    // ── Rate limiting checkout ────────────────────────────────────────────
     if (pathname === '/api/checkout' && request.method === 'POST') {
       const { success, reset } = await checkCheckoutRateLimit(ip);
       if (!success) return rateLimitResponse(reset);
     }
 
     // ── Vérification de rôle : admin requis ───────────────────────────────
-    // Un client connecté ne peut pas accéder aux routes admin
     const token = request.nextauth?.token;
     const isAdminRoute =
       (pathname.startsWith('/admin/') && pathname !== '/admin/login') ||
-      // /api/commandes/suivi est public — on exclut explicitement ce chemin
       (pathname.startsWith('/api/commandes') && pathname !== '/api/commandes/suivi') ||
-      // CVE-02 — routes admin dédiées
-      // /api/produits exclu : GET est public (menu client), POST/PUT/DELETE protégés par requireAdmin() dans les handlers
       pathname.startsWith('/api/admin/') ||
       pathname === '/api/upload';
-      // /api/site-config retiré : GET est public, PUT protégé par requireAdmin() dans le handler
 
     if (isAdminRoute && token && token.role !== 'admin') {
-      // Connecté mais pas admin → 403
       if (pathname.startsWith('/api/')) {
         return new NextResponse(JSON.stringify({ error: 'Accès refusé.' }), {
           status: 403,
@@ -110,6 +117,42 @@ export default withAuth(
         });
       }
       return NextResponse.redirect(new URL('/', request.url));
+    }
+
+    // ── TICK-136 : Protection cross-tenant admin ───────────────────────────
+    // Un admin de resto-a.com ne peut pas accéder aux routes admin de resto-b.com.
+    // token.restaurantDomain (stocké dans le JWT à la connexion admin) est comparé
+    // au host courant. En dev (localhost / DEV_TENANT_ID), la vérification est ignorée.
+    if (isAdminRoute && token?.role === 'admin') {
+      const currentHost = extractHost(request);
+      const isLocalhost = currentHost.startsWith('localhost') || currentHost.startsWith('127.0.0.1');
+      const restaurantDomain = token.restaurantDomain as string | undefined;
+
+      if (!isLocalhost && restaurantDomain && restaurantDomain !== currentHost) {
+        if (pathname.startsWith('/api/')) {
+          return new NextResponse(JSON.stringify({ error: 'Accès refusé — domaine incorrect.' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return NextResponse.redirect(new URL('/admin/login', request.url));
+      }
+    }
+
+    // ── Vérification de rôle : super-admin requis ─────────────────────────
+    if (
+      (pathname.startsWith('/superadmin/') && pathname !== '/superadmin/login') ||
+      pathname.startsWith('/api/superadmin/')
+    ) {
+      if (!token || token.role !== 'superadmin') {
+        if (pathname.startsWith('/api/')) {
+          return new NextResponse(JSON.stringify({ error: 'Accès refusé.' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return NextResponse.redirect(new URL('/superadmin/login', request.url));
+      }
     }
 
     // ── Vérification de rôle : client requis ─────────────────────────────
@@ -131,15 +174,15 @@ export default withAuth(
     }
 
     // ── CVE-06 : Nonce CSP par requête ────────────────────────────────────
-    // Un UUID aléatoire est converti en base64 pour former un nonce imprévisible.
-    // Il est injecté dans l'en-tête CSP de la réponse ET dans x-nonce de la
-    // requête pour que le layout (Server Component) puisse le lire via headers().
     const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
     const csp = generateCsp(nonce);
 
-    // Passer le nonce en avant vers les Server Components
+    // TICK-132 — Injecter x-tenant-host : permet aux Server Components et routes API
+    // de connaître le domaine de la requête sans re-lire le Host header.
+    const currentHost = extractHost(request);
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set('x-nonce', nonce);
+    requestHeaders.set('x-tenant-host', currentHost);
 
     const response = NextResponse.next({ request: { headers: requestHeaders } });
     response.headers.set('Content-Security-Policy', csp);
@@ -158,16 +201,17 @@ export default withAuth(
           pathname.match(/\.(png|jpg|jpeg|gif|webp|svg|ico|css|js|woff2?)$/)
         ) return true;
 
-        // Routes publiques : toujours autorisées (rate limiting géré ci-dessus)
+        // Routes publiques
         if (pathname.startsWith('/api/auth/')) return true;
+        if (pathname === '/auth/completing') return true; // TICK-150 — page completing cross-domain
         if (pathname === '/api/client/register') return true;
         if (pathname === '/api/client/forgot-password') return true;
-        // Suivi de commande public (page /confirmation — pas d'auth requise)
         if (pathname === '/api/commandes/suivi') return true;
-        // Raison de refus Stripe (page commande annulée — pas d'auth requise)
         if (pathname === '/api/commandes/raison-echec') return true;
-        // GET /api/produits sans ?all=true est public (menu client)
-        // La vérification admin est faite dans le handler pour ?all=true
+
+        // Super-admin login : public
+        if (pathname === '/superadmin/login') return true;
+        if (pathname === '/api/superadmin/auth') return true;
 
         // Routes client protégées : token requis
         const clientProtected =
@@ -179,9 +223,7 @@ export default withAuth(
 
         if (clientProtected) return !!token;
 
-        // Routes admin dans le matcher : token requis
-        // /admin/login exclu : c'est la page de connexion elle-même (sinon boucle infinie)
-        // /api/produits exclu : public en GET, les handlers POST/PUT/DELETE appellent requireAdmin()
+        // Routes admin
         if (pathname === '/admin/login') return true;
 
         const adminRoute =
@@ -193,7 +235,12 @@ export default withAuth(
 
         if (adminRoute) return !!token;
 
-        // Toutes les autres routes (pages publiques) : autorisées sans token
+        // Super-admin routes
+        if (
+          pathname.startsWith('/superadmin/') ||
+          pathname.startsWith('/api/superadmin/')
+        ) return !!token;
+
         return true;
       },
     },
@@ -201,9 +248,6 @@ export default withAuth(
 );
 
 export const config = {
-  // CVE-06 — Matcher étendu à toutes les routes pour injecter le nonce CSP
-  // Exclure les assets statiques Next.js (_next/static, _next/image, fichiers publics)
-  // pour éviter de ralentir inutilement la livraison des assets.
   matcher: [
     '/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|woff2?)$).*)',
   ],

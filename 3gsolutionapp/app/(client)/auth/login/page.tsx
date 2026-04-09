@@ -1,5 +1,6 @@
 'use client';
 // TICK-070 — Page /auth/login
+// TICK-151 — Bouton Google redirige vers le hub cross-domain (Sprint 19)
 import { useState, useEffect } from 'react';
 import { signIn, useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -66,9 +67,16 @@ export default function LoginPage() {
     }
   }
 
-  async function handleGoogle() {
+  function handleGoogle() {
     setError('');
-    await signIn('google', { callbackUrl: '/' });
+    const authHubUrl = process.env.NEXT_PUBLIC_AUTH_HUB_URL;
+    if (!authHubUrl) {
+      // NEXT_PUBLIC_AUTH_HUB_URL absent : flow Google direct (dev local sans hub)
+      signIn('google', { callbackUrl: '/' });
+      return;
+    }
+    const returnTo = encodeURIComponent(window.location.origin);
+    window.location.href = `${authHubUrl}/api/auth/google-relay?returnTo=${returnTo}`;
   }
 
   if (status === 'loading') return null;

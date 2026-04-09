@@ -14,6 +14,7 @@ export interface IProduit extends Document {
   options: IOption[];
   imageUrl?: string; // URL Vercel Blob (optionnel) — TICK-036
   actif: boolean;
+  restaurantId: mongoose.Types.ObjectId; // TICK-133 — multi-tenant
   createdAt: Date;
 }
 
@@ -35,6 +36,8 @@ const ProduitSchema = new Schema<IProduit>(
     options: { type: [OptionSchema], default: [] },
     imageUrl: { type: String }, // optionnel — TICK-036
     actif: { type: Boolean, default: true },
+    // TICK-133 — multi-tenant : chaque produit appartient à un restaurant
+    restaurantId: { type: Schema.Types.ObjectId, ref: 'Restaurant', required: true, index: true },
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );

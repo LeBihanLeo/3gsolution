@@ -38,6 +38,7 @@ export interface IPendingOrder extends Document {
     options: Array<{ nom: string; prix: number }>;
   }>;
   clientId?: string;
+  restaurantId: string; // TICK-134 — multi-tenant
   createdAt: Date;
 }
 
@@ -48,6 +49,7 @@ const PendingOrderSchema = new Schema<IPendingOrder>(
     commentaire: { type: String },
     produits: { type: [Schema.Types.Mixed], required: true },
     clientId: { type: String },
+    restaurantId: { type: String, required: true }, // TICK-134 — multi-tenant
     createdAt: { type: Date, default: Date.now, expires: 86400 }, // 24h = 24 * 3600
   },
   { versionKey: false }

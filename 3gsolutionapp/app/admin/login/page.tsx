@@ -20,10 +20,12 @@ export default function LoginPage() {
     const email = (form.elements.namedItem('email') as HTMLInputElement).value;
     const password = (form.elements.namedItem('password') as HTMLInputElement).value;
 
+    // TICK-136 — transmettre le host pour résoudre le tenant admin
     const result = await signIn('credentials', {
       email,
       password,
       turnstileToken: turnstileToken ?? '',
+      tenantHost: window.location.host,
       redirect: false,
     });
 

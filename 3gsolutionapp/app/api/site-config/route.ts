@@ -1,8 +1,11 @@
+// TICK-135 — site-config délègue au document Restaurant du tenant courant.
+// @deprecated SiteConfig singleton → Restaurant multi-tenant
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
 import { requireAdmin } from '@/lib/assertAdmin';
-import SiteConfig from '@/models/SiteConfig';
+import { getTenantId, getTenantRestaurant } from '@/lib/tenant';
+import Restaurant from '@/models/Restaurant';
 import { generatePalette } from '@/lib/palette';
 
 const DEFAULT_COULEUR = '#E63946';
@@ -15,7 +18,6 @@ const DEFAULT_CONFIG = {
   couleurPrincipale: DEFAULT_COULEUR,
 };
 
-// HH:MM format validation
 const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 const SiteConfigZod = z.object({
@@ -27,18 +29,9 @@ const SiteConfigZod = z.object({
       (val) => !val || /^https?:\/\//.test(val) || val.startsWith('/'),
       { message: "L'URL doit être HTTPS ou un chemin relatif (/...)" }
     ),
-  // TICK-100 — Horaires d'ouverture
-  horaireOuverture: z
-    .string()
-    .regex(timeRegex, 'Format attendu HH:MM')
-    .optional(),
-  horaireFermeture: z
-    .string()
-    .regex(timeRegex, 'Format attendu HH:MM')
-    .optional(),
-  // TICK-105 — Fermeture manuelle
+  horaireOuverture: z.string().regex(timeRegex, 'Format attendu HH:MM').optional(),
+  horaireFermeture: z.string().regex(timeRegex, 'Format attendu HH:MM').optional(),
   fermeeAujourdhui: z.boolean().optional(),
-  // TICK-122 — couleur principale hex
   couleurPrincipale: z
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/, 'Format attendu #RRGGBB')
@@ -56,30 +49,29 @@ const SiteConfigZod = z.object({
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
 // GET /api/site-config — public
-// TICK-119/120 — no-store : la valeur doit être fraîche à chaque requête (fermeeAujourdhui, horaires)
-// TICK-122 — retourne aussi la palette calculée à la volée (non stockée)
 export async function GET() {
   try {
     await connectDB();
-    const config = await SiteConfig.findOne().select('-__v -_id').lean();
-    if (!config) {
+    const restaurant = await getTenantRestaurant();
+
+    if (!restaurant) {
       const palette = generatePalette(DEFAULT_COULEUR);
       return NextResponse.json(
         { data: { ...DEFAULT_CONFIG, palette } },
         { headers: NO_STORE }
       );
     }
-    const c = config as Record<string, unknown>;
-    const couleur = (typeof c.couleurPrincipale === 'string' && c.couleurPrincipale) ? c.couleurPrincipale : DEFAULT_COULEUR;
+
+    const couleur = restaurant.couleurPrimaire ?? DEFAULT_COULEUR;
     const palette = generatePalette(couleur);
-    // ?? explicite : protège contre les champs null dans les anciens documents MongoDB
+
     return NextResponse.json({
       data: {
-        nomRestaurant: (typeof c.nomRestaurant === 'string' && c.nomRestaurant) ? c.nomRestaurant : DEFAULT_CONFIG.nomRestaurant,
-        banniereUrl: typeof c.banniereUrl === 'string' ? c.banniereUrl : undefined,
-        horaireOuverture: (typeof c.horaireOuverture === 'string' && c.horaireOuverture) ? c.horaireOuverture : DEFAULT_CONFIG.horaireOuverture,
-        horaireFermeture: (typeof c.horaireFermeture === 'string' && c.horaireFermeture) ? c.horaireFermeture : DEFAULT_CONFIG.horaireFermeture,
-        fermeeAujourdhui: typeof c.fermeeAujourdhui === 'boolean' ? c.fermeeAujourdhui : DEFAULT_CONFIG.fermeeAujourdhui,
+        nomRestaurant: restaurant.nom ?? DEFAULT_CONFIG.nomRestaurant,
+        banniereUrl: restaurant.banniere ?? undefined,
+        horaireOuverture: restaurant.horaireOuverture ?? DEFAULT_CONFIG.horaireOuverture,
+        horaireFermeture: restaurant.horaireFermeture ?? DEFAULT_CONFIG.horaireFermeture,
+        fermeeAujourdhui: restaurant.fermeeAujourdhui ?? DEFAULT_CONFIG.fermeeAujourdhui,
         couleurPrincipale: couleur,
         palette,
       },
@@ -89,13 +81,13 @@ export async function GET() {
   }
 }
 
-// PUT /api/site-config — admin
+// PUT /api/site-config — admin : met à jour le restaurant courant
 export async function PUT(request: NextRequest) {
-  // CVE-02 — vérification de rôle 'admin' (cette route est exclue du middleware)
   const check = await requireAdmin();
   if (check.error) return check.error;
 
   try {
+    const restaurantId = await getTenantId();
     const body = await request.json();
     const parsed = SiteConfigZod.safeParse(body);
 
@@ -104,14 +96,27 @@ export async function PUT(request: NextRequest) {
     }
 
     await connectDB();
-    // $set : mise à jour partielle (ne supprime pas les champs non envoyés)
-    const config = await SiteConfig.findOneAndUpdate(
-      {},
-      { $set: parsed.data },
-      { upsert: true, new: true, select: '-__v -_id' }
+
+    // Mapping champs SiteConfig → Restaurant
+    const update: Record<string, unknown> = {};
+    if (parsed.data.nomRestaurant !== undefined) update.nom = parsed.data.nomRestaurant;
+    if (parsed.data.banniereUrl !== undefined) update.banniere = parsed.data.banniereUrl;
+    if (parsed.data.horaireOuverture !== undefined) update.horaireOuverture = parsed.data.horaireOuverture;
+    if (parsed.data.horaireFermeture !== undefined) update.horaireFermeture = parsed.data.horaireFermeture;
+    if (parsed.data.fermeeAujourdhui !== undefined) update.fermeeAujourdhui = parsed.data.fermeeAujourdhui;
+    if (parsed.data.couleurPrincipale !== undefined) update.couleurPrimaire = parsed.data.couleurPrincipale;
+
+    const restaurant = await Restaurant.findByIdAndUpdate(
+      restaurantId,
+      { $set: update },
+      { new: true }
     ).lean();
 
-    return NextResponse.json({ data: config });
+    if (!restaurant) {
+      return NextResponse.json({ error: 'Restaurant introuvable' }, { status: 404 });
+    }
+
+    return NextResponse.json({ data: restaurant });
   } catch {
     return NextResponse.json({ error: 'Erreur serveur' }, { status: 500 });
   }

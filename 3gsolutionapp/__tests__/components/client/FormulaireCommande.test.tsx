@@ -13,6 +13,12 @@ vi.mock('@/lib/cartContext', () => ({
   }),
 }));
 
+// TICK-070 — FormulaireCommande utilise useSession (Sprint 10)
+// Mock renvoyant un client non connecté par défaut (état normal du formulaire invité)
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({ data: null, status: 'unauthenticated' }),
+}));
+
 import FormulaireCommande from '@/components/client/FormulaireCommande';
 
 // SiteConfig par défaut : ouvert toute la journée
@@ -105,7 +111,7 @@ describe('FormulaireCommande', () => {
     fireEvent.change(telInput, { target: { value: '123' } });
     fireEvent.submit(screen.getByRole('button', { name: /payer/i }).closest('form')!);
     await waitFor(() => {
-      expect(screen.getByText(/numéro de téléphone invalide/i)).toBeInTheDocument();
+      expect(screen.getByText(/numéro invalide/i)).toBeInTheDocument();
     });
   });
 
