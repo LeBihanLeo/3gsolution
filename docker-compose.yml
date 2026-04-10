@@ -38,6 +38,12 @@ services:
       - MONGODB_URI=mongodb://root:devpassword@mongo:27017/3gsolution?authSource=admin
       - NEXTAUTH_URL=http://localhost:3000
       - NEXTAUTH_SECRET=dev_secret_change_in_prod
+      # Les vars SUPERADMIN sont déclarées ici (pas dans env_file) pour éviter que
+      # Next.js les écrase via dotenv-expand au démarrage. Valeurs lues depuis le
+      # fichier .env à la racine du projet (côté docker-compose).
+      - SUPERADMIN_EMAIL=${SUPERADMIN_EMAIL}
+      - SUPERADMIN_PASSWORD_HASH=${SUPERADMIN_PASSWORD_HASH}
+      - SUPERADMIN_JWT_SECRET=${SUPERADMIN_JWT_SECRET}
     env_file:
       - path: ./3gsolutionapp/.env.local
         required: false
