@@ -36,14 +36,20 @@ services:
     environment:
       - NODE_ENV=development
       - MONGODB_URI=mongodb://root:devpassword@mongo:27017/3gsolution?authSource=admin
-      - NEXTAUTH_URL=http://localhost:3000
-      - NEXTAUTH_SECRET=dev_secret_change_in_prod
+      # NEXTAUTH_URL = domaine du hub (seul domaine enregistré dans Google Console)
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://hub.nhesitepas.com}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-dev_secret_change_in_prod}
       # Les vars SUPERADMIN sont déclarées ici (pas dans env_file) pour éviter que
       # Next.js les écrase via dotenv-expand au démarrage. Valeurs lues depuis le
       # fichier .env à la racine du projet (côté docker-compose).
       - SUPERADMIN_EMAIL=${SUPERADMIN_EMAIL}
       - SUPERADMIN_PASSWORD_HASH=${SUPERADMIN_PASSWORD_HASH}
       - SUPERADMIN_JWT_SECRET=${SUPERADMIN_JWT_SECRET}
+      # Auth Hub OAuth cross-domain (Sprint 19)
+      - AUTH_HUB_URL=${AUTH_HUB_URL}
+      - AUTH_HUB_HOST=${AUTH_HUB_HOST}
+      - NEXT_PUBLIC_AUTH_HUB_URL=${NEXT_PUBLIC_AUTH_HUB_URL}
+      - INTER_SERVICE_SECRET=${INTER_SERVICE_SECRET}
     env_file:
       - path: ./3gsolutionapp/.env.local
         required: false
