@@ -7,8 +7,9 @@ services:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: devpassword
       MONGO_INITDB_DATABASE: 3gsolution
-    ports:
-      - "27017:27017"
+    # Port non exposé sur le host — accessible uniquement depuis le réseau Docker
+    expose:
+      - "27017"
     volumes:
       - mongo_data:/data/db
       - ./mongo-init.js:/docker-entrypoint-initdb.d/init.js:ro
@@ -27,8 +28,9 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
-    ports:
-      - "3008:3000"
+    # Port non exposé sur le host — nginx est le seul point d'entrée
+    expose:
+      - "3000"
     volumes:
       - ./3gsolutionapp:/app
       - /app/node_modules
@@ -54,6 +56,29 @@ services:
       - path: ./3gsolutionapp/.env.local
         required: false
 
+  nginx:
+    image: nginx:alpine
+    container_name: 3gs_nginx
+    restart: unless-stopped
+    depends_on:
+      - nextjs
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro          # certificats Let's Encrypt montés ici
+      - certbot_www:/var/www/certbot:ro         # challenge HTTP-01 pour renouvellement
+
+  certbot:
+    image: certbot/certbot
+    container_name: 3gs_certbot
+    volumes:
+      - ./nginx/ssl:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    # Renouvellement automatique : tourne en tâche de fond toutes les 12h
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+
   mongo-express:
     image: mongo-express:1
     container_name: 3gs_mongo_ui
@@ -61,8 +86,9 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
+    # Accessible uniquement en local sur le serveur (pas exposé publiquement)
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     environment:
       ME_CONFIG_MONGODB_ADMINUSERNAME: root
       ME_CONFIG_MONGODB_ADMINPASSWORD: devpassword
@@ -74,9 +100,9 @@ services:
     container_name: 3gs_maildev
     restart: unless-stopped
     ports:
-      - "1080:1080"   # interface web
-      - "1025:1025"   # SMTP
-
+      - "127.0.0.1:1080:1080"   # interface web — local uniquement
+      - "127.0.0.1:1025:1025"   # SMTP — local uniquement
 
 volumes:
   mongo_data:
+  certbot_www:
