@@ -131,6 +131,14 @@ export const authOptions: NextAuthOptions = {
         const superEmail = process.env.SUPERADMIN_EMAIL;
         const superHash = process.env.SUPERADMIN_PASSWORD_HASH;
 
+        // DEBUG TEMPORAIRE — à retirer après diagnostic
+        console.error('[auth-debug] email reçu:', JSON.stringify(credentials.email));
+        console.error('[auth-debug] superEmail:', JSON.stringify(superEmail));
+        console.error('[auth-debug] hash défini:', !!superHash);
+        console.error('[auth-debug] hash longueur:', superHash?.length);
+        console.error('[auth-debug] hash début:', superHash?.substring(0, 10));
+        console.error('[auth-debug] email match:', credentials.email === superEmail);
+
         if (!superEmail || !superHash) {
           console.error('[auth] SUPERADMIN_EMAIL ou SUPERADMIN_PASSWORD_HASH manquants');
           return null;
@@ -139,6 +147,7 @@ export const authOptions: NextAuthOptions = {
         if (credentials.email !== superEmail) return null;
 
         const isValid = await bcrypt.compare(credentials.password, superHash);
+        console.error('[auth-debug] bcrypt isValid:', isValid);
         if (!isValid) return null;
 
         return {
