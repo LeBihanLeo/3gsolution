@@ -2,6 +2,7 @@
 > Généré le 2026-03-17 · Basé sur ARCHITECTURE.md · Sizing en jours/dev
 > Mis à jour le 2026-03-28 · Sprint 17 ajouté (gestion TVA)
 > Mis à jour le 2026-04-07 · Sprint 19 ajouté (OAuth cross-domain & callbacks multi-tenant)
+> Mis à jour le 2026-04-11 · Sprint 20 ajouté (Stripe Connect — multi-tenant natif)
 
 ---
 
@@ -30,7 +31,8 @@
 | 17 | Gestion des prix et de la TVA | TICK-126 → 130 | 2,0 j |
 | 18 | Architecture multi-tenant | TICK-131 → 141 | 8,0 j | ⚠️ Planifié — non implémenté |
 | 19 | OAuth cross-domain & callbacks multi-tenant | TICK-142 → 155 | 5,75 j | Bloqué par Sprint 18 |
-| **Total** | | **155 tickets** | **~91,5 j** |
+| 20 | Stripe Connect — multi-tenant natif | TICK-156 → 167 | 7,5 j | ⚠️ Planifié |
+| **Total** | | **167 tickets** | **~99,0 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -4306,6 +4308,544 @@ Provider `cross-domain` NextAuth :
 - [ ] Mocks : MongoDB (AuthCode, RelayToken), fetch inter-services
 - [ ] Tous les scénarios listés couverts
 - [ ] Aucune régression sur les tests auth existants
+
+---
+
+## Sprint 20 — Stripe Connect — Multi-Tenant Natif (7,5 j)
+
+> **Contexte architectural**
+>
+> L'implémentation actuelle (TICK-139) stocke les clés secrètes Stripe de chaque restaurant en base MongoDB
+> (`stripeSecretKey`, `stripeWebhookSecret`). C'est un antipattern SaaS : gestion manuelle des clés,
+> multiple `STRIPE_WEBHOOK_SECRET`, surface d'attaque élargie.
+>
+> Stripe Connect résout cela nativement : le restaurant connecte son compte Stripe existant via OAuth.
+> On ne stocke qu'un `account_id` opaque (`acct_xxx`). Tous les appels API utilisent le client platform
+> avec l'option `{ stripeAccount: acct_xxx }`. Un seul secret webhook global (`STRIPE_CONNECT_WEBHOOK_SECRET`)
+> couvre tous les restaurants connectés.
+>
+> **Décisions d'architecture :**
+> - **Type de charge :** Direct charges (`{ stripeAccount: acct_xxx }`) — le restaurant est merchant of record
+> - **Account v2 :** OAuth vers comptes existants (restaurants ont déjà Stripe) — pas de création via `/v2/core/accounts`
+> - **Webhook :** Connect webhook endpoint unique — tenant résolu via `event.account`
+> - **Application fee :** Champ `stripeApplicationFeePercent` (optionnel, configurable par superadmin)
+
+---
+
+### TICK-156 — Modèle Restaurant : migration champs Stripe vers `stripeAccountId`
+**Épic :** Stripe Connect — Infrastructure
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** Sprint 18 (TICK-131)
+
+**Description :**
+Remplacer les champs `stripeSecretKey`, `stripePublishableKey`, `stripeWebhookSecret` (clés par restaurant)
+par `stripeAccountId` (account_id Connect opaque) et `stripeOnboardingComplete` (statut du flow OAuth).
+Ajouter `stripeApplicationFeePercent` pour permettre à la plateforme de prélever une commission optionnelle.
+
+**Changements dans `models/Restaurant.ts` :**
+
+```typescript
+// Supprimer
+stripePublishableKey?: string;
+stripeSecretKey?: string;       // select: false
+stripeWebhookSecret?: string;   // select: false
+
+// Ajouter
+stripeAccountId?: string;             // acct_xxx — jamais secret, mais limiter l'exposition
+stripeOnboardingComplete: boolean;    // true = OAuth finalisé
+stripeApplicationFeePercent?: number; // 0–100 — commission plateforme (optionnel)
+```
+
+**Critères d'acceptance :**
+- [ ] `stripeAccountId` : `{ type: String }`, pas de `select: false` (ce n'est pas un secret)
+- [ ] `stripeOnboardingComplete` : `{ type: Boolean, default: false }`
+- [ ] `stripeApplicationFeePercent` : `{ type: Number, min: 0, max: 100 }`, optionnel
+- [ ] Les 3 anciens champs Stripe (`stripeSecretKey`, `stripePublishableKey`, `stripeWebhookSecret`) supprimés du schéma
+- [ ] Aucune régression sur les autres champs du modèle (nom, domaine, auth admin…)
+- [ ] TypeScript : interface `IRestaurant` mise à jour en cohérence
+
+---
+
+### TICK-157 — `lib/stripe.ts` : refactoring vers client platform unique
+**Épic :** Stripe Connect — Infrastructure
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-156
+
+**Description :**
+Supprimer la factory `getStripeClient(restaurantId)` qui lisait les clés secrètes en DB.
+La remplacer par un client Stripe platform singleton (clé `STRIPE_SECRET_KEY` = clé de la plateforme)
+et un helper `getStripeAccountId(restaurantId)` qui retourne uniquement le `acct_xxx` depuis la DB.
+La vérification webhook utilise désormais `STRIPE_CONNECT_WEBHOOK_SECRET`.
+
+**Nouvelle API de `lib/stripe.ts` :**
+
+```typescript
+// Client platform — singleton (clé plateforme, pas du restaurant)
+export const stripe: Stripe; // initialisé depuis STRIPE_SECRET_KEY
+
+// Retourne le stripeAccountId du restaurant (acct_xxx) ou null si non connecté
+export async function getStripeAccountId(restaurantId: string): Promise<string | null>;
+
+// Vérifie la signature d'un webhook Connect (STRIPE_CONNECT_WEBHOOK_SECRET)
+export function constructConnectEvent(body: string, sig: string): Stripe.Event;
+```
+
+**Critères d'acceptance :**
+- [ ] `getStripeClient(restaurantId)` supprimé (plus de lecture de clé secrète en DB)
+- [ ] `getStripeWebhookSecret(restaurantId)` supprimé
+- [ ] `getStripe()` (rétrocompatibilité deprecated) supprimé
+- [ ] Client Stripe platform : `new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2026-02-25.clover' })`
+- [ ] `getStripeAccountId()` : `Restaurant.findById(id).select('stripeAccountId').lean()` → retourne `stripeAccountId ?? null`
+- [ ] `constructConnectEvent()` : `stripe.webhooks.constructEvent(body, sig, process.env.STRIPE_CONNECT_WEBHOOK_SECRET!)`
+- [ ] Cache `Map` supprimé (plus nécessaire — un seul client)
+- [ ] Aucune import de `lib/stripe` dans d'autres fichiers ne casse (adapter les imports dans les étapes suivantes)
+
+---
+
+### TICK-158 — Flow OAuth Connect : onboarding restaurant
+**Épic :** Stripe Connect — Onboarding
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,5 j
+**Dépendances :** TICK-157
+
+**Description :**
+Implémenter le flow OAuth standard Stripe Connect permettant à un restaurant de connecter son compte Stripe
+existant à la plateforme. Deux routes API :
+
+1. `GET /api/stripe/connect/authorize` — génère l'URL OAuth Stripe et redirige
+2. `GET /api/stripe/connect/callback` — reçoit le `code`, l'échange contre le `stripe_user_id` (`acct_xxx`), le sauvegarde
+
+**Flow complet :**
+```
+Admin restaurant → "Connecter mon compte Stripe"
+  → GET /api/stripe/connect/authorize?restaurantId=xxx
+  → Redirect vers https://connect.stripe.com/oauth/authorize?client_id=ca_xxx&...
+  → Restaurant s'authentifie sur Stripe / crée un compte
+  → Stripe redirige vers GET /api/stripe/connect/callback?code=xxx&state=restaurantId
+  → Échange code → stripe_user_id via stripe.oauth.token()
+  → Restaurant.findByIdAndUpdate: { stripeAccountId, stripeOnboardingComplete: true }
+  → Redirect vers /admin/stripe?connected=true
+```
+
+**Critères d'acceptance :**
+
+`GET /api/stripe/connect/authorize` :
+- [ ] Réservé aux admins du restaurant (`session.user.role === 'admin'` ET `session.user.restaurantId`)
+- [ ] Paramètre `state` = `restaurantId` (signé HMAC-SHA256 avec `NEXTAUTH_SECRET` pour éviter CSRF)
+- [ ] URL OAuth : `https://connect.stripe.com/oauth/authorize?response_type=code&client_id=${STRIPE_CONNECT_CLIENT_ID}&scope=read_write&state=...`
+- [ ] Redirect 302 vers l'URL Stripe
+
+`GET /api/stripe/connect/callback` :
+- [ ] Vérification du paramètre `state` (HMAC) avant tout traitement
+- [ ] Échange du code : `await stripe.oauth.token({ grant_type: 'authorization_code', code })`
+- [ ] Récupération du `stripe_user_id` depuis la réponse
+- [ ] Sauvegarde en DB : `Restaurant.findByIdAndUpdate(restaurantId, { stripeAccountId: stripe_user_id, stripeOnboardingComplete: true })`
+- [ ] Erreur Stripe (`error` param present in callback) → redirect `/admin/stripe?error=connect_failed`
+- [ ] Succès → redirect `/admin/stripe?connected=true`
+- [ ] Pas d'exposition de `access_token` (non stocké — inutile pour les direct charges)
+
+**Variables d'env requises :**
+- `STRIPE_CONNECT_CLIENT_ID` — `ca_xxx` depuis le Dashboard Stripe Connect Settings
+
+---
+
+### TICK-159 — `checkout/route.ts` : migrer vers direct charges Connect
+**Épic :** Stripe Connect — Paiements
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-157, TICK-158
+
+**Description :**
+Adapter `app/api/checkout/route.ts` pour utiliser le client platform avec l'option `{ stripeAccount: acct_xxx }`
+au lieu de `getStripeClient(restaurantId)`. Ajouter `application_fee_amount` si le restaurant a un taux de commission configuré.
+
+**Changements dans `app/api/checkout/route.ts` :**
+
+```typescript
+// Avant (TICK-139)
+const stripe = await getStripeClient(restaurantId);
+const session = await stripe.checkout.sessions.create({ ... }, { idempotencyKey });
+
+// Après (TICK-159)
+import { stripe, getStripeAccountId } from '@/lib/stripe';
+
+const stripeAccountId = restaurantId ? await getStripeAccountId(restaurantId) : null;
+
+// Mode mock : pas de stripeAccountId ET pas en production
+const hasMockMode = !stripeAccountId;
+if (hasMockMode) { ... }
+
+// Calcul de la commission plateforme (optionnel)
+const totalCentimes = produitsVerifies.reduce(...);
+const applicationFeeAmount = restaurant?.stripeApplicationFeePercent
+  ? Math.round(totalCentimes * restaurant.stripeApplicationFeePercent / 100)
+  : undefined;
+
+const session = await stripe.checkout.sessions.create(
+  {
+    mode: 'payment',
+    payment_method_types: ['card'],
+    line_items: lineItems,
+    success_url: `${baseUrl}/confirmation?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${baseUrl}/commande?payment=cancelled&session_id={CHECKOUT_SESSION_ID}`,
+    ...(client.email ? { customer_email: client.email } : {}),
+    ...(applicationFeeAmount ? { payment_intent_data: { application_fee_amount: applicationFeeAmount } } : {}),
+    expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
+    metadata: { pending_order_id: pendingOrder._id.toString() },
+  },
+  {
+    stripeAccount: stripeAccountId,   // Direct charge sur le compte du restaurant
+    idempotencyKey: `checkout_${pendingOrder._id.toString()}`,
+  }
+);
+```
+
+**Critères d'acceptance :**
+- [ ] `getStripeClient(restaurantId)` remplacé par `stripe` (platform) + `{ stripeAccount: stripeAccountId }`
+- [ ] Mode mock déclenché si `stripeAccountId === null` (restaurant non connecté) ET pas en production
+- [ ] En production sans `stripeAccountId` → 500 "Stripe non configuré pour ce restaurant"
+- [ ] `application_fee_amount` calculé et inclus si `restaurant.stripeApplicationFeePercent` est défini
+- [ ] Import de `getStripe()` supprimé
+- [ ] Idempotency key préservée
+
+---
+
+### TICK-160 — `webhooks/stripe/route.ts` : migrer vers webhook Connect global
+**Épic :** Stripe Connect — Webhooks
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,75 j
+**Dépendances :** TICK-157
+
+**Description :**
+Simplifier le webhook Stripe en supprimant la logique de résolution du tenant via `PendingOrder`
+et de chargement du `webhookSecret` par restaurant. Le webhook Connect Stripe identifie le tenant
+via le champ `event.account` (le `acct_xxx` du restaurant). Un seul `STRIPE_CONNECT_WEBHOOK_SECRET` global.
+
+**Logique de résolution du tenant (avant → après) :**
+
+```typescript
+// Avant : résolution via PendingOrder → getStripeWebhookSecret(restaurantId) → client par restaurant
+// (complexe, fragile, expose une clé par restaurant)
+
+// Après : STRIPE_CONNECT_WEBHOOK_SECRET global + event.account pour identifier le restaurant
+const event = stripe.webhooks.constructEvent(body, sig, process.env.STRIPE_CONNECT_WEBHOOK_SECRET!);
+
+// Résolution du restaurant depuis l'account Stripe
+const restaurant = event.account
+  ? await Restaurant.findOne({ stripeAccountId: event.account }).select('_id restaurantId').lean()
+  : null;
+const restaurantId = restaurant?._id?.toString() ?? null;
+```
+
+**Critères d'acceptance :**
+- [ ] `getStripeClient(restaurantId)` et `getStripeWebhookSecret(restaurantId)` supprimés du webhook
+- [ ] Vérification signature : `stripe.webhooks.constructEvent(body, sig, STRIPE_CONNECT_WEBHOOK_SECRET)`
+- [ ] Tenant résolu via `Restaurant.findOne({ stripeAccountId: event.account })`
+- [ ] Si `event.account` absent (webhook direct platform) : log + skip silencieux (200 received)
+- [ ] Si restaurant introuvable pour un `event.account` : log erreur + 200 (ne pas faire retry Stripe)
+- [ ] Tous les handlers existants (`handleSessionCompleted`, etc.) inchangés — seule la résolution du tenant change
+- [ ] `stripe.paymentIntents.retrieve(...)` dans `handleSessionCompleted` utilise `{ stripeAccount: event.account }` pour requêter sur le bon compte
+- [ ] Variable `STRIPE_WEBHOOK_SECRET` (ancienne) retirée des usages
+
+---
+
+### TICK-161 — Superadmin UI : remplacer les champs Stripe par le statut Connect
+**Épic :** Stripe Connect — Interface
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-158, TICK-163
+
+**Description :**
+Mettre à jour les pages et API superadmin pour supprimer les champs de saisie des clés Stripe
+(`stripeSecretKey`, `stripePublishableKey`, `stripeWebhookSecret`) et les remplacer par
+l'affichage du statut Connect + un bouton de déconnexion forcée.
+
+**Changements :**
+
+`app/api/superadmin/restaurants/[id]/route.ts` — UpdateSchema :
+```typescript
+// Supprimer du schéma Zod
+stripePublishableKey: z.string().optional(),
+stripeSecretKey: z.string().optional(),
+stripeWebhookSecret: z.string().optional(),
+
+// Ajouter
+stripeApplicationFeePercent: z.number().min(0).max(100).optional(),
+```
+
+Interface superadmin (formulaire restaurant) :
+- Supprimer les 3 champs de saisie clés Stripe
+- Afficher : `stripeAccountId` (ex: `acct_1Abc2X...` tronqué) ou badge "Non connecté"
+- Afficher : `stripeOnboardingComplete` (badge "Connecté ✓" / "En attente")
+- Ajouter : champ numérique `stripeApplicationFeePercent` (0–100%)
+- Bouton "Déconnecter Stripe" → `DELETE /api/stripe/connect?restaurantId=xxx` (TICK-163)
+
+**Critères d'acceptance :**
+- [ ] Les 3 champs Stripe secrets supprimés du formulaire et de l'API PUT
+- [ ] `stripeApplicationFeePercent` configurable depuis le superadmin
+- [ ] Statut Connect affiché : account_id tronqué + badge couleur (connecté/non-connecté)
+- [ ] Bouton "Déconnecter" visible uniquement si `stripeOnboardingComplete: true`
+- [ ] Le PUT `/api/superadmin/restaurants/[id]` ne modifie plus les champs Stripe secrets
+- [ ] Aucune régression sur les autres champs éditables (nom, domaine, horaires…)
+
+---
+
+### TICK-162 — Admin restaurant : page statut Stripe Connect
+**Épic :** Stripe Connect — Interface
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-158
+
+**Description :**
+Créer une page `app/(admin)/stripe/page.tsx` permettant à l'admin du restaurant de voir son statut
+Stripe Connect et de lancer ou relancer le flow de connexion.
+
+**Contenu de la page :**
+
+```
+[Statut Stripe Connect]
+
+🟢 Compte connecté
+Compte : acct_1Abc2X... (tronqué)
+→ [Ouvrir mon dashboard Stripe] (lien externe: https://dashboard.stripe.com)
+
+— ou —
+
+🔴 Compte non connecté
+Stripe n'est pas encore configuré pour ce restaurant.
+→ [Connecter mon compte Stripe] (→ /api/stripe/connect/authorize)
+```
+
+**Critères d'acceptance :**
+- [ ] Page accessible uniquement aux admins du restaurant (`role === 'admin'`)
+- [ ] Données chargées via `GET /api/admin/stripe-status` (ou Server Component direct)
+- [ ] Affichage conditionnel selon `stripeOnboardingComplete`
+- [ ] Lien vers `https://dashboard.stripe.com` si connecté (lien direct standard, pas Express dashboard)
+- [ ] Bouton "Connecter" redirige vers `GET /api/stripe/connect/authorize`
+- [ ] Ajout du lien "Stripe" dans la navigation admin (`app/(admin)/layout.tsx`)
+- [ ] Gestion du paramètre `?connected=true` et `?error=connect_failed` dans l'URL (retour callback)
+
+---
+
+### TICK-163 — Déconnexion compte Connect : `DELETE /api/stripe/connect`
+**Épic :** Stripe Connect — Gestion du cycle de vie
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-157, TICK-156
+
+**Description :**
+Implémenter la déconnexion d'un compte restaurant du Connect de la plateforme. Réservé au superadmin.
+Révoque l'accès OAuth côté Stripe et nettoie la DB.
+
+**Route `DELETE /api/stripe/connect` :**
+
+```typescript
+// 1. Vérifier superadmin
+// 2. Charger le restaurant (stripeAccountId)
+// 3. Révoquer l'accès OAuth Stripe
+await stripe.oauth.deauthorize({
+  client_id: process.env.STRIPE_CONNECT_CLIENT_ID!,
+  stripe_user_id: restaurant.stripeAccountId!,
+});
+// 4. Nettoyer la DB
+await Restaurant.findByIdAndUpdate(restaurantId, {
+  $unset: { stripeAccountId: 1 },
+  stripeOnboardingComplete: false,
+});
+```
+
+**Critères d'acceptance :**
+- [ ] Accès réservé `role === 'superadmin'`
+- [ ] Si `stripeOnboardingComplete: false` → 400 "Aucun compte connecté"
+- [ ] Appel `stripe.oauth.deauthorize()` avec `client_id` + `stripe_user_id`
+- [ ] Erreur Stripe (ex: compte déjà révoqué) → log + continuer le nettoyage DB (idempotent)
+- [ ] Après déconnexion : `stripeAccountId` supprimé, `stripeOnboardingComplete: false`
+- [ ] Réponse 200 `{ message: 'Compte Stripe déconnecté' }`
+
+---
+
+### TICK-164 — Script migration : nettoyer les anciens champs Stripe en DB
+**Épic :** Stripe Connect — Migration données
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,25 j
+**Dépendances :** TICK-156
+
+**Description :**
+Script one-shot pour supprimer les champs `stripeSecretKey`, `stripePublishableKey`, `stripeWebhookSecret`
+des documents Restaurant existants en production, et initialiser `stripeOnboardingComplete: false`.
+
+**Script `scripts/migrate-stripe-connect.ts` :**
+
+```typescript
+// Opération : $unset des anciens champs + $set du nouveau champ
+await Restaurant.updateMany(
+  {},
+  {
+    $unset: {
+      stripeSecretKey: 1,
+      stripePublishableKey: 1,
+      stripeWebhookSecret: 1,
+    },
+    $set: { stripeOnboardingComplete: false },
+  }
+);
+```
+
+**Critères d'acceptance :**
+- [ ] Script dans `scripts/migrate-stripe-connect.ts`, exécutable avec `npx tsx`
+- [ ] `$unset` des 3 anciens champs sur tous les documents Restaurant
+- [ ] `$set stripeOnboardingComplete: false` (idempotent si déjà false)
+- [ ] Log du nombre de documents modifiés
+- [ ] Documenté dans le script : "À exécuter une seule fois après déploiement TICK-156"
+- [ ] **Ne pas exécuter en développement** — guard `process.env.NODE_ENV === 'production'` ou confirmation interactive
+
+---
+
+### TICK-165 — Variables d'environnement & `.env.local.example` v20
+**Épic :** Stripe Connect — Infrastructure
+**Priorité :** 🟠 Haute
+**Sizing :** 0,25 j
+**Dépendances :** TICK-157, TICK-158
+
+**Description :**
+Mettre à jour `.env.local.example` pour refléter la nouvelle configuration Stripe Connect :
+une seule clé platform, un secret webhook Connect, et le client_id OAuth.
+
+**Changements dans `.env.local.example` :**
+
+```bash
+# ── Stripe Connect (plateforme) ──────────────────────────────────────────────
+# Clé secrète de la PLATEFORME (pas du restaurant) — dashboard.stripe.com → Developers → API keys
+STRIPE_SECRET_KEY=sk_test_...
+
+# Client ID OAuth Connect — dashboard.stripe.com → Connect → Settings → Client ID
+STRIPE_CONNECT_CLIENT_ID=ca_...
+
+# Secret du webhook Connect — dashboard.stripe.com → Developers → Webhooks → Connect endpoint
+# Écoute les events de TOUS les comptes connectés sur un seul endpoint /api/webhooks/stripe
+STRIPE_CONNECT_WEBHOOK_SECRET=whsec_...
+
+# SUPPRIMÉ — remplacé par stripeAccountId en DB (acct_xxx via OAuth Connect)
+# STRIPE_WEBHOOK_SECRET=whsec_...  ← ne plus utiliser
+```
+
+**Critères d'acceptance :**
+- [ ] `STRIPE_SECRET_KEY` : commentaire précise "clé de la plateforme"
+- [ ] `STRIPE_CONNECT_CLIENT_ID` : ajouté avec explication et lien vers le Dashboard
+- [ ] `STRIPE_CONNECT_WEBHOOK_SECRET` : ajouté, remplace `STRIPE_WEBHOOK_SECRET`
+- [ ] `STRIPE_WEBHOOK_SECRET` : marqué SUPPRIMÉ en commentaire (ne pas supprimer la ligne — aide la migration)
+- [ ] Anciens champs de clés Stripe par restaurant supprimés de l'exemple (ils n'existent plus)
+- [ ] Section Stripe Connect dans `ARCHITECTURE.md` mise à jour (ou ticket TICK-167)
+
+---
+
+### TICK-166 — Tests : Stripe Connect (checkout, webhook, flow OAuth)
+**Épic :** Stripe Connect — Qualité
+**Priorité :** 🟠 Haute
+**Sizing :** 1,0 j
+**Dépendances :** TICK-159, TICK-160, TICK-158
+
+**Description :**
+Adapter les tests existants (`checkout.test.ts`, `webhook-stripe.test.ts`) à la nouvelle architecture
+Connect, et ajouter des tests pour le flow OAuth.
+
+**Adaptations `__tests__/api/checkout.test.ts` :**
+```typescript
+// Avant : vi.mock('@/lib/stripe') → mock getStripeClient() retournant un client factice
+// Après : mock du module stripe.ts → export stripe (platform) + getStripeAccountId()
+
+vi.mock('@/lib/stripe', () => ({
+  stripe: {
+    checkout: {
+      sessions: { create: vi.fn().mockResolvedValue({ url: 'https://stripe.com/pay/test' }) },
+    },
+  },
+  getStripeAccountId: vi.fn().mockResolvedValue('acct_test123'),
+}));
+
+// Vérifier que sessions.create est appelé avec { stripeAccount: 'acct_test123' }
+expect(mockCreate).toHaveBeenCalledWith(
+  expect.objectContaining({ mode: 'payment' }),
+  expect.objectContaining({ stripeAccount: 'acct_test123' })
+);
+```
+
+**Adaptations `__tests__/api/webhook-stripe.test.ts` :**
+```typescript
+// Avant : mock getStripeWebhookSecret + getStripeClient
+// Après : mock constructConnectEvent + Restaurant.findOne({ stripeAccountId })
+
+vi.mock('@/lib/stripe', () => ({
+  stripe: { webhooks: { constructEvent: vi.fn() } },
+  constructConnectEvent: vi.fn().mockReturnValue({
+    type: 'checkout.session.completed',
+    account: 'acct_test123',
+    data: { object: mockSession },
+  }),
+}));
+```
+
+**Nouveaux tests `__tests__/api/stripe-connect.test.ts` :**
+- [ ] `GET /api/stripe/connect/authorize` → redirect 302 avec `client_id`, `state` HMAC
+- [ ] `GET /api/stripe/connect/callback` → échange code, sauvegarde `stripeAccountId`, redirect success
+- [ ] Callback avec `error` param → redirect avec `?error=connect_failed`
+- [ ] Callback avec `state` invalide (CSRF) → 400
+- [ ] `DELETE /api/stripe/connect` → deauthorize + nettoyage DB (superadmin uniquement)
+- [ ] `DELETE /api/stripe/connect` par non-superadmin → 403
+
+**Critères d'acceptance :**
+- [ ] `checkout.test.ts` adapté — vérifie `{ stripeAccount: acct_xxx }` dans l'appel sessions.create
+- [ ] `webhook-stripe.test.ts` adapté — résolution tenant via `event.account`
+- [ ] Nouveau fichier `stripe-connect.test.ts` avec les scénarios OAuth listés
+- [ ] 0 test cassé post-migration
+- [ ] Conventions mock alignées avec `ARCHITECTURE.md` (vi.mock, pas jest.mock)
+
+---
+
+### TICK-167 — Documentation : ARCHITECTURE.md v3.0 + guide onboarding restaurant
+**Épic :** Stripe Connect — Documentation
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-158, TICK-162
+
+**Description :**
+Mettre à jour `ARCHITECTURE.md` pour documenter l'architecture Stripe Connect et créer un guide
+d'onboarding à destination des nouveaux restaurants rejoignant la plateforme.
+
+**Sections à mettre à jour dans `ARCHITECTURE.md` :**
+
+1. **Section Stripe** — remplacer la description de `getStripeClient(restaurantId)` par :
+   - Client platform unique (`lib/stripe.ts`)
+   - Direct charges avec `{ stripeAccount: acct_xxx }`
+   - Webhook Connect global (`/api/webhooks/stripe`)
+   - Schema de résolution du tenant : `event.account → Restaurant.stripeAccountId`
+
+2. **Section multi-tenant** — ajouter le cycle de vie Connect :
+   - Restaurant créé par superadmin → `stripeOnboardingComplete: false`
+   - Admin restaurant lance le flow OAuth → callback → `stripeOnboardingComplete: true`
+   - Déconnexion : superadmin via `DELETE /api/stripe/connect`
+
+3. **Diagramme de séquence** (ASCII) du flow OAuth Connect :
+```
+Admin         Plateforme              Stripe Connect
+  |── "Connecter" ──▶ /api/stripe/connect/authorize
+                          |── redirect ──▶ connect.stripe.com/oauth/authorize
+                                              |── (authentification)
+                          |◀── ?code=xxx ────|
+                          |── oauth.token() ─▶ Stripe API
+                          |◀── stripe_user_id |
+                          |── DB.save(acct_xxx)
+  |◀── redirect /admin/stripe?connected=true
+```
+
+**Critères d'acceptance :**
+- [ ] `ARCHITECTURE.md` version bumped à v3.0
+- [ ] Section Stripe entièrement réécrite (suppression de la description des clés par restaurant)
+- [ ] Diagramme de séquence OAuth inclus
+- [ ] Guide `docs/onboarding-stripe-connect.md` créé (si dossier `docs/` existe) — sinon section dans ARCHITECTURE.md
+- [ ] Variables d'environnement Stripe Connect documentées dans ARCHITECTURE.md
 
 ---
 
