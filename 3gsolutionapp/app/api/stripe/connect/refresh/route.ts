@@ -13,14 +13,8 @@ import Restaurant from '@/models/Restaurant';
 import { logger } from '@/lib/logger';
 
 function getFallbackErrorUrl(): string {
-  const returnUrl = process.env.STRIPE_CONNECT_RETURN_URL;
-  if (returnUrl) {
-    try {
-      return `${new URL(returnUrl).origin}/admin/stripe`;
-    } catch {
-      // URL malformée — fallback
-    }
-  }
+  const hubUrl = process.env.AUTH_HUB_URL;
+  if (hubUrl) return `${hubUrl}/admin/stripe`;
   return 'http://localhost:3000/admin/stripe';
 }
 
@@ -59,13 +53,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${fallbackErrorUrl}?error=unauthorized`, 302);
   }
 
-  const returnUrl  = process.env.STRIPE_CONNECT_RETURN_URL;
-  const refreshUrl = process.env.STRIPE_CONNECT_REFRESH_URL;
-
-  if (!returnUrl || !refreshUrl) {
-    logger.error('stripe_connect_missing_urls', { restaurantId });
+  // AUTH_HUB_URL centralise tous les callbacks — même pattern que initiate
+  const hubUrl = process.env.AUTH_HUB_URL;
+  if (!hubUrl) {
+    logger.error('stripe_connect_missing_hub_url', { restaurantId });
     return NextResponse.redirect(`${fallbackErrorUrl}?error=config_error`, 302);
   }
+  const returnUrl  = `${hubUrl}/api/stripe/connect/return`;
+  const refreshUrl = `${hubUrl}/api/stripe/connect/refresh`;
 
   try {
     await connectDB();

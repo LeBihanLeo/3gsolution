@@ -42,13 +42,15 @@ export async function POST(_request: NextRequest) {
 
   const restaurantId = user.restaurantId;
 
-  const returnUrl = process.env.STRIPE_CONNECT_RETURN_URL;
-  const refreshUrl = process.env.STRIPE_CONNECT_REFRESH_URL;
-
-  if (!returnUrl || !refreshUrl) {
-    logger.error('stripe_connect_missing_urls', { restaurantId });
+  // AUTH_HUB_URL centralise tous les callbacks cross-domaine (même pattern que Social Login Sprint 19).
+  // Tous les restaurants partagent le même hub — aucune variable par restaurant nécessaire.
+  const hubUrl = process.env.AUTH_HUB_URL;
+  if (!hubUrl) {
+    logger.error('stripe_connect_missing_hub_url', { restaurantId });
     return NextResponse.json({ error: 'Configuration serveur incorrecte' }, { status: 500 });
   }
+  const returnUrl  = `${hubUrl}/api/stripe/connect/return`;
+  const refreshUrl = `${hubUrl}/api/stripe/connect/refresh`;
 
   try {
     await connectDB();

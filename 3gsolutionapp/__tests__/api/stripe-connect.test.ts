@@ -87,8 +87,8 @@ function buildReturnUrl(base: string, restaurantId: string, expiresOffset = 600)
 describe('POST /api/stripe/connect/initiate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv('STRIPE_CONNECT_RETURN_URL', 'https://hub.test/api/stripe/connect/return');
-    vi.stubEnv('STRIPE_CONNECT_REFRESH_URL', 'https://hub.test/api/stripe/connect/refresh');
+    // AUTH_HUB_URL centralise return_url/refresh_url pour tous les restaurants
+    vi.stubEnv('AUTH_HUB_URL', 'https://hub.test');
     vi.stubEnv('NEXTAUTH_SECRET', TEST_SECRET);
     mockGetServerSession.mockResolvedValue({
       user: { role: 'admin', restaurantId: TEST_RESTAURANT_ID },
@@ -147,17 +147,17 @@ describe('POST /api/stripe/connect/initiate', () => {
     );
   });
 
-  // TICK-179 — state token HMAC inclus dans return_url et refresh_url
+  // TICK-179 — state token HMAC inclus dans return_url et refresh_url (base = AUTH_HUB_URL)
   it('accountLink contient return_url et refresh_url avec restaurantId + state + expires', async () => {
     const req = makeReq('https://hub.test/api/stripe/connect/initiate', 'POST');
     await initiatePOST(req);
     expect(mockAccountLinksCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         return_url: expect.stringMatching(
-          /restaurantId=restaurant_test_id&state=[a-f0-9]{64}&expires=\d+/
+          /^https:\/\/hub\.test\/api\/stripe\/connect\/return\?restaurantId=restaurant_test_id&state=[a-f0-9]{64}&expires=\d+$/
         ),
         refresh_url: expect.stringMatching(
-          /restaurantId=restaurant_test_id&state=[a-f0-9]{64}&expires=\d+/
+          /^https:\/\/hub\.test\/api\/stripe\/connect\/refresh\?restaurantId=restaurant_test_id&state=[a-f0-9]{64}&expires=\d+$/
         ),
         type: 'account_onboarding',
       })
@@ -176,8 +176,8 @@ describe('POST /api/stripe/connect/initiate', () => {
     expect(res.status).toBe(403);
   });
 
-  it('STRIPE_CONNECT_RETURN_URL manquant → 500', async () => {
-    vi.stubEnv('STRIPE_CONNECT_RETURN_URL', '');
+  it('AUTH_HUB_URL manquant → 500', async () => {
+    vi.stubEnv('AUTH_HUB_URL', '');
     const res = await initiatePOST(makeReq('https://hub.test/api/stripe/connect/initiate', 'POST'));
     expect(res.status).toBe(500);
   });
@@ -203,7 +203,7 @@ describe('POST /api/stripe/connect/initiate', () => {
 describe('GET /api/stripe/connect/return', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv('STRIPE_CONNECT_RETURN_URL', 'https://hub.test/api/stripe/connect/return');
+    vi.stubEnv('AUTH_HUB_URL', 'https://hub.test');
     vi.stubEnv('NEXTAUTH_SECRET', TEST_SECRET);
     mockRestaurantModel.findById.mockReturnValue({
       select: vi.fn().mockReturnThis(),
@@ -324,8 +324,7 @@ describe('GET /api/stripe/connect/return', () => {
 describe('GET /api/stripe/connect/refresh', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv('STRIPE_CONNECT_RETURN_URL', 'https://hub.test/api/stripe/connect/return');
-    vi.stubEnv('STRIPE_CONNECT_REFRESH_URL', 'https://hub.test/api/stripe/connect/refresh');
+    vi.stubEnv('AUTH_HUB_URL', 'https://hub.test');
     vi.stubEnv('NEXTAUTH_SECRET', TEST_SECRET);
     mockRestaurantModel.findById.mockReturnValue({
       select: vi.fn().mockReturnThis(),

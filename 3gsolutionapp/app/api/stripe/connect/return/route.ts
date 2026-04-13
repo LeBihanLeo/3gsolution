@@ -16,17 +16,11 @@ import { logger } from '@/lib/logger';
 
 /**
  * URL de base pour les redirections d'erreur avant résolution du restaurant.
- * Utilise l'origine de STRIPE_CONNECT_RETURN_URL ou localhost en dev.
+ * Utilise AUTH_HUB_URL (hub centralisé) ou localhost en dev.
  */
 function getFallbackErrorUrl(): string {
-  const returnUrl = process.env.STRIPE_CONNECT_RETURN_URL;
-  if (returnUrl) {
-    try {
-      return `${new URL(returnUrl).origin}/admin/stripe`;
-    } catch {
-      // URL malformée — fallback
-    }
-  }
+  const hubUrl = process.env.AUTH_HUB_URL;
+  if (hubUrl) return `${hubUrl}/admin/stripe`;
   return 'http://localhost:3000/admin/stripe';
 }
 
