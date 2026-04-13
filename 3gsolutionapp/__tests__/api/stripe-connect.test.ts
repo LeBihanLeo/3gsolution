@@ -120,13 +120,17 @@ describe('POST /api/stripe/connect/initiate', () => {
     );
   });
 
-  // TICK-182 — country: 'FR' pré-remplit le pays dans l'onboarding Stripe
-  it('accounts.create appelé avec type: express, country: FR et restaurantId en metadata', async () => {
+  // TICK-182 — country: 'FR' + capabilities card_payments + transfers demandées à la création
+  it('accounts.create appelé avec type: express, country: FR, capabilities et restaurantId', async () => {
     const req = makeReq('https://hub.test/api/stripe/connect/initiate', 'POST');
     await initiatePOST(req);
     expect(mockAccountsCreate).toHaveBeenCalledWith({
       type: 'express',
       country: 'FR',
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true },
+      },
       metadata: { restaurantId: TEST_RESTAURANT_ID },
     });
   });

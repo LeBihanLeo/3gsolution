@@ -70,6 +70,10 @@ export async function POST(_request: NextRequest) {
       const account = await stripe.accounts.create({
         type: 'express',
         country: 'FR',   // TICK-182 — Pré-remplit le pays → supprime un écran d'onboarding
+        capabilities: {
+          card_payments: { requested: true },
+          transfers: { requested: true },
+        },
         metadata: { restaurantId },
       });
       stripeAccountId = account.id;
