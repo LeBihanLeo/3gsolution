@@ -283,11 +283,15 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
 
-    // ── session : expose role + id ─────────────────────────────────────────
+    // ── session : expose role + id + restaurantId ─────────────────────────
     async session({ session, token }) {
       if (token && session.user) {
         session.user.id = token.id as string;
         session.user.role = token.role as string;
+        // TICK-136 — restaurantId requis par les routes admin (initiate, stripe-status, disconnect…)
+        if (token.restaurantId) {
+          (session.user as { restaurantId?: string }).restaurantId = token.restaurantId as string;
+        }
       }
       return session;
     },
