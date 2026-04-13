@@ -10,11 +10,9 @@ import { z } from 'zod';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { stripe, getStripeAccountId } from '@/lib/stripe';
-import { mockSessions } from '@/lib/mockStore';
 import { connectDB } from '@/lib/mongodb';
 import Produit from '@/models/Produit';
 import PendingOrder from '@/models/PendingOrder';
-import { randomUUID } from 'crypto';
 import { logger } from '@/lib/logger';
 import { getTenantId, getTenantRestaurant } from '@/lib/tenant';
 
@@ -147,28 +145,14 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    // ── Mode mock (restaurant non connecté à Stripe Connect) ─────────────────
-    // En dev : on accepte d'utiliser le mock si pas de stripeAccountId
-    // En prod : erreur si le restaurant n'a pas finalisé son onboarding Connect
-    const hasMockMode = !stripeAccountId;
-    if (hasMockMode) {
-      if (process.env.NODE_ENV === 'production') {
-        return NextResponse.json({ error: 'Stripe non configuré pour ce restaurant' }, { status: 500 });
-      }
-      const mockId = `mock_${randomUUID()}`;
-      mockSessions.set(mockId, {
-        client: {
-          nom: client.nom,
-          telephone: client.telephone,
-          ...(client.email ? { email: client.email } : {}),
-        },
-        retrait,
-        ...(commentaire ? { commentaire } : {}),
-        produits: produitsVerifies,
-        ...(clientId ? { clientId } : {}),
-        restaurantId,
-      });
-      return NextResponse.json({ url: `${baseUrl}/mock-checkout?session_id=${mockId}` });
+    // ── Stripe Connect requis ─────────────────────────────────────────────────
+    // Si le restaurant n'a pas finalisé son onboarding Stripe Connect, les commandes
+    // sont bloquées (le frontend affiche déjà le restaurant comme fermé via site-config).
+    if (!stripeAccountId) {
+      return NextResponse.json(
+        { error: 'Les commandes sont temporairement indisponibles. Le restaurant n\'est pas encore configuré pour les paiements en ligne.' },
+        { status: 503 }
+      );
     }
 
     // ── Mode réel (Stripe Connect — direct charge) ────────────────────────────

@@ -18,7 +18,7 @@ interface TenantConfigData {
   palette: SitePalette;
   horaireOuverture: string;
   horaireFermeture: string;
-  fermeeAujourdhui: boolean;
+  fermeeAujourdhui: boolean; // true si fermé manuellement OU si Stripe non configuré
 }
 
 const DEFAULT_CONFIG: TenantConfigData = {
@@ -34,13 +34,15 @@ async function getConfig(): Promise<TenantConfigData> {
     const restaurant = await getTenantRestaurant();
     if (!restaurant) return DEFAULT_CONFIG;
     const couleur = restaurant.couleurPrimaire ?? DEFAULT_COULEUR;
+    // Commandes désactivées si : fermé manuellement OU Stripe Connect non finalisé
+    const stripeConfigured = restaurant.stripeOnboardingComplete === true;
     return {
       nomRestaurant: restaurant.nom ?? DEFAULT_CONFIG.nomRestaurant,
       banniereUrl: restaurant.banniere,
       palette: generatePalette(couleur),
       horaireOuverture: restaurant.horaireOuverture ?? '11:30',
       horaireFermeture: restaurant.horaireFermeture ?? '14:00',
-      fermeeAujourdhui: restaurant.fermeeAujourdhui ?? false,
+      fermeeAujourdhui: (restaurant.fermeeAujourdhui ?? false) || !stripeConfigured,
     };
   } catch {
     return DEFAULT_CONFIG;

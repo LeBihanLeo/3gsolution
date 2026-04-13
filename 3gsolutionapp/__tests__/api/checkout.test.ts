@@ -27,11 +27,6 @@ vi.mock('@/lib/stripe', () => ({
   getStripeAccountId: mockGetStripeAccountId,
 }));
 
-// Mock mockStore
-vi.mock('@/lib/mockStore', () => ({
-  mockSessions: new Map(),
-}));
-
 // TICK-050 — Le checkout vérifie les prix en BDD : il faut mocker connectDB + Produit
 vi.mock('@/lib/mongodb', () => ({ connectDB: vi.fn().mockResolvedValue(undefined) }));
 // TICK-075 — getServerSession mocké (renvoie null = client non connecté par défaut)
@@ -247,13 +242,13 @@ describe('POST /api/checkout', () => {
     expect(pendingArg.produits[0].taux_tva).toBe(20);
   });
 
-  // TICK-159 — Mode mock si restaurant sans stripeAccountId Connect
-  it('restaurant sans stripeAccountId → mode mock (url mock-checkout)', async () => {
+  // Stripe Connect non configuré → 503 (commandes désactivées, pas de fallback mock)
+  it('restaurant sans stripeAccountId → 503 commandes indisponibles', async () => {
     mockGetStripeAccountId.mockResolvedValueOnce(null);
     const res = await POST(makeReq(validBody));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(503);
     const json = await res.json();
-    expect(json.url).toMatch(/mock-checkout/);
+    expect(json.error).toMatch(/indisponibles/i);
     // sessions.create Stripe ne doit pas être appelé
     expect(mockCreateSession).not.toHaveBeenCalled();
   });

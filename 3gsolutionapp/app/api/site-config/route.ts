@@ -65,13 +65,16 @@ export async function GET() {
     const couleur = restaurant.couleurPrimaire ?? DEFAULT_COULEUR;
     const palette = generatePalette(couleur);
 
+    // Commandes désactivées si : fermé manuellement OU Stripe Connect non finalisé
+    const stripeConfigured = restaurant.stripeOnboardingComplete === true;
     return NextResponse.json({
       data: {
         nomRestaurant: restaurant.nom ?? DEFAULT_CONFIG.nomRestaurant,
         banniereUrl: restaurant.banniere ?? undefined,
         horaireOuverture: restaurant.horaireOuverture ?? DEFAULT_CONFIG.horaireOuverture,
         horaireFermeture: restaurant.horaireFermeture ?? DEFAULT_CONFIG.horaireFermeture,
-        fermeeAujourdhui: restaurant.fermeeAujourdhui ?? DEFAULT_CONFIG.fermeeAujourdhui,
+        fermeeAujourdhui: (restaurant.fermeeAujourdhui ?? DEFAULT_CONFIG.fermeeAujourdhui) || !stripeConfigured,
+        stripeConfigured,
         couleurPrincipale: couleur,
         palette,
       },
