@@ -33,15 +33,15 @@ export async function GET(request: NextRequest) {
   logger.info('google_relay_initiated', { hostname });
 
   // Cookie httpOnly stockant le domaine de retour — lu par /api/auth/cross-domain-hub après Google auth
-  // callbackUrl pointe vers cross-domain-hub qui crée l'AuthCode et redirige vers le restaurant
-  const signinUrl = new URL('/api/auth/signin/google', request.url);
-  signinUrl.searchParams.set('callbackUrl', '/api/auth/cross-domain-hub');
+  // La page /auth/google/start lance signIn('google') côté client (flow NextAuth standard)
+  // pour garantir la bonne création des cookies state/pkce avant le callback.
+  const signinUrl = new URL('/auth/google/start', request.url);
 
   const response = NextResponse.redirect(signinUrl);
 
   response.cookies.set('auth_return_to', returnTo, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: request.url.startsWith('https://'),
     sameSite: 'lax',
     maxAge: 300, // 5 minutes
     path: '/',

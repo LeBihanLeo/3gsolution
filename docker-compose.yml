@@ -18,6 +18,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - nuc_network
 
   nextjs:
     build:
@@ -54,6 +56,8 @@ services:
     env_file:
       - path: ./3gsolutionapp/.env.local
         required: false
+    networks:
+      - nuc_network
 
   mongo-express:
     image: mongo-express:1
@@ -69,6 +73,9 @@ services:
       ME_CONFIG_MONGODB_ADMINPASSWORD: devpassword
       ME_CONFIG_MONGODB_URL: mongodb://root:devpassword@mongo:27017/
       ME_CONFIG_BASICAUTH: false
+    networks:
+      - nuc_network
+
 
   maildev:
     image: maildev/maildev
@@ -77,6 +84,13 @@ services:
     ports:
       - "127.0.0.1:1080:1080"   # local uniquement
       - "127.0.0.1:1025:1025"   # SMTP local
+    networks:
+      - nuc_network
 
 volumes:
   mongo_data:
+
+
+networks:
+  nuc_network:
+    external: true

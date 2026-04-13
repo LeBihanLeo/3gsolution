@@ -49,3 +49,4 @@ coverage/
 public/build/
 3gsolutionapp/package-lock.json
 Stripe_agent_doc
+.env.local
