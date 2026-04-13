@@ -32,6 +32,7 @@ export default function AdminNav() {
           {navLink('/admin/commandes', 'Commandes')}
           {navLink('/admin/menu', 'Menu')}
           {navLink('/admin/personnalisation', 'Personnalisation')}
+          {navLink('/admin/stripe', 'Paiements')}
         </div>
         <button
           onClick={() => signOut({ callbackUrl: '/admin/login' })}

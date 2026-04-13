@@ -8,19 +8,23 @@ const {
   mockGetTenantRestaurant,
   mockGetTenantId,
   mockPendingOrderCreate,
+  mockGetStripeAccountId,
 } = vi.hoisted(() => ({
   mockCreateSession: vi.fn(),
   mockProduitFind: vi.fn(),
   mockGetTenantRestaurant: vi.fn(),
   mockGetTenantId: vi.fn().mockResolvedValue('restaurant_test_id'),
   mockPendingOrderCreate: vi.fn(),
+  // TICK-157/159 — getStripeAccountId remplace getStripeClient (Connect)
+  mockGetStripeAccountId: vi.fn().mockResolvedValue('acct_test123'),
 }));
 
-// TICK-139 — getStripeClient(restaurantId) remplace getStripe()
+// TICK-157 — stripe (platform) + getStripeAccountId remplacent getStripeClient
 vi.mock('@/lib/stripe', () => ({
-  getStripeClient: vi.fn().mockResolvedValue({
+  stripe: {
     checkout: { sessions: { create: mockCreateSession } },
-  }),
+  },
+  getStripeAccountId: mockGetStripeAccountId,
 }));
 
 // Mock mockStore
@@ -75,12 +79,12 @@ const mockProduitDB = {
   options: [],
 };
 
-// Restaurant ouvert toute la journée pour que les tests passent à n'importe quelle heure
+// Restaurant ouvert toute la journée avec stripeAccountId Connect (TICK-156/157)
 const openConfig = {
   fermeeAujourdhui: false,
   horaireOuverture: '00:00',
   horaireFermeture: '23:59',
-  stripeSecretKey: 'sk_test_from_restaurant', // pas de mode mock
+  stripeOnboardingComplete: true, // TICK-156 — Connect onboarding terminé
 };
 
 // PendingOrder retourné par create() (simule le document MongoDB créé)
@@ -90,9 +94,10 @@ describe('POST /api/checkout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv('NEXTAUTH_URL', 'http://localhost:3000');
-    // Par défaut : restaurant ouvert toute la journée
+    // Par défaut : restaurant ouvert toute la journée avec Connect configuré
     mockGetTenantRestaurant.mockResolvedValue(openConfig);
     mockGetTenantId.mockResolvedValue('restaurant_test_id');
+    mockGetStripeAccountId.mockResolvedValue('acct_test123');
     // Par défaut : la BDD retourne le produit valide
     mockProduitFind.mockReturnValue({ lean: vi.fn().mockResolvedValue([mockProduitDB]) });
     // Par défaut : PendingOrder créé avec succès
@@ -144,38 +149,47 @@ describe('POST /api/checkout', () => {
     expect(json.error).toMatch(/fermée/i);
   });
 
-  it('body valide → stripe.checkout.sessions.create appelé avec les bons line_items', async () => {
+  // TICK-159 — Vérifie que sessions.create est appelé avec { stripeAccount: acct_xxx }
+  it('body valide → stripe.checkout.sessions.create appelé avec stripeAccount Connect', async () => {
     mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
     const res = await POST(makeReq(validBody));
     expect(res.status).toBe(200);
     expect(mockCreateSession).toHaveBeenCalledOnce();
-    const call = mockCreateSession.mock.calls[0][0];
-    expect(call.line_items[0].price_data.product_data.name).toBe('Burger');
-    expect(call.line_items[0].price_data.unit_amount).toBe(850);
+
+    // Vérifie les line_items (premier argument)
+    const [sessionParams, requestOptions] = mockCreateSession.mock.calls[0];
+    expect(sessionParams.line_items[0].price_data.product_data.name).toBe('Burger');
+    expect(sessionParams.line_items[0].price_data.unit_amount).toBe(850);
+
+    // Vérifie que le direct charge Connect est utilisé (second argument)
+    expect(requestOptions).toMatchObject({ stripeAccount: 'acct_test123' });
+
+    // TICK-176 — payment_method_types absent : auto-détection Stripe activée
+    expect(sessionParams.payment_method_types).toBeUndefined();
   });
 
   it('metadata contient pending_order_id (snapshot produits stocké en BDD)', async () => {
     mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
     await POST(makeReq(validBody));
-    const call = mockCreateSession.mock.calls[0][0];
-    expect(call.metadata.pending_order_id).toBe('pending123');
+    const [sessionParams] = mockCreateSession.mock.calls[0];
+    expect(sessionParams.metadata.pending_order_id).toBe('pending123');
     // Les données sensibles ne sont plus dans les metadata Stripe
-    expect(call.metadata.produits).toBeUndefined();
-    expect(call.metadata.client_nom).toBeUndefined();
+    expect(sessionParams.metadata.produits).toBeUndefined();
+    expect(sessionParams.metadata.client_nom).toBeUndefined();
   });
 
   it('customer_email pré-remplit le formulaire Stripe quand fourni', async () => {
     mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
     await POST(makeReq(validBody));
-    const call = mockCreateSession.mock.calls[0][0];
-    expect(call.customer_email).toBe('jean@example.com');
+    const [sessionParams] = mockCreateSession.mock.calls[0];
+    expect(sessionParams.customer_email).toBe('jean@example.com');
   });
 
   it('customer_email absent quand pas d\'email client', async () => {
     mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
     await POST(makeReq({ ...validBody, client: { nom: 'Jean', telephone: '0612345678' } }));
-    const call = mockCreateSession.mock.calls[0][0];
-    expect(call.customer_email).toBeUndefined();
+    const [sessionParams] = mockCreateSession.mock.calls[0];
+    expect(sessionParams.customer_email).toBeUndefined();
   });
 
   it('expires_at défini à ~30 min dans le futur', async () => {
@@ -183,9 +197,9 @@ describe('POST /api/checkout', () => {
     vi.setSystemTime(new Date('2025-01-01T12:00:00Z'));
     mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
     await POST(makeReq(validBody));
-    const call = mockCreateSession.mock.calls[0][0];
+    const [sessionParams] = mockCreateSession.mock.calls[0];
     const expectedExpiresAt = Math.floor(Date.now() / 1000) + 30 * 60;
-    expect(call.expires_at).toBe(expectedExpiresAt);
+    expect(sessionParams.expires_at).toBe(expectedExpiresAt);
   });
 
   it('PendingOrder créé avec le snapshot produits BDD', async () => {
@@ -195,6 +209,18 @@ describe('POST /api/checkout', () => {
     const pendingArg = mockPendingOrderCreate.mock.calls[0][0];
     expect(pendingArg.produits[0].nom).toBe('Burger');
     expect(pendingArg.produits[0].prix).toBe(850);
+  });
+
+  // TICK-177 — expiresAt TTL aligné sur +24h (voir commentaire dans models/PendingOrder.ts)
+  it('PendingOrder créé avec expiresAt à ~24h dans le futur', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T12:00:00Z'));
+    mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
+    await POST(makeReq(validBody));
+    const pendingArg = mockPendingOrderCreate.mock.calls[0][0];
+    expect(pendingArg.expiresAt).toBeInstanceOf(Date);
+    const expectedExpiresAt = new Date('2025-01-02T12:00:00Z'); // +24h
+    expect(pendingArg.expiresAt.getTime()).toBe(expectedExpiresAt.getTime());
   });
 
   it('retourne { url } vers Stripe', async () => {
@@ -219,5 +245,34 @@ describe('POST /api/checkout', () => {
     await POST(makeReq(validBody));
     const pendingArg = mockPendingOrderCreate.mock.calls[0][0];
     expect(pendingArg.produits[0].taux_tva).toBe(20);
+  });
+
+  // TICK-159 — Mode mock si restaurant sans stripeAccountId Connect
+  it('restaurant sans stripeAccountId → mode mock (url mock-checkout)', async () => {
+    mockGetStripeAccountId.mockResolvedValueOnce(null);
+    const res = await POST(makeReq(validBody));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.url).toMatch(/mock-checkout/);
+    // sessions.create Stripe ne doit pas être appelé
+    expect(mockCreateSession).not.toHaveBeenCalled();
+  });
+
+  // TICK-171 — application_fee_amount depuis STRIPE_APPLICATION_FEE_PERCENT (env var, pas DB)
+  it('application_fee_amount inclus si STRIPE_APPLICATION_FEE_PERCENT configuré', async () => {
+    vi.stubEnv('STRIPE_APPLICATION_FEE_PERCENT', '5'); // 5% de commission plateforme
+    mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
+    await POST(makeReq(validBody));
+    const [sessionParams] = mockCreateSession.mock.calls[0];
+    // 850 centimes × 5% = 42,5 → arrondi à 43 centimes
+    expect(sessionParams.payment_intent_data?.application_fee_amount).toBe(43);
+  });
+
+  it('application_fee_amount absent si STRIPE_APPLICATION_FEE_PERCENT = 0', async () => {
+    vi.stubEnv('STRIPE_APPLICATION_FEE_PERCENT', '0');
+    mockCreateSession.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/pay/test' });
+    await POST(makeReq(validBody));
+    const [sessionParams] = mockCreateSession.mock.calls[0];
+    expect(sessionParams.payment_intent_data).toBeUndefined();
   });
 });

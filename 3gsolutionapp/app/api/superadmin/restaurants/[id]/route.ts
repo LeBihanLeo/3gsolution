@@ -1,4 +1,5 @@
 // TICK-138 — API super-admin : détail, update, suppression restaurant
+// TICK-161 — Stripe Connect : retrait de tous les champs Stripe (gérés par l'admin restaurant)
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
@@ -25,9 +26,7 @@ const UpdateSchema = z.object({
   couleurSecondaire: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   horaireOuverture: z.string().optional(),
   horaireFermeture: z.string().optional(),
-  stripePublishableKey: z.string().optional(),
-  stripeSecretKey: z.string().optional(),
-  stripeWebhookSecret: z.string().optional(),
+  // Stripe : géré exclusivement par l'admin restaurant via /admin/stripe (OAuth Connect)
 });
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -41,7 +40,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   await connectDB();
 
   const restaurant = await Restaurant.findById(id)
-    .select('-adminPasswordHash -stripeSecretKey -stripeWebhookSecret')
+    .select('-adminPasswordHash')
     .lean();
 
   if (!restaurant) return NextResponse.json({ error: 'Restaurant introuvable' }, { status: 404 });
@@ -64,21 +63,19 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     await connectDB();
 
-    const { adminPassword, stripeSecretKey, stripeWebhookSecret, ...rest } = parsed.data;
+    const { adminPassword, ...rest } = parsed.data;
 
     const update: Record<string, unknown> = { ...rest };
 
     if (adminPassword) {
       update.adminPasswordHash = await bcrypt.hash(adminPassword, 12);
     }
-    if (stripeSecretKey) update.stripeSecretKey = stripeSecretKey;
-    if (stripeWebhookSecret) update.stripeWebhookSecret = stripeWebhookSecret;
 
     const restaurant = await Restaurant.findByIdAndUpdate(
       id,
       { $set: update },
       { new: true }
-    ).select('-adminPasswordHash -stripeSecretKey -stripeWebhookSecret').lean();
+    ).select('-adminPasswordHash').lean();
 
     if (!restaurant) return NextResponse.json({ error: 'Restaurant introuvable' }, { status: 404 });
     return NextResponse.json({ data: restaurant });

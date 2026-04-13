@@ -2,13 +2,14 @@
 // TICK-075 — clientId injecté dans metadata si client connecté
 // TICK-134 — restaurantId injecté dans PendingOrder (multi-tenant)
 // TICK-135 — SiteConfig remplacé par getTenantRestaurant()
-// TICK-139 — getStripeClient(restaurantId) remplace getStripe()
+// TICK-157 — stripe client platform + getStripeAccountId (remplace getStripeClient TICK-139)
 // TICK-142 — baseUrl dynamique depuis Host header (fix Stripe success_url/cancel_url)
+// TICK-159 — Direct charges Connect : { stripeAccount: acct_xxx }
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getStripeClient } from '@/lib/stripe';
+import { stripe, getStripeAccountId } from '@/lib/stripe';
 import { mockSessions } from '@/lib/mockStore';
 import { connectDB } from '@/lib/mongodb';
 import Produit from '@/models/Produit';
@@ -105,6 +106,9 @@ export async function POST(request: NextRequest) {
     // TICK-134 — restaurantId du tenant courant
     const restaurantId = await getTenantId();
 
+    // TICK-157/159 — stripeAccountId Connect (acct_xxx) du restaurant
+    const stripeAccountId = restaurantId ? await getStripeAccountId(restaurantId) : null;
+
     // ── Récupération et validation des prix depuis la BDD ─────────────────────
     const produitIds = produitsClient.map((p) => p.produitId);
     const produitIdsUniques = [...new Set(produitIds)];
@@ -143,8 +147,10 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    // ── Mode mock (pas de clé Stripe configurée pour ce restaurant) ───────────
-    const hasMockMode = !restaurant?.stripeSecretKey && !process.env.STRIPE_SECRET_KEY;
+    // ── Mode mock (restaurant non connecté à Stripe Connect) ─────────────────
+    // En dev : on accepte d'utiliser le mock si pas de stripeAccountId
+    // En prod : erreur si le restaurant n'a pas finalisé son onboarding Connect
+    const hasMockMode = !stripeAccountId;
     if (hasMockMode) {
       if (process.env.NODE_ENV === 'production') {
         return NextResponse.json({ error: 'Stripe non configuré pour ce restaurant' }, { status: 500 });
@@ -165,7 +171,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ url: `${baseUrl}/mock-checkout?session_id=${mockId}` });
     }
 
-    // ── Mode réel (Stripe) ────────────────────────────────────────────────────
+    // ── Mode réel (Stripe Connect — direct charge) ────────────────────────────
+    // TICK-177 — expiresAt à +24h : filet TTL si le webhook n'arrive jamais
+    // (24h car Stripe retente jusqu'à 3 jours — voir commentaire dans models/PendingOrder.ts)
+    const pendingOrderExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
     const pendingOrder = await PendingOrder.create({
       client: {
         nom: client.nom,
@@ -177,6 +187,7 @@ export async function POST(request: NextRequest) {
       produits: produitsVerifies,
       ...(clientId ? { clientId } : {}),
       restaurantId, // TICK-134
+      expiresAt: pendingOrderExpiresAt,
     });
 
     const lineItems = produitsVerifies.map((p) => {
@@ -195,22 +206,42 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    // TICK-139 — getStripeClient(restaurantId) : clé Stripe par restaurant
-    const stripe = await getStripeClient(restaurantId);
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      payment_method_types: ['card'],
-      line_items: lineItems,
-      success_url: `${baseUrl}/confirmation?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${baseUrl}/commande?payment=cancelled&session_id={CHECKOUT_SESSION_ID}`,
-      ...(client.email ? { customer_email: client.email } : {}),
-      expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
-      metadata: {
-        pending_order_id: pendingOrder._id.toString(),
+    // Commission plateforme (TICK-171 — env var STRIPE_APPLICATION_FEE_PERCENT, pas en DB)
+    const totalCentimes = produitsVerifies.reduce(
+      (sum, p) => sum + (p.prix + p.options.reduce((s, o) => s + o.prix, 0)) * p.quantite,
+      0
+    );
+    const platformFeePercent = process.env.STRIPE_APPLICATION_FEE_PERCENT
+      ? parseFloat(process.env.STRIPE_APPLICATION_FEE_PERCENT)
+      : null;
+    const applicationFeeAmount =
+      platformFeePercent && platformFeePercent > 0
+        ? Math.round(totalCentimes * platformFeePercent / 100)
+        : undefined;
+
+    // TICK-157/159 — Client platform + direct charge via { stripeAccount: acct_xxx }
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: 'payment',
+        // TICK-176 — payment_method_types omis : Stripe auto-détecte selon le compte connecté
+        // (CB, Bancontact, iDEAL…) plutôt que forcer 'card' uniquement
+        line_items: lineItems,
+        success_url: `${baseUrl}/confirmation?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${baseUrl}/commande?payment=cancelled&session_id={CHECKOUT_SESSION_ID}`,
+        ...(client.email ? { customer_email: client.email } : {}),
+        ...(applicationFeeAmount
+          ? { payment_intent_data: { application_fee_amount: applicationFeeAmount } }
+          : {}),
+        expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
+        metadata: {
+          pending_order_id: pendingOrder._id.toString(),
+        },
       },
-    }, {
-      idempotencyKey: `checkout_${pendingOrder._id.toString()}`,
-    });
+      {
+        stripeAccount: stripeAccountId!, // direct charge sur le compte restaurant
+        idempotencyKey: `checkout_${pendingOrder._id.toString()}`,
+      }
+    );
 
     return NextResponse.json({ url: session.url });
   } catch (error) {

@@ -3,6 +3,9 @@
 > Mis à jour le 2026-03-28 · Sprint 17 ajouté (gestion TVA)
 > Mis à jour le 2026-04-07 · Sprint 19 ajouté (OAuth cross-domain & callbacks multi-tenant)
 > Mis à jour le 2026-04-11 · Sprint 20 ajouté (Stripe Connect — multi-tenant natif)
+> Mis à jour le 2026-04-11 · Sprint 21 ajouté (Stripe Connect — correctifs sécurité post-audit)
+> Mis à jour le 2026-04-12 · Sprint 22 ajouté (Stripe Connect — Accounts v2 & robustesse)
+> Mis à jour le 2026-04-12 · Sprint 23 ajouté (Stripe Connect — Correctifs cross-domain & robustesse)
 
 ---
 
@@ -32,7 +35,10 @@
 | 18 | Architecture multi-tenant | TICK-131 → 141 | 8,0 j | ⚠️ Planifié — non implémenté |
 | 19 | OAuth cross-domain & callbacks multi-tenant | TICK-142 → 155 | 5,75 j | Bloqué par Sprint 18 |
 | 20 | Stripe Connect — multi-tenant natif | TICK-156 → 167 | 7,5 j | ⚠️ Planifié |
-| **Total** | | **167 tickets** | **~99,0 j** |
+| 21 | Stripe Connect — correctifs sécurité post-audit | TICK-168 → 174 | 2,75 j | ⚠️ Planifié |
+| 22 | Stripe Connect — Accounts v2 & robustesse | TICK-175 → 178 | 4,25 j | ⚠️ Planifié |
+| 23 | Stripe Connect — Correctifs cross-domain & robustesse | TICK-179 → 182 | 2,0 j | ⚠️ Planifié |
+| **Total** | | **182 tickets** | **~108,0 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -4846,6 +4852,1199 @@ Admin         Plateforme              Stripe Connect
 - [ ] Diagramme de séquence OAuth inclus
 - [ ] Guide `docs/onboarding-stripe-connect.md` créé (si dossier `docs/` existe) — sinon section dans ARCHITECTURE.md
 - [ ] Variables d'environnement Stripe Connect documentées dans ARCHITECTURE.md
+
+---
+
+## Sprint 21 — Stripe Connect — Correctifs Sécurité Post-Audit (2,75 j)
+
+> **Contexte**
+>
+> Suite à l'audit de l'architecture Stripe Connect (Sprint 20), 7 problèmes ont été identifiés,
+> allant d'une faille d'isolation tenant critique dans les handlers webhook à des améliorations
+> de robustesse (idempotence, index, guards). Ce sprint corrige tous ces points sans modifier
+> les flux existants ni les interfaces utilisateur.
+>
+> **Problèmes résolus (par ordre de sévérité) :**
+> 1. Isolation tenant absente dans 4 handlers webhook (critique)
+> 2. `redirect_uri` OAuth dérivé du `Host` header → non scalable sur Vercel multi-tenant (haute)
+> 3. Paramètre `state` déterministe → replay possible (moyenne)
+> 4. `stripeApplicationFeePercent` : dead code inutilisable (moyenne)
+> 5. Race condition webhook `findOne` + `create` non atomique (moyenne)
+> 6. Absence d'index sur `Restaurant.stripeAccountId` (faible)
+> 7. `NEXTAUTH_SECRET!` sans guard explicite dans le code crypto (faible)
+
+---
+
+### TICK-168 — Webhook : isolation tenant dans les handlers charge/dispute
+**Épic :** Stripe Connect — Sécurité
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-160
+
+**Problème :**
+Les handlers `handleChargeRefunded`, `handleChargeFailed`, `handleDisputeCreated` et `handleDisputeClosed`
+font un `Commande.findOne({ stripePaymentIntentId })` sans filtre par `restaurantId`. Dans un système
+multi-tenant, cela brise l'isolation : un événement d'un restaurant peut théoriquement matcher une
+commande d'un autre. Le `restaurantId` résolu en début de handler `POST` (via `event.account →
+Restaurant.findOne`) n'est pas transmis aux handlers.
+
+**Ce qui change dans `app/api/webhooks/stripe/route.ts` :**
+
+Étape 1 — Modifier les signatures des 4 handlers pour accepter `restaurantId` :
+
+```typescript
+// Avant
+async function handleChargeRefunded(charge: Stripe.Charge)
+async function handleChargeFailed(charge: Stripe.Charge)
+async function handleDisputeCreated(dispute: Stripe.Dispute)
+async function handleDisputeClosed(dispute: Stripe.Dispute)
+
+// Après
+async function handleChargeRefunded(charge: Stripe.Charge, restaurantId: string | null)
+async function handleChargeFailed(charge: Stripe.Charge, restaurantId: string | null)
+async function handleDisputeCreated(dispute: Stripe.Dispute, restaurantId: string | null)
+async function handleDisputeClosed(dispute: Stripe.Dispute, restaurantId: string | null)
+```
+
+Étape 2 — Mettre à jour les appels dans le `switch` (passer `restaurantId` résolu en amont) :
+
+```typescript
+case 'charge.refunded': {
+  await handleChargeRefunded(event.data.object as Stripe.Charge, restaurantId);
+  break;
+}
+case 'charge.failed': {
+  await handleChargeFailed(event.data.object as Stripe.Charge, restaurantId);
+  break;
+}
+case 'charge.dispute.created': {
+  await handleDisputeCreated(event.data.object as Stripe.Dispute, restaurantId);
+  break;
+}
+case 'charge.dispute.closed': {
+  await handleDisputeClosed(event.data.object as Stripe.Dispute, restaurantId);
+  break;
+}
+```
+
+Étape 3 — Ajouter le filtre `restaurantId` dans chaque `Commande.findOne()` des 4 handlers :
+
+```typescript
+// Avant (dans chaque handler)
+const commande = await Commande.findOne({ stripePaymentIntentId: paymentIntentId });
+
+// Après — filtre par restaurantId si disponible (null = pas de filtrage, cas platform event)
+const filter: Record<string, unknown> = { stripePaymentIntentId: paymentIntentId };
+if (restaurantId) filter.restaurantId = restaurantId;
+const commande = await Commande.findOne(filter);
+```
+
+**Pourquoi `restaurantId | null` et pas `restaurantId: string` :**
+Un webhook platform (sans `event.account`) peut légitimement arriver avec `restaurantId = null`.
+Plutôt que de bloquer ces events, on applique le filtre uniquement quand `restaurantId` est connu.
+
+**Critères d'acceptance :**
+- [ ] `handleChargeRefunded` : signature et `findOne` mis à jour
+- [ ] `handleChargeFailed` : signature et `findOne` mis à jour
+- [ ] `handleDisputeCreated` : signature et `findOne` mis à jour
+- [ ] `handleDisputeClosed` : signature et `findOne` mis à jour
+- [ ] Les 4 appels dans le `switch` transmettent `restaurantId`
+- [ ] Aucun autre handler modifié (`handleSessionCompleted` utilise déjà `pendingOrder.restaurantId` — ne pas toucher)
+- [ ] Tests `webhook-stripe.test.ts` adaptés : les mocks passent `restaurantId` dans les event handlers et vérifient le filtre dans `findOne`
+- [ ] 0 régression sur les tests existants
+
+---
+
+### TICK-169 — OAuth Connect : `redirect_uri` fixe via `STRIPE_CONNECT_REDIRECT_URI` + redirection finale via `restaurant.domaine`
+**Épic :** Stripe Connect — Sécurité & Scalabilité
+**Priorité :** 🔴 Bloquant
+**Sizing :** 0,5 j
+**Dépendances :** TICK-158
+
+**Problème :**
+Le `redirect_uri` envoyé à Stripe et les URLs de redirection post-callback sont actuellement
+construits depuis le `Host` header de la requête. Deux conséquences :
+
+1. **Scalabilité** : Stripe exige que les `redirect_uri` soient enregistrés dans les Connect
+   application settings. Avec 1000 restaurants sur 1000 domaines, il est impossible de tous
+   les enregistrer. Il faut un seul `redirect_uri` fixe.
+
+2. **Sécurité** : le `Host` header peut être manipulé si le reverse proxy est mal configuré.
+
+**Solution :**
+- `redirect_uri` = variable d'env `STRIPE_CONNECT_REDIRECT_URI` (une seule valeur, enregistrée chez Stripe)
+- En production : `STRIPE_CONNECT_REDIRECT_URI=https://hub.nhesitepas.com/api/stripe/connect/callback`
+- Après callback, la redirection finale vers `/admin/stripe` utilise `restaurant.domaine` (champ déjà présent dans le modèle)
+
+**Ce qui change dans `app/api/stripe/connect/route.ts` :**
+
+```typescript
+// Supprimer (lignes 32-34 actuelles)
+const host = request.headers.get('host') ?? 'localhost:3000';
+const proto = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+const redirectUri = `${proto}://${host}/api/stripe/connect/callback`;
+
+// Remplacer par
+const redirectUri =
+  process.env.STRIPE_CONNECT_REDIRECT_URI ??
+  'http://localhost:3000/api/stripe/connect/callback';
+```
+
+**Ce qui change dans `app/api/stripe/connect/callback/route.ts` :**
+
+```typescript
+// Supprimer (lignes 40-42 actuelles)
+const host = request.headers.get('host') ?? 'localhost:3000';
+const proto = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+const adminStripeUrl = `${proto}://${host}/admin/stripe`;
+
+// Remplacer par — construire adminStripeUrl APRÈS la résolution du restaurantId
+// (donc après verifyState(), qui retourne restaurantId)
+// Note : adminStripeUrl doit être disponible dès le début pour les cas d'erreur early-return.
+// Solution : construire une URL d'erreur générique pour les early-returns, et l'URL correcte après résolution.
+
+// En haut de GET() :
+const fallbackErrorUrl = `${process.env.STRIPE_CONNECT_REDIRECT_URI
+  ? new URL(process.env.STRIPE_CONNECT_REDIRECT_URI).origin
+  : 'http://localhost:3000'}/admin/stripe`;
+
+// Après verifyState() → restaurantId valide :
+await connectDB();
+const restaurant = await Restaurant.findById(restaurantId).select('domaine').lean();
+const adminStripeUrl = restaurant?.domaine
+  ? `https://${restaurant.domaine}/admin/stripe`
+  : fallbackErrorUrl;
+```
+
+Import à ajouter dans `callback/route.ts` : `Restaurant` est déjà importé (utilisé dans `findByIdAndUpdate`).
+Ajouter uniquement le `.select('domaine')` dans la requête existante ou faire un second `findById` ciblé.
+
+**Recommandation d'implémentation pour éviter deux requêtes DB :**
+Combiner les deux accès DB (lookup domaine + update) :
+
+```typescript
+// Chercher d'abord le restaurant pour obtenir le domaine
+const restaurant = await Restaurant.findById(restaurantId).select('domaine').lean();
+if (!restaurant) {
+  return NextResponse.redirect(`${fallbackErrorUrl}?error=connect_failed`, 302);
+}
+const adminStripeUrl = `https://${restaurant.domaine}/admin/stripe`;
+
+// Puis faire le update séparément (findByIdAndUpdate)
+await Restaurant.findByIdAndUpdate(restaurantId, {
+  stripeAccountId,
+  stripeOnboardingComplete: true,
+});
+```
+
+**Ce qui change dans `.env.example` :**
+
+```bash
+# Ajouter dans la section Stripe Connect
+# URL de callback OAuth — enregistrer cette URL dans Stripe Connect Settings > Redirect URIs
+# En production : https://hub.nhesitepas.com/api/stripe/connect/callback (un seul URI, scalable)
+STRIPE_CONNECT_REDIRECT_URI=https://hub.nhesitepas.com/api/stripe/connect/callback
+```
+
+**Middleware — vérification :**
+La route `/api/stripe/connect/callback` sur le hub (`hub.nhesitepas.com`) est déjà publique :
+elle ne correspond à aucun pattern `isAdminRoute` dans `middleware.ts` et tombe dans `return true`.
+Aucune modification du middleware nécessaire.
+
+**Impact sur le flow client (confirmation) :**
+Aucun. Les `success_url` et `cancel_url` du checkout client sont construits depuis le `Host`
+header de la requête client (dans `checkout/route.ts`) — flow entièrement séparé, non modifié.
+
+**Critères d'acceptance :**
+- [ ] `connect/route.ts` : `redirectUri` construit depuis `STRIPE_CONNECT_REDIRECT_URI` (plus de `Host` header)
+- [ ] `callback/route.ts` : `adminStripeUrl` construit depuis `restaurant.domaine` (DB lookup)
+- [ ] `callback/route.ts` : `fallbackErrorUrl` utilisé uniquement pour les early-returns (state invalide, erreur Stripe avant résolution du restaurant)
+- [ ] `.env.example` : `STRIPE_CONNECT_REDIRECT_URI` ajouté avec commentaire explicatif
+- [ ] En dev (sans `STRIPE_CONNECT_REDIRECT_URI`) : fallback `http://localhost:3000/api/stripe/connect/callback` fonctionnel
+- [ ] Tests `stripe-connect.test.ts` adaptés : `vi.stubEnv('STRIPE_CONNECT_REDIRECT_URI', ...)` dans les tests OAuth, `mockRestaurantModel.findById` mocké pour retourner `{ domaine: 'resto.com' }` dans le test callback succès
+- [ ] 0 régression sur les 16 tests Stripe Connect existants
+
+---
+
+### TICK-170 — OAuth Connect : anti-replay du paramètre `state` (timestamp signé)
+**Épic :** Stripe Connect — Sécurité
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-169
+
+**Problème :**
+Le paramètre `state` actuel est déterministe : `HMAC(NEXTAUTH_SECRET, restaurantId)`. Le même
+restaurant génère toujours le même `state`. Un `state` intercepté (historique navigateur, logs)
+peut être réutilisé indéfiniment dans une autre session.
+
+**Solution choisie — timestamp signé (sans stockage serveur) :**
+Inclure un timestamp Unix dans le state et refuser les states de plus de 10 minutes.
+Pas de nonce stocké en base (pas de Redis requis). Le code Stripe est de toute façon à usage unique,
+ce qui limite la fenêtre d'exploitation à 10 minutes maximum.
+
+Format du state : `restaurantId.timestamp.HMAC(restaurantId + "." + timestamp)`
+
+**Ce qui change dans `app/api/stripe/connect/route.ts` :**
+
+```typescript
+// Avant
+function buildState(restaurantId: string): string {
+  const secret = process.env.NEXTAUTH_SECRET!;
+  const hmac = createHmac('sha256', secret).update(restaurantId).digest('hex');
+  return `${restaurantId}.${hmac}`;
+}
+
+// Après
+function buildState(restaurantId: string): string {
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (!secret) throw new Error('NEXTAUTH_SECRET manquant');
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const payload = `${restaurantId}.${timestamp}`;
+  const hmac = createHmac('sha256', secret).update(payload).digest('hex');
+  return `${payload}.${hmac}`;
+}
+```
+
+**Ce qui change dans `app/api/stripe/connect/callback/route.ts` :**
+
+```typescript
+// Avant
+function verifyState(state: string): string | null {
+  const dotIdx = state.lastIndexOf('.');
+  if (dotIdx === -1) return null;
+  const restaurantId = state.slice(0, dotIdx);
+  const receivedHmac = state.slice(dotIdx + 1);
+  const secret = process.env.NEXTAUTH_SECRET!;
+  const expectedHmac = createHmac('sha256', secret).update(restaurantId).digest('hex');
+  // ... timingSafeEqual
+  return restaurantId;
+}
+
+// Après
+// Format attendu : restaurantId.timestamp.hmac
+// Où hmac = HMAC(restaurantId + "." + timestamp)
+function verifyState(state: string): string | null {
+  const parts = state.split('.');
+  // Format : au moins 3 parties (restaurantId peut contenir des points — MongoDB ObjectId n'en a pas)
+  // On prend les deux dernières parties comme timestamp et hmac, le reste comme restaurantId
+  if (parts.length < 3) return null;
+
+  const hmac = parts[parts.length - 1];
+  const timestamp = parts[parts.length - 2];
+  const restaurantId = parts.slice(0, parts.length - 2).join('.');
+
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (!secret) return null;
+
+  // Vérification HMAC
+  const payload = `${restaurantId}.${timestamp}`;
+  const expectedHmac = createHmac('sha256', secret).update(payload).digest('hex');
+  try {
+    const a = Buffer.from(hmac, 'hex');
+    const b = Buffer.from(expectedHmac, 'hex');
+    if (a.length !== b.length) return null;
+    if (!timingSafeEqual(a, b)) return null;
+  } catch {
+    return null;
+  }
+
+  // Vérification anti-replay : state valide 10 minutes maximum
+  const ts = parseInt(timestamp, 10);
+  if (isNaN(ts)) return null;
+  const ageSeconds = Math.floor(Date.now() / 1000) - ts;
+  if (ageSeconds < 0 || ageSeconds > 600) return null; // 600s = 10 min
+
+  return restaurantId;
+}
+```
+
+**Note sur la rétrocompatibilité :**
+L'ancien format (`restaurantId.hmac`, 2 parties) sera rejeté par la nouvelle logique
+(`parts.length < 3`). C'est intentionnel : les states en vol au moment du déploiement expireront
+naturellement (l'admin relancera le flow).
+
+**Critères d'acceptance :**
+- [ ] `buildState()` génère un state au format `restaurantId.timestamp.hmac`
+- [ ] `verifyState()` vérifie HMAC + anti-replay (state > 10 min → `null`)
+- [ ] `verifyState()` accepte les MongoDB ObjectIds (24 hex chars, sans point)
+- [ ] `NEXTAUTH_SECRET` manquant → guard explicite (throw ou return null selon contexte)
+- [ ] Tests `stripe-connect.test.ts` mis à jour : `buildValidState()` helper adapté au nouveau format
+- [ ] Test ajouté : state valide mais de plus de 10 minutes → redirect `?error=invalid_state`
+- [ ] 0 régression sur les tests callback existants
+
+---
+
+### TICK-171 — `stripeApplicationFeePercent` : remplacer le dead code par une variable d'environnement
+**Épic :** Stripe Connect — Nettoyage
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,25 j
+**Dépendances :** TICK-159
+
+**Problème :**
+Le champ `stripeApplicationFeePercent` est utilisé dans `checkout/route.ts` pour calculer
+`application_fee_amount`. Cependant, aucun endpoint API ne permet de le définir :
+- Le superadmin ne gère rien lié à Stripe (décision Sprint 20)
+- L'admin restaurant ne peut pas se configurer lui-même une commission plateforme
+- Résultat : `restaurant?.stripeApplicationFeePercent` est toujours `undefined` → `applicationFeeAmount` toujours `undefined`
+
+Ce dead code crée de la confusion et un risque de régression future si quelqu'un essaie de l'utiliser via MongoDB directement.
+
+**Solution — variable d'environnement platform-level :**
+La commission est une décision de la plateforme, pas du restaurant. La déplacer dans une env var
+définie à l'échelle du déploiement.
+
+**Ce qui change dans `app/api/checkout/route.ts` :**
+
+```typescript
+// Supprimer
+const applicationFeeAmount = restaurant?.stripeApplicationFeePercent
+  ? Math.round(totalCentimes * restaurant.stripeApplicationFeePercent / 100)
+  : undefined;
+
+// Remplacer par
+const platformFeePercent = process.env.STRIPE_APPLICATION_FEE_PERCENT
+  ? parseFloat(process.env.STRIPE_APPLICATION_FEE_PERCENT)
+  : null;
+const applicationFeeAmount =
+  platformFeePercent && platformFeePercent > 0
+    ? Math.round(totalCentimes * platformFeePercent / 100)
+    : undefined;
+```
+
+**Ce qui change dans `models/Restaurant.ts` :**
+
+```typescript
+// Supprimer du schéma et de l'interface
+stripeApplicationFeePercent?: number; // 0–100 — commission plateforme (optionnel)
+```
+
+**Ce qui change dans `.env.example` :**
+
+```bash
+# Commission plateforme prélevée sur chaque paiement restaurant (0 = désactivé)
+# Exemple : 2.5 = 2,5% de commission sur chaque transaction
+STRIPE_APPLICATION_FEE_PERCENT=0
+```
+
+**Critères d'acceptance :**
+- [ ] `stripeApplicationFeePercent` supprimé de `IRestaurant` (interface TypeScript)
+- [ ] `stripeApplicationFeePercent` supprimé du schéma Mongoose `RestaurantSchema`
+- [ ] `checkout/route.ts` : calcul `applicationFeeAmount` depuis `STRIPE_APPLICATION_FEE_PERCENT` (env var)
+- [ ] `STRIPE_APPLICATION_FEE_PERCENT` absent ou `0` → `applicationFeeAmount = undefined` (aucune commission)
+- [ ] `.env.example` mis à jour avec `STRIPE_APPLICATION_FEE_PERCENT=0`
+- [ ] Tests `checkout.test.ts` mis à jour : supprimer les assertions sur `stripeApplicationFeePercent` dans `openConfig`
+- [ ] 0 régression TypeScript (aucun autre fichier ne référence `stripeApplicationFeePercent`)
+
+---
+
+### TICK-172 — Webhook : idempotence atomique sur `checkout.session.completed`
+**Épic :** Stripe Connect — Robustesse
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-160, TICK-156
+
+**Problème :**
+Dans `handleSessionCompleted`, la vérification de doublon et la création de commande ne sont pas atomiques :
+
+```typescript
+// Non atomique — deux requêtes simultanées peuvent passer le findOne avant que l'une crée la commande
+const existing = await Commande.findOne({ stripeSessionId: session.id });
+if (existing) return;
+// ... logique ...
+await Commande.create({ stripeSessionId: session.id, ... });
+```
+
+Stripe peut délivrer le même event plusieurs fois simultanément (retry webhook). Sans atomicité,
+deux commandes identiques peuvent être créées.
+
+**Solution — deux étapes complémentaires :**
+
+**Étape 1 — Index unique sur `stripeSessionId` dans le modèle `Commande` :**
+
+Dans `models/Commande.ts`, ajouter `unique: true` sur `stripeSessionId` :
+
+```typescript
+// Avant
+stripeSessionId: { type: String, required: true },
+
+// Après
+stripeSessionId: { type: String, required: true, unique: true },
+```
+
+Cet index garantit qu'une seule commande peut exister par `stripeSessionId` au niveau DB —
+dernier filet de sécurité.
+
+**Étape 2 — Remplacer `findOne` + `create` par `findOneAndUpdate` avec `upsert` dans `handleSessionCompleted` :**
+
+```typescript
+// Supprimer
+const existing = await Commande.findOne({ stripeSessionId: session.id });
+if (existing) return;
+// ...
+const commande = await Commande.create({ stripeSessionId: session.id, ... });
+
+// Remplacer par
+const commandeData = {
+  stripeSessionId: session.id,
+  ...(session.payment_intent ? { stripePaymentIntentId: session.payment_intent as string } : {}),
+  statut: 'payee',
+  client,
+  retrait,
+  produits,
+  ...(commentaire ? { commentaire } : {}),
+  total,
+  purgeAt,
+  ...(clientId ? { clientId } : {}),
+  ...(receiptUrl ? { receiptUrl } : {}),
+  restaurantId,
+};
+
+const result = await Commande.findOneAndUpdate(
+  { stripeSessionId: session.id },          // filtre
+  { $setOnInsert: commandeData },            // ne rien faire si déjà existant
+  { upsert: true, new: false }               // new: false → retourne le doc avant update
+);
+
+// Si result !== null, la commande existait déjà → idempotent, ne pas renvoyer l'email
+if (result !== null) {
+  logger.info('webhook_session_completed_idempotent', { stripeSessionId: session.id });
+  return;
+}
+// result === null → insertion réussie (upsert a créé le document)
+const commande = await Commande.findOne({ stripeSessionId: session.id });
+```
+
+**Important — gestion de l'email de confirmation :**
+L'email ne doit être envoyé que lors de la création réelle (pas lors d'un doublon).
+`result !== null` signifie que le document existait → skip email. `result === null` (insertion) → envoyer email.
+
+**Critères d'acceptance :**
+- [ ] `models/Commande.ts` : `stripeSessionId` marqué `unique: true`
+- [ ] `handleSessionCompleted` : `findOne` + `create` remplacés par `findOneAndUpdate` avec `$setOnInsert` + `upsert: true`
+- [ ] Cas doublon (result !== null) : log + return sans email
+- [ ] Cas insertion (result === null) : email envoyé normalement
+- [ ] `PendingOrder.findByIdAndDelete` uniquement exécuté en cas d'insertion réelle (pas sur doublon)
+- [ ] Tests `webhook-stripe.test.ts` : vérifier que l'appel `findOneAndUpdate` remplace `create`
+- [ ] 0 régression sur les autres handlers webhook
+
+---
+
+### TICK-173 — Index MongoDB sparse sur `Restaurant.stripeAccountId`
+**Épic :** Stripe Connect — Performance
+**Priorité :** 🟢 Basse
+**Sizing :** 0,25 j
+**Dépendances :** TICK-156
+
+**Problème :**
+La requête `Restaurant.findOne({ stripeAccountId: event.account })` est exécutée à chaque
+événement webhook Connect. Sans index, Mongoose effectue un full-scan de la collection
+`restaurants` — coût croissant avec le nombre de restaurants.
+
+**Ce qui change dans `models/Restaurant.ts` :**
+
+```typescript
+// Avant
+stripeAccountId: { type: String },
+
+// Après — sparse: true car le champ est optionnel (null chez les restaurants non connectés)
+stripeAccountId: { type: String, index: true, sparse: true },
+```
+
+**Explication `sparse: true` :**
+Un index standard inclut les documents où `stripeAccountId` est `null` ou absent.
+`sparse: true` exclut ces documents de l'index → index plus petit, plus rapide, uniquement
+sur les restaurants réellement connectés à Stripe Connect.
+
+**Critères d'acceptance :**
+- [ ] `stripeAccountId` dans `RestaurantSchema` : `{ type: String, index: true, sparse: true }`
+- [ ] Aucune autre modification du schéma
+- [ ] TypeScript : aucun changement d'interface nécessaire (le champ reste `string | undefined`)
+- [ ] Vérification : `npx tsx scripts/check-indexes.ts` (si script existant) ou validation manuelle via MongoDB Atlas
+- [ ] 0 régression sur les tests existants (l'index est transparent pour Mongoose en test)
+
+---
+
+### TICK-174 — Guards explicites sur `NEXTAUTH_SECRET` dans les routes OAuth
+**Épic :** Stripe Connect — Robustesse
+**Priorité :** 🟢 Basse
+**Sizing :** 0,25 j
+**Dépendances :** TICK-170
+
+**Problème :**
+`buildState()` et `verifyState()` utilisent `process.env.NEXTAUTH_SECRET` sans vérifier
+son existence avant de l'utiliser dans `createHmac()`. Si la variable est absente :
+- `buildState()` : `createHmac('sha256', undefined)` → `TypeError` non géré → 500 sans message utile
+- `verifyState()` : même comportement
+
+Après TICK-170, `buildState()` lève déjà une erreur explicite. Ce ticket finalise la protection
+en s'assurant que les deux routes gèrent ce cas proprement et retournent une réponse HTTP claire.
+
+**Ce qui change dans `app/api/stripe/connect/route.ts` :**
+
+```typescript
+// buildState() lève une Error si NEXTAUTH_SECRET manquant (déjà fait dans TICK-170)
+// Wrapper le try/catch dans GET() pour intercepter cette erreur :
+
+export async function GET(request: NextRequest) {
+  // ...
+  let state: string;
+  try {
+    state = buildState(user.restaurantId);
+  } catch (err) {
+    logger.error('stripe_connect_missing_secret', {}, err);
+    return NextResponse.json({ error: 'Configuration serveur incorrecte' }, { status: 500 });
+  }
+  // ... reste du handler inchangé
+}
+```
+
+**Ce qui change dans `app/api/stripe/connect/callback/route.ts` :**
+
+```typescript
+// verifyState() retourne null si NEXTAUTH_SECRET manquant (déjà géré dans TICK-170)
+// Le comportement actuel (redirect ?error=invalid_state) est déjà correct.
+// Ajouter un log spécifique pour distinguer "secret absent" de "state invalide" :
+
+function verifyState(state: string): string | null {
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (!secret) {
+    // Logger sans exposer le détail dans la réponse HTTP
+    // Note : logger n'est pas accessible ici (scope fonction) — utiliser console.error ou restructurer
+    console.error('[stripe/callback] NEXTAUTH_SECRET manquant');
+    return null;
+  }
+  // ... reste de la logique inchangée
+}
+```
+
+**Alternative recommandée si refactoring léger acceptable :**
+Extraire `verifyState()` dans un helper partagé `lib/stripe-oauth-state.ts` qui contient
+`buildState()` + `verifyState()`. Cela évite la duplication de la logique HMAC et centralise
+le guard `NEXTAUTH_SECRET`. Ce refactoring est optionnel pour ce ticket mais conseillé.
+
+**Critères d'acceptance :**
+- [ ] `buildState()` : `NEXTAUTH_SECRET` absent → `Error` explicite (déjà dans TICK-170)
+- [ ] `GET /api/stripe/connect` : catch sur `buildState()` → réponse 500 avec message générique (pas d'info technique)
+- [ ] `verifyState()` : `NEXTAUTH_SECRET` absent → `null` + log distinctif (pas de throw)
+- [ ] Aucune information sensible exposée dans les réponses HTTP (messages génériques)
+- [ ] Tests : cas `NEXTAUTH_SECRET` absent (`vi.stubEnv('NEXTAUTH_SECRET', '')`) → comportement attendu vérifié dans `stripe-connect.test.ts`
+- [ ] 0 régression sur les tests existants
+
+---
+
+## Sprint 22 — Stripe Connect : Accounts v2 & robustesse (4,25 j)
+
+> **Contexte :** Le flow OAuth v1 (`stripe.oauth.token`, `connect.stripe.com/oauth/authorize`) est
+> déprécié par Stripe depuis 2025. Les nouvelles intégrations doivent utiliser l'API Accounts v2
+> (`/v2/core/accounts`) avec onboarding hébergé ou embedded via `AccountSessions`.
+> Ce sprint migre les routes Connect vers l'API moderne et ajoute trois améliorations de robustesse
+> identifiées lors de l'audit post-Sprint 21.
+
+---
+
+### TICK-175 — Migration Stripe Connect OAuth v1 → Accounts v2 (hosted onboarding)
+**Épic :** Stripe Connect — Migration API
+**Priorité :** 🔴 Bloquant
+**Sizing :** 2,5 j
+**Dépendances :** TICK-158, TICK-169, TICK-170, TICK-174
+
+**Contexte & problème :**
+L'implémentation actuelle (Sprints 20–21) utilise le flow OAuth v1 Standard :
+- `GET /api/stripe/connect` → redirect vers `connect.stripe.com/oauth/authorize`
+- `GET /api/stripe/connect/callback` → `stripe.oauth.token({ grant_type: 'authorization_code', code })`
+- `DELETE /api/stripe/connect/disconnect` → `stripe.oauth.deauthorize({ client_id, stripe_user_id })`
+- Env var `STRIPE_CONNECT_CLIENT_ID` (OAuth Client ID)
+
+Ce flow est déprécié. Stripe recommande pour les nouvelles intégrations :
+1. La plateforme crée le compte connected : `stripe.accounts.create({ ... })`
+2. La plateforme génère un lien d'onboarding : `stripe.accountLinks.create({ account, type: 'account_onboarding', ... })`
+3. Le restaurant finalise l'onboarding sur la page hébergée Stripe
+4. Stripe notifie la plateforme via le webhook `account.updated` (champ `details_submitted`)
+
+**Compatibilité descendante :**
+Les restaurants déjà connectés via OAuth v1 conservent leur `stripeAccountId` en DB — leur
+paiement direct charge continue de fonctionner. La migration ne concerne que l'onboarding de
+*nouveaux* restaurants.
+
+**Architecture cible :**
+
+```
+Admin restaurant
+    │
+    ▼
+POST /api/stripe/connect/initiate          (remplace GET /api/stripe/connect)
+    │  → stripe.accounts.create({ type: 'express', ... })     ← compte créé par la plateforme
+    │  → stripe.accountLinks.create({ account: acct_xxx,
+    │      type: 'account_onboarding',
+    │      return_url: 'https://hub.../api/stripe/connect/return?restaurantId=xxx',
+    │      refresh_url: 'https://hub.../api/stripe/connect/refresh?restaurantId=xxx' })
+    │  → Restaurant.findByIdAndUpdate(restaurantId, { stripeAccountId: acct_xxx })
+    └─ redirect 302 → accountLink.url (page hébergée Stripe)
+
+Stripe (onboarding terminé)
+    │
+    ▼
+GET /api/stripe/connect/return?restaurantId=xxx   (remplace /callback)
+    │  → vérifie session admin (CSRF : restaurantId doit appartenir à l'admin connecté)
+    │  → stripe.accounts.retrieve(stripeAccountId)
+    │  → si details_submitted: true → Restaurant.findByIdAndUpdate({ stripeOnboardingComplete: true })
+    └─ redirect 302 → https://${restaurant.domaine}/admin/stripe?connected=true
+
+GET /api/stripe/connect/refresh?restaurantId=xxx  (onboarding interrompu)
+    │  → régénère un nouveau accountLink (le lien expire après 5 min)
+    └─ redirect 302 → nouveau accountLink.url
+
+DELETE /api/stripe/connect/disconnect             (inchangé fonctionnellement)
+    │  → stripe.accounts.del(stripeAccountId)     ← remplace oauth.deauthorize
+    └─ Restaurant.findByIdAndUpdate({ stripeAccountId: undefined, stripeOnboardingComplete: false })
+```
+
+**Variables d'environnement — diff :**
+```bash
+# SUPPRIMÉ (OAuth v1 — plus nécessaire en Accounts v2)
+# STRIPE_CONNECT_CLIENT_ID=ca_...
+# STRIPE_CONNECT_REDIRECT_URI=...
+
+# CONSERVÉ
+STRIPE_SECRET_KEY=sk_...                       # client plateforme
+STRIPE_CONNECT_WEBHOOK_SECRET=whsec_...        # webhook Connect global
+STRIPE_APPLICATION_FEE_PERCENT=0
+NEXTAUTH_SECRET=...
+
+# AJOUTÉ
+STRIPE_CONNECT_RETURN_URL=https://hub.nhesitepas.fr/api/stripe/connect/return
+STRIPE_CONNECT_REFRESH_URL=https://hub.nhesitepas.fr/api/stripe/connect/refresh
+```
+
+**Fichiers à créer / modifier :**
+
+| Fichier | Action |
+|---------|--------|
+| `app/api/stripe/connect/route.ts` | Renommer en `initiate/route.ts` ou réécrire (POST, plus GET) |
+| `app/api/stripe/connect/callback/route.ts` | Remplacer par `return/route.ts` + `refresh/route.ts` |
+| `app/api/stripe/connect/disconnect/route.ts` | Remplacer `oauth.deauthorize` → `stripe.accounts.del` |
+| `.env.example` | Supprimer `STRIPE_CONNECT_CLIENT_ID` et `STRIPE_CONNECT_REDIRECT_URI`, ajouter `RETURN_URL` + `REFRESH_URL` |
+| `__tests__/api/stripe-connect.test.ts` | Réécrire pour les nouveaux endpoints |
+
+**Points d'attention :**
+- `stripe.accounts.create` avec `type: 'express'` pour l'onboarding simplifié (le type `standard` impose OAuth v1)
+- Le lien `accountLink.url` expire après 5 minutes → la route `/refresh` permet de le régénérer sans recréer le compte
+- Le `stripeAccountId` (acct_xxx) est créé **avant** l'onboarding (à l'initiation), pas au retour du callback
+- Conserver `STRIPE_CONNECT_REDIRECT_URI` dans `.env.example` avec une note de dépréciation pendant 1 sprint pour ne pas casser un déploiement existant
+
+**Critères d'acceptance :**
+- [ ] `POST /api/stripe/connect/initiate` : admin authentifié → crée compte Stripe + génère accountLink + redirect 302
+- [ ] `POST /api/stripe/connect/initiate` : non-admin → 403
+- [ ] `GET /api/stripe/connect/return` : `details_submitted: true` → `stripeOnboardingComplete: true` en DB + redirect admin
+- [ ] `GET /api/stripe/connect/return` : `details_submitted: false` → redirect `/admin/stripe?error=onboarding_incomplete`
+- [ ] `GET /api/stripe/connect/refresh` : régénère accountLink sans recréer le compte, redirect 302
+- [ ] `DELETE /api/stripe/connect/disconnect` : `stripe.accounts.del(acct_xxx)` appelé + nettoyage DB
+- [ ] `STRIPE_CONNECT_CLIENT_ID` retiré de toutes les routes (plus aucune référence)
+- [ ] `.env.example` mis à jour (variables supprimées/ajoutées)
+- [ ] Tests `stripe-connect.test.ts` réécrits pour les nouveaux endpoints (couverture équivalente Sprint 21)
+- [ ] Backward compat : restaurants déjà connectés (acct_xxx en DB) → direct charges non impactés
+- [ ] 0 régression sur `checkout.test.ts` et `webhook-stripe.test.ts`
+
+---
+
+### TICK-176 — Retirer `payment_method_types` hardcodé (auto-détection Stripe)
+**Épic :** Stripe Connect — UX Paiement
+**Priorité :** 🟢 Basse
+**Sizing :** 0,25 j
+**Dépendances :** TICK-159
+
+**Problème :**
+```typescript
+// app/api/checkout/route.ts — ligne 221
+payment_method_types: ['card'],  // ← hardcodé
+```
+
+Avec `payment_method_types: ['card']`, seules les cartes bancaires sont acceptées. Stripe est
+capable de détecter automatiquement les moyens de paiement pertinents selon le pays du client
+(CB, Bancontact en Belgique, iDEAL aux Pays-Bas, etc.) et le type de compte connecté.
+
+Supprimer ce paramètre active le mode **automatic payment methods**, géré par Stripe selon la
+configuration du compte connecté dans son dashboard. Cela améliore le taux de conversion sans
+aucune autre modification du code.
+
+**Ce qui change dans `app/api/checkout/route.ts` :**
+```typescript
+// Avant
+const session = await stripe.checkout.sessions.create(
+  {
+    mode: 'payment',
+    payment_method_types: ['card'],   // ← SUPPRIMER cette ligne
+    line_items: lineItems,
+    ...
+  },
+  { stripeAccount: stripeAccountId! }
+);
+
+// Après
+const session = await stripe.checkout.sessions.create(
+  {
+    mode: 'payment',
+    // payment_method_types omis → Stripe auto-détecte selon le compte connecté
+    line_items: lineItems,
+    ...
+  },
+  { stripeAccount: stripeAccountId! }
+);
+```
+
+**Note :** Le compte connecté doit avoir activé les méthodes de paiement souhaitées dans son
+dashboard Stripe (Settings → Payment methods). Par défaut, seule la carte est activée — le
+comportement ne change donc pas pour les comptes par défaut. Le gain est la flexibilité future.
+
+**Critères d'acceptance :**
+- [ ] `payment_method_types` supprimé de `stripe.checkout.sessions.create` dans `checkout/route.ts`
+- [ ] Test `checkout.test.ts` : vérifier que `sessionParams.payment_method_types` est `undefined`
+- [ ] 0 régression sur les autres tests checkout
+
+---
+
+### TICK-177 — Index TTL sur `PendingOrder` (nettoyage des commandes orphelines)
+**Épic :** Stripe Connect — Robustesse
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,5 j
+**Dépendances :** TICK-135
+
+**Problème :**
+Un `PendingOrder` est créé avant la redirection vers Stripe. Il est supprimé en cas de :
+- Succès : webhook `checkout.session.completed` → `PendingOrder.findByIdAndDelete`
+- Expiration : webhook `checkout.session.expired` → `PendingOrder.findByIdAndDelete`
+
+Mais si le webhook ne se déclenche jamais (Stripe outage, endpoint inaccessible), le
+`PendingOrder` reste en DB indéfiniment. Sur 1000 restaurants avec du trafic régulier,
+cette fuite accumule des documents orphelins.
+
+**Solution :**
+Ajouter un champ `expiresAt` dans le modèle `PendingOrder` avec un index TTL MongoDB.
+MongoDB supprime automatiquement les documents dont `expiresAt` est dépassé (toutes les
+60 secondes via le thread TTL Monitor).
+
+**Ce qui change dans `models/PendingOrder.ts` :**
+```typescript
+// Ajouter dans le schéma :
+expiresAt: {
+  type: Date,
+  default: () => new Date(Date.now() + 60 * 60 * 1000), // +1h par défaut
+  index: { expireAfterSeconds: 0 },  // TTL : MongoDB supprime quand expiresAt < now
+},
+```
+
+**Ce qui change dans `app/api/checkout/route.ts` :**
+```typescript
+// Lors de la création du PendingOrder, aligner expiresAt sur expires_at de la session Stripe
+const sessionExpiresAt = new Date((Math.floor(Date.now() / 1000) + 30 * 60) * 1000); // +30 min
+
+const pendingOrder = await PendingOrder.create({
+  // ... champs existants ...
+  expiresAt: sessionExpiresAt,  // ← aligné sur la session Stripe (30 min)
+});
+```
+
+**Note :** L'index TTL est en plus des suppressions explicites dans le webhook — les deux
+mécanismes coexistent sans conflit. La suppression TTL est le filet de sécurité, pas le
+chemin nominal.
+
+**Critères d'acceptance :**
+- [ ] `models/PendingOrder.ts` : champ `expiresAt: Date` avec `index: { expireAfterSeconds: 0 }`
+- [ ] `app/api/checkout/route.ts` : `expiresAt` passé à `PendingOrder.create` (aligné sur +30 min)
+- [ ] Interface TypeScript `IPendingOrder` mise à jour avec `expiresAt?: Date`
+- [ ] Test `checkout.test.ts` : `pendingArg.expiresAt` est une `Date` dans ~30 min
+- [ ] Aucune modification des handlers webhook (la suppression explicite reste en place)
+- [ ] 0 régression sur les tests existants
+
+---
+
+### TICK-178 — Webhook `account.updated` : sync onboarding + `account.application.deauthorized`
+**Épic :** Stripe Connect — Robustesse
+**Priorité :** 🟠 Haute
+**Sizing :** 1,0 j
+**Dépendances :** TICK-160, TICK-175
+
+**Problème — deux cas non gérés :**
+
+**Cas 1 : `account.application.deauthorized`**
+Un restaurant peut révoquer l'accès de la plateforme directement depuis son dashboard Stripe
+(Settings → Connected applications → Disconnect). Dans ce cas, `stripeOnboardingComplete`
+reste `true` en DB bien que la connexion soit coupée. Les prochains paiements échouent avec
+une erreur Stripe 403, sans log clair côté application.
+
+**Cas 2 : `account.updated` avec `details_submitted: true` (post-TICK-175)**
+Après migration vers Accounts v2, l'onboarding se termine du côté Stripe. La route `/return`
+vérifie `details_submitted`, mais si le restaurant ferme la fenêtre avant d'atteindre `/return`,
+le webhook `account.updated` est le seul signal fiable que l'onboarding est terminé.
+
+**Ce qui change dans `app/api/webhooks/stripe/route.ts` :**
+```typescript
+// Ajouter dans le switch(event.type) :
+
+case 'account.updated': {
+  await handleAccountUpdated(event.data.object as Stripe.Account, restaurantId);
+  break;
+}
+
+case 'account.application.deauthorized': {
+  await handleApplicationDeauthorized(event.account ?? null);
+  break;
+}
+```
+
+```typescript
+// Nouveaux handlers :
+
+async function handleAccountUpdated(account: Stripe.Account, restaurantId: string | null) {
+  if (!restaurantId) return; // event sans account associé — ignoré
+  if (!account.details_submitted) return; // onboarding pas encore terminé
+
+  await connectDB();
+  await Restaurant.findByIdAndUpdate(restaurantId, { stripeOnboardingComplete: true });
+  logger.info('stripe_account_onboarding_complete_via_webhook', {
+    restaurantId,
+    stripeAccountId: account.id,
+  });
+}
+
+async function handleApplicationDeauthorized(stripeAccountId: string | null) {
+  if (!stripeAccountId) return;
+
+  await connectDB();
+  const restaurant = await Restaurant.findOneAndUpdate(
+    { stripeAccountId },
+    { stripeOnboardingComplete: false, stripeAccountId: undefined },
+    { new: true }
+  );
+
+  if (!restaurant) {
+    logger.error('webhook_deauthorized_restaurant_not_found', { stripeAccountId });
+    return;
+  }
+
+  logger.error('stripe_application_deauthorized', {
+    restaurantId: restaurant._id.toString(),
+    stripeAccountId,
+  });
+  // TODO Sprint 23 : notifier l'admin par email que sa connexion Stripe a été révoquée
+}
+```
+
+**Note sur `restaurantId` dans `account.application.deauthorized` :**
+Ce type d'event ne passe pas par le tenant-resolver standard (le `stripeAccountId` est dans
+`event.account`). La route webhook existante résout déjà `event.account` → `restaurantId`.
+Vérifier que le handler reçoit `restaurantId` ou utilise directement `stripeAccountId` (les deux
+approches sont valides).
+
+**Critères d'acceptance :**
+- [ ] `case 'account.updated'` ajouté dans le switch webhook, appelle `handleAccountUpdated`
+- [ ] `case 'account.application.deauthorized'` ajouté, appelle `handleApplicationDeauthorized`
+- [ ] `handleAccountUpdated` : `details_submitted: true` → `stripeOnboardingComplete: true` en DB
+- [ ] `handleAccountUpdated` : `details_submitted: false` → aucune modification DB
+- [ ] `handleApplicationDeauthorized` : `stripeAccountId` → `stripeOnboardingComplete: false` + `stripeAccountId: undefined` en DB
+- [ ] `handleApplicationDeauthorized` : restaurant introuvable → log error + return (pas d'erreur HTTP)
+- [ ] Tests `webhook-stripe.test.ts` : 2 nouveaux describes pour ces handlers
+- [ ] 0 régression sur les handlers existants
+
+---
+
+## Sprint 23 — Stripe Connect : correctifs cross-domain & robustesse (2,0 j)
+
+> **Contexte :** L'audit post-Sprint 22 a révélé quatre problèmes dans le flow Stripe Connect
+> multi-tenant. Le plus critique est l'incompatibilité entre la protection CSRF via session NextAuth
+> et l'architecture hub cross-domain (même problème résolu pour OAuth Google en Sprint 19).
+> Ce sprint corrige les bugs bloquants avant mise en production et améliore la robustesse globale.
+
+---
+
+### TICK-179 — CSRF cross-domain : state token HMAC pour `/return` et `/refresh`
+**Épic :** Stripe Connect — Sécurité
+**Priorité :** 🔴 Bloquant
+**Sizing :** 1,0 j
+**Dépendances :** TICK-175
+
+**Problème :**
+Les routes `/api/stripe/connect/return` et `/api/stripe/connect/refresh` sont hébergées sur le
+hub (`hub.nhesitepas.fr`). Elles vérifient l'identité de l'admin via `getServerSession` :
+
+```typescript
+const session = await getServerSession(authOptions);
+if (user.restaurantId !== restaurantId) → redirect ?error=unauthorized
+```
+
+En architecture multi-tenant, l'admin est authentifié sur `restaurantA.fr` (cookie NextAuth sur
+ce domaine), mais ces routes sont appelées depuis le hub. Le navigateur n'envoie pas le cookie
+`restaurantA.fr` au hub → `session = null` → redirect `?error=unauthorized` systématique.
+
+C'est le même problème architectural que le callback Google OAuth résolu en Sprint 19, mais ici
+il n'y a pas d'auth code exchange — le CSRF doit être résolu différemment.
+
+**Solution — state token HMAC (sans session sur le hub) :**
+
+Lors de l'initiation (`POST /api/stripe/connect/initiate`), l'admin IS authentifié sur le
+restaurant. On génère un state token signé HMAC inclus dans `return_url` et `refresh_url`.
+Le hub vérifie la signature sans avoir besoin de session.
+
+```
+Flow complet :
+
+1. Admin sur restaurantA.fr → POST /api/stripe/connect/initiate
+   │  → Génère state = HMAC-SHA256(restaurantId + ":" + expiresAt, NEXTAUTH_SECRET)
+   │  → return_url = hub/.../return?restaurantId=xxx&state=HMAC&expires=TS
+   │  → refresh_url = hub/.../refresh?restaurantId=xxx&state=HMAC&expires=TS
+   └─ redirect 302 → Stripe hosted onboarding
+
+2. Stripe → GET hub/.../return?restaurantId=xxx&state=HMAC&expires=TS
+   │  → Vérifie : HMAC-SHA256(restaurantId + ":" + expires, NEXTAUTH_SECRET) === state
+   │  → Vérifie : expires > Date.now() (token non expiré, ~10 min)
+   │  → Vérifie : details_submitted && charges_enabled via stripe.accounts.retrieve()
+   └─ redirect → https://restaurantA.fr/admin/stripe?connected=true
+```
+
+**Ce qui change dans `app/api/stripe/connect/initiate/route.ts` :**
+```typescript
+import { createHmac } from 'crypto';
+
+function generateStateToken(restaurantId: string): { state: string; expires: number } {
+  const expires = Math.floor(Date.now() / 1000) + 10 * 60; // +10 min
+  const payload = `${restaurantId}:${expires}`;
+  const state = createHmac('sha256', process.env.NEXTAUTH_SECRET!)
+    .update(payload)
+    .digest('hex');
+  return { state, expires };
+}
+
+// Dans POST handler, remplacer return_url/refresh_url fixes :
+const { state, expires } = generateStateToken(restaurantId);
+const accountLink = await stripe.accountLinks.create({
+  account: stripeAccountId,
+  return_url:  `${returnUrl}?restaurantId=${restaurantId}&state=${state}&expires=${expires}`,
+  refresh_url: `${refreshUrl}?restaurantId=${restaurantId}&state=${state}&expires=${expires}`,
+  type: 'account_onboarding',
+});
+```
+
+**Ce qui change dans `app/api/stripe/connect/return/route.ts` et `refresh/route.ts` :**
+```typescript
+import { createHmac, timingSafeEqual } from 'crypto';
+
+function verifyStateToken(restaurantId: string, state: string, expires: string): boolean {
+  const expiresNum = parseInt(expires, 10);
+  if (isNaN(expiresNum) || Math.floor(Date.now() / 1000) > expiresNum) return false;
+
+  const payload = `${restaurantId}:${expiresNum}`;
+  const expected = createHmac('sha256', process.env.NEXTAUTH_SECRET!)
+    .update(payload)
+    .digest('hex');
+
+  // timingSafeEqual protège contre les timing attacks
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(state));
+}
+
+// Remplacer getServerSession() par :
+const state   = searchParams.get('state') ?? '';
+const expires = searchParams.get('expires') ?? '';
+if (!verifyStateToken(restaurantId, state, expires)) {
+  return NextResponse.redirect(`${fallbackErrorUrl}?error=unauthorized`, 302);
+}
+```
+
+**Variables d'environnement :**
+`NEXTAUTH_SECRET` est déjà requis — aucune nouvelle variable. Le secret est partagé entre
+le restaurant et le hub (même `.env` sur la plateforme hub).
+
+**Critères d'acceptance :**
+- [ ] `initiate` : génère `state` (HMAC) + `expires` (timestamp Unix +10 min) inclus dans `return_url` et `refresh_url`
+- [ ] `return` : vérifie HMAC et expiry → CSRF invalide → redirect `?error=unauthorized`
+- [ ] `return` : token expiré (> 10 min) → redirect `?error=unauthorized`
+- [ ] `refresh` : même vérification que `return`
+- [ ] `timingSafeEqual` utilisé pour la comparaison HMAC (pas `===`)
+- [ ] `getServerSession` retiré de `return` et `refresh` (plus aucune dépendance session sur le hub)
+- [ ] Tests `stripe-connect.test.ts` mis à jour : mock `createHmac`, cas token valide / invalide / expiré
+- [ ] 0 régression sur `initiate` et `disconnect`
+
+---
+
+### TICK-180 — Vérifier `charges_enabled` avant `stripeOnboardingComplete: true`
+**Épic :** Stripe Connect — Robustesse
+**Priorité :** 🟠 Haute
+**Sizing :** 0,25 j
+**Dépendances :** TICK-175, TICK-178
+
+**Problème :**
+En deux endroits, le code marque `stripeOnboardingComplete: true` en vérifiant uniquement
+`details_submitted` :
+
+```typescript
+// return/route.ts — ligne 65
+if (!account.details_submitted) { ... erreur ... }
+await Restaurant.findByIdAndUpdate(restaurantId, { stripeOnboardingComplete: true });
+
+// webhook-stripe/route.ts — handleAccountUpdated
+if (!account.details_submitted) return;
+await Restaurant.findByIdAndUpdate(restaurantId, { stripeOnboardingComplete: true });
+```
+
+`details_submitted = true` signifie que le restaurant a soumis ses informations, mais Stripe
+peut encore être en cours de vérification des documents (KYC/KYB). Pendant ce délai,
+`charges_enabled = false` — le compte ne peut pas encore encaisser.
+
+Marquer `stripeOnboardingComplete: true` trop tôt provoque un checkout qui passe la validation
+interne mais échoue chez Stripe avec une erreur 403 non explicite.
+
+**Ce qui change dans `app/api/stripe/connect/return/route.ts` :**
+```typescript
+// Avant
+if (!account.details_submitted) {
+  return NextResponse.redirect(`...?error=onboarding_incomplete`);
+}
+
+// Après
+if (!account.details_submitted || !account.charges_enabled) {
+  logger.error('stripe_connect_onboarding_not_ready', {
+    restaurantId,
+    details_submitted: account.details_submitted,
+    charges_enabled: account.charges_enabled,
+  });
+  return NextResponse.redirect(
+    `https://${restaurant.domaine}/admin/stripe?error=onboarding_incomplete`,
+    302
+  );
+}
+```
+
+**Ce qui change dans `handleAccountUpdated` (webhook) :**
+```typescript
+// Avant
+if (!account.details_submitted) return;
+
+// Après
+if (!account.details_submitted || !account.charges_enabled) return;
+```
+
+**Note UX :** Si `details_submitted = true` mais `charges_enabled = false`, Stripe enverra un
+autre `account.updated` quand la vérification sera terminée. Le webhook handler prendra le relai
+automatiquement. L'admin verra "onboarding_incomplete" temporairement — c'est correct.
+
+**Critères d'acceptance :**
+- [ ] `return/route.ts` : vérifie `details_submitted && charges_enabled` avant de valider
+- [ ] `handleAccountUpdated` (webhook) : même double vérification
+- [ ] `return` : `charges_enabled: false` → redirect `?error=onboarding_incomplete` + log structuré
+- [ ] Tests `stripe-connect.test.ts` : cas `details_submitted: true, charges_enabled: false` → erreur
+- [ ] Tests `webhook-stripe.test.ts` : cas `account.updated` avec `charges_enabled: false` → pas de DB update
+- [ ] 0 régression sur les cas passants existants
+
+---
+
+### TICK-181 — `disconnect` : déconnexion douce vs suppression destructive du compte Stripe
+**Épic :** Stripe Connect — UX & Sécurité
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** TICK-175
+
+**Problème :**
+`DELETE /api/stripe/connect/disconnect` appelle `stripe.accounts.del(stripeAccountId)` :
+
+```typescript
+await stripe.accounts.del(restaurant.stripeAccountId);
+```
+
+Cette opération supprime définitivement et irréversiblement le compte Express Stripe du
+restaurant : historique de paiements, payouts, documents KYC, everything. Un admin qui clique
+"Déconnecter" par erreur (ou pour "voir ce que ça fait") perd tout l'historique Stripe de sa
+boutique — irréparable, même par le support Stripe.
+
+**Solution — séparer les deux cas d'usage :**
+
+| Cas | Action Stripe | Action DB | Réversible |
+|-----|---------------|-----------|-----------|
+| Déconnexion logique (nominal) | Aucune — le compte Stripe reste intact | `$unset stripeAccountId`, `stripeOnboardingComplete: false` | Oui — re-connecter via `/initiate` réutilise le compte existant |
+| Suppression totale (RGPD / fermeture) | `stripe.accounts.del(acct_xxx)` | Idem + log | Non |
+
+**Ce qui change dans `app/api/stripe/connect/disconnect/route.ts` :**
+```typescript
+// Avant : suppression Stripe + nettoyage DB
+try {
+  await stripe.accounts.del(restaurant.stripeAccountId);  // ← SUPPRIMER
+} catch (err) { ... }
+
+// Après : déconnexion logique uniquement
+// Le compte Stripe reste intact — le restaurant peut se re-connecter
+// sans perdre son historique de paiements.
+// La suppression Stripe (RGPD) sera gérée dans un endpoint dédié (Sprint futur).
+await Restaurant.findByIdAndUpdate(restaurantId, {
+  $unset: { stripeAccountId: 1 },
+  stripeOnboardingComplete: false,
+});
+
+logger.info('stripe_connect_disconnected', { restaurantId });
+return NextResponse.json({ message: 'Compte Stripe déconnecté' });
+```
+
+**Note sur la re-connexion :**
+Quand un restaurant déconnecté relance l'onboarding via `POST /initiate`, `restaurant.stripeAccountId`
+est `undefined` → la branche `if (!stripeAccountId)` crée un nouveau compte Express. Pour
+réutiliser l'ancien compte, il faudrait conserver le `stripeAccountId` même en "déconnecté" (avec
+un champ `stripeConnected: boolean` séparé). Cela fait partie d'une refonte plus large — hors scope
+de ce ticket.
+
+**Critères d'acceptance :**
+- [ ] `stripe.accounts.del` retiré du handler `disconnect`
+- [ ] Déconnexion = nettoyage DB uniquement (`$unset stripeAccountId`, `stripeOnboardingComplete: false`)
+- [ ] Log `stripe_connect_disconnected` conservé
+- [ ] Tests `stripe-connect.test.ts` : `mockAccountsDel` ne doit plus être appelé lors de disconnect
+- [ ] Tests : vérifier que le nettoyage DB est bien effectué même sans appel Stripe
+- [ ] 0 régression sur les autres endpoints Connect
+
+---
+
+### TICK-182 — `country: 'FR'` dans `accounts.create`
+**Épic :** Stripe Connect — UX Onboarding
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,25 j
+**Dépendances :** TICK-175
+
+**Problème :**
+`stripe.accounts.create` ne spécifie pas le `country` :
+
+```typescript
+const account = await stripe.accounts.create({
+  type: 'express',
+  metadata: { restaurantId },
+  // country absent → Stripe le demande en premier écran d'onboarding
+});
+```
+
+Stripe présente alors un sélecteur de pays en première étape de l'onboarding. Pour une SaaS
+ciblant les restaurants français, le pays est connu à l'avance. Le pré-remplir :
+- Supprime un écran inutile dans l'onboarding
+- Évite qu'un admin crée accidentellement un compte US (IBAN américain exigé)
+- Active directement les méthodes de paiement françaises (CB, virement SEPA) dans le dashboard Stripe
+
+**Ce qui change dans `app/api/stripe/connect/initiate/route.ts` :**
+```typescript
+// Avant
+const account = await stripe.accounts.create({
+  type: 'express',
+  metadata: { restaurantId },
+});
+
+// Après
+const account = await stripe.accounts.create({
+  type: 'express',
+  country: 'FR',   // ← Pré-remplit le pays → évite un écran d'onboarding
+  metadata: { restaurantId },
+});
+```
+
+**Note :** Si la plateforme est amenée à accepter des restaurants hors France, `country` devra
+être lu depuis le modèle `Restaurant` (champ à ajouter) ou depuis un param de la requête.
+Pour le MVP France-only, `'FR'` hardcodé est suffisant et évite une complexité prématurée.
+
+**Critères d'acceptance :**
+- [ ] `stripe.accounts.create` appelé avec `{ type: 'express', country: 'FR', metadata: { restaurantId } }`
+- [ ] Test `stripe-connect.test.ts` : `mockAccountsCreate` appelé avec `country: 'FR'`
+- [ ] 0 régression sur les autres tests `initiate`
 
 ---
 

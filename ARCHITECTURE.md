@@ -275,21 +275,69 @@ Le menu (`/`) est masqué tant que l'utilisateur n'a pas choisi son mode (connec
 
 ---
 
-## Paiement Stripe — Flux détaillé
+## Paiement Stripe — Architecture Connect (Sprint 20)
 
-1. Client clique "Payer" → POST `/api/checkout`
-2. Serveur crée une `Stripe Checkout Session` avec les produits
-3. Client redirigé vers Stripe Checkout (page Stripe hébergée)
-4. Après paiement : Stripe redirige vers `/confirmation?session_id=xxx`
-5. **En parallèle** : Stripe envoie webhook `checkout.session.completed`
-6. Webhook → crée la commande en base + envoie email
-7. Page confirmation affiche le récapitulatif via `session_id`
+### Modèle : Direct charges via Stripe Connect
+
+Chaque restaurant connecte son propre compte Stripe à la plateforme via OAuth.
+La plateforme utilise un **client Stripe unique** (sa propre clé secrète) et effectue des
+appels au nom du restaurant avec l'option `{ stripeAccount: acct_xxx }`.
+
+**Ce qui est stocké en base :** uniquement `stripeAccountId` (acct_xxx, non-secret).
+**Ce qui n'est jamais stocké :** aucune clé secrète ni webhook secret par restaurant.
+
+### Flux de paiement
+
+1. Client clique "Payer" → `POST /api/checkout`
+2. Serveur récupère le `stripeAccountId` du restaurant depuis la DB
+3. Serveur crée une Checkout Session **sur le compte du restaurant** :
+   ```ts
+   stripe.checkout.sessions.create({ ... }, { stripeAccount: 'acct_xxx' })
+   ```
+4. Client redirigé vers Stripe Checkout (page Stripe hébergée)
+5. Après paiement : Stripe redirige vers `/confirmation?session_id=xxx`
+6. **En parallèle** : Stripe envoie un webhook Connect à `/api/webhooks/stripe`
+7. Webhook → identifie le tenant via `event.account` → crée la commande + envoie email
 
 ```
 Variables d'env requises :
-STRIPE_SECRET_KEY
-STRIPE_WEBHOOK_SECRET
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+STRIPE_SECRET_KEY              # Clé secrète de la PLATEFORME
+STRIPE_CONNECT_CLIENT_ID       # ca_xxx — dashboard.stripe.com → Connect → Settings
+STRIPE_CONNECT_WEBHOOK_SECRET  # whsec_xxx — webhook Connect (couvre tous les restaurants)
+```
+
+### Flow d'onboarding restaurant (OAuth Connect)
+
+```
+Admin restaurant         Plateforme                    Stripe
+     |                       |                             |
+     |── "Connecter Stripe" →|                             |
+     |                       |── redirect OAuth ──────────▶|
+     |                       |              (authentification restaurant)
+     |                       |◀── ?code=xxx ───────────────|
+     |                       |── oauth.token(code) ───────▶|
+     |                       |◀── stripe_user_id (acct_xx) |
+     |                       |── DB: stripeAccountId=acct_xx
+     |◀── redirect /admin/stripe?connected=true
+```
+
+**Routes :**
+- `GET /api/stripe/connect` — initiation OAuth (admin restaurant)
+- `GET /api/stripe/connect/callback` — réception du code, sauvegarde `stripeAccountId`
+- `DELETE /api/stripe/connect/disconnect` — déconnexion (admin restaurant)
+
+**Page admin :** `/admin/stripe` — affiche le statut, bouton connexion/déconnexion, lien dashboard Stripe.
+
+### Webhook Connect
+
+Un seul endpoint `/api/webhooks/stripe` couvre tous les restaurants connectés.
+Le tenant est résolu via `event.account` → `Restaurant.findOne({ stripeAccountId })`.
+
+```ts
+// lib/stripe.ts
+export const stripe = new Stripe(STRIPE_SECRET_KEY);          // client plateforme unique
+export function constructConnectEvent(body, sig): Stripe.Event // STRIPE_CONNECT_WEBHOOK_SECRET
+export async function getStripeAccountId(restaurantId): Promise<string | null>
 ```
 
 ---
@@ -442,10 +490,10 @@ Section "Récupérées aujourd'hui" en bas de page commandes.
 # MongoDB
 MONGODB_URI=mongodb+srv://...
 
-# Stripe
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_...
+# Stripe Connect (Sprint 20) — clé plateforme + Connect OAuth
+STRIPE_SECRET_KEY=sk_live_...           # Clé de la plateforme (pas des restaurants)
+STRIPE_CONNECT_CLIENT_ID=ca_...         # dashboard.stripe.com → Connect → Settings
+STRIPE_CONNECT_WEBHOOK_SECRET=whsec_... # Webhook Connect (couvre tous les restaurants)
 
 # NextAuth
 NEXTAUTH_URL=https://monsite.vercel.app

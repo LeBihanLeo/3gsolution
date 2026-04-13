@@ -1,4 +1,5 @@
 // TICK-138 — API super-admin : liste + création restaurants
+// TICK-161 — Stripe Connect : retrait des champs secrets Stripe du schema de création
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
@@ -25,9 +26,7 @@ const CreateRestaurantSchema = z.object({
   couleurSecondaire: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#ffffff'),
   horaireOuverture: z.string().default('11:30'),
   horaireFermeture: z.string().default('14:00'),
-  stripePublishableKey: z.string().optional(),
-  stripeSecretKey: z.string().optional(),
-  stripeWebhookSecret: z.string().optional(),
+  // Stripe Connect : l'onboarding se fait via OAuth (/api/stripe/connect), pas ici
 });
 
 // GET /api/superadmin/restaurants — liste tous les restaurants
@@ -36,9 +35,9 @@ export async function GET() {
   if (error) return error;
 
   await connectDB();
-  // Ne jamais exposer adminPasswordHash, stripeSecretKey, stripeWebhookSecret
+  // Ne jamais exposer adminPasswordHash
   const restaurants = await Restaurant.find()
-    .select('-adminPasswordHash -stripeSecretKey -stripeWebhookSecret')
+    .select('-adminPasswordHash')
     .sort({ createdAt: -1 })
     .lean();
 

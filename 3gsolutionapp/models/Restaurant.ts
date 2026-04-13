@@ -22,10 +22,10 @@ export interface IRestaurant extends Document {
   adminEmail: string;
   adminPasswordHash: string;   // select: false — jamais exposé par défaut
 
-  // Stripe (clés par restaurant — jamais exposées)
-  stripePublishableKey?: string;
-  stripeSecretKey?: string;       // select: false
-  stripeWebhookSecret?: string;   // select: false
+  // Stripe Connect — account_id OAuth (acct_xxx), jamais de clé secrète stockée
+  stripeAccountId?: string;              // acct_xxx — pas secret, mais limité via select
+  stripeOnboardingComplete: boolean;     // true = flow OAuth finalisé
+  // Note : commission plateforme configurée via STRIPE_APPLICATION_FEE_PERCENT (env var) — pas en DB
 
   createdAt: Date;
   updatedAt: Date;
@@ -51,10 +51,9 @@ const RestaurantSchema = new Schema<IRestaurant>(
     adminEmail: { type: String, required: true },
     adminPasswordHash: { type: String, required: true, select: false },
 
-    // Stripe — SECURITE : select: false → jamais retourné par défaut
-    stripePublishableKey: { type: String },
-    stripeSecretKey: { type: String, select: false },
-    stripeWebhookSecret: { type: String, select: false },
+    // Stripe Connect — account_id uniquement, pas de clés secrètes en DB
+    stripeAccountId: { type: String, index: true, sparse: true },
+    stripeOnboardingComplete: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

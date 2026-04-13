@@ -1,12 +1,13 @@
-// TICK-134 — Webhook Stripe tenant-aware :
-//   le restaurantId est résolu depuis PendingOrder (stocké au checkout).
-//   getStripeClient(restaurantId) charge la clé Stripe + webhookSecret du restaurant.
+// TICK-160 — Webhook Stripe Connect global (remplace TICK-134 multi-tenant par clé)
+// Un seul STRIPE_CONNECT_WEBHOOK_SECRET pour tous les comptes connectés.
+// Le tenant est résolu via event.account (acct_xxx) → Restaurant.stripeAccountId.
 import { NextRequest, NextResponse } from 'next/server';
 import type Stripe from 'stripe';
-import { getStripeClient, getStripeWebhookSecret } from '@/lib/stripe';
+import { stripe, constructConnectEvent } from '@/lib/stripe';
 import { connectDB } from '@/lib/mongodb';
 import Commande from '@/models/Commande';
 import PendingOrder from '@/models/PendingOrder';
+import Restaurant from '@/models/Restaurant';
 import WebhookFailedEvent from '@/models/WebhookFailedEvent';
 import { sendConfirmationEmail, sendDisputeAlert, sendChargeFailedAlert } from '@/lib/email';
 import { logger } from '@/lib/logger';
@@ -20,62 +21,50 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Signature manquante' }, { status: 400 });
   }
 
-  // Lire le corps brut AVANT toute autre opération (requis par Stripe)
   const body = await request.text();
-
-  // ── Résolution du tenant depuis le pending_order_id dans le payload ────────
-  // On parse le payload JSON manuellement pour extraire pending_order_id AVANT
-  // la vérification de signature (on ne fait pas confiance au payload non vérifié,
-  // mais on a besoin du restaurantId pour charger le bon webhookSecret).
-  // Mitigation : si pending_order_id est forgé, l'étape de vérification signature
-  // suivante échouera de toutes façons (wrong secret → 400).
-  let restaurantId: string | null = null;
-  let webhookSecret: string | null = null;
-
-  try {
-    const rawPayload = JSON.parse(body);
-    const pendingOrderId = rawPayload?.data?.object?.metadata?.pending_order_id;
-
-    if (pendingOrderId) {
-      await connectDB();
-      const pendingOrder = await PendingOrder.findById(pendingOrderId).select('restaurantId').lean();
-      if (pendingOrder?.restaurantId) {
-        restaurantId = pendingOrder.restaurantId;
-        webhookSecret = await getStripeWebhookSecret(restaurantId);
-      }
-    }
-  } catch {
-    // Non-bloquant — fallback sur la clé globale si disponible
-  }
-
-  // Fallback sur la variable d'env globale (compatibilité / dev)
-  if (!webhookSecret) {
-    webhookSecret = process.env.STRIPE_WEBHOOK_SECRET ?? null;
-  }
-
-  if (!webhookSecret) {
-    logger.error('webhook_config_missing', { route: '/api/webhooks/stripe' });
-    return NextResponse.json({ error: 'Configuration serveur incomplète' }, { status: 500 });
-  }
-
-  // Charger le client Stripe correspondant au restaurant (ou global)
-  const stripe = restaurantId
-    ? await getStripeClient(restaurantId)
-    : await getStripeClient(null);
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
+    event = constructConnectEvent(body, sig);
   } catch (err) {
     logger.error('webhook_invalid_signature', { route: '/api/webhooks/stripe' }, err);
     return NextResponse.json({ error: 'Signature invalide' }, { status: 400 });
+  }
+
+  // Résolution du tenant via event.account (acct_xxx → Restaurant)
+  // Les events Connect ont toujours event.account ; les events platform n'en ont pas.
+  let restaurantId: string | null = null;
+  if (event.account) {
+    try {
+      await connectDB();
+      const restaurant = await Restaurant.findOne({ stripeAccountId: event.account })
+        .select('_id')
+        .lean();
+      restaurantId = restaurant?._id?.toString() ?? null;
+
+      if (!restaurantId) {
+        logger.error('webhook_unknown_stripe_account', {
+          stripeAccount: event.account,
+          eventType: event.type,
+          eventId: event.id,
+        });
+        // On répond 200 pour éviter les retries Stripe sur un compte non reconnu
+        return NextResponse.json({ received: true });
+      }
+    } catch (err) {
+      logger.error('webhook_tenant_resolution_failed', { eventId: event.id }, err);
+      return NextResponse.json({ received: true });
+    }
   }
 
   try {
     switch (event.type) {
 
       case 'checkout.session.completed': {
-        await handleSessionCompleted(event.data.object as Stripe.Checkout.Session, stripe);
+        await handleSessionCompleted(
+          event.data.object as Stripe.Checkout.Session,
+          event.account ?? null
+        );
         break;
       }
 
@@ -85,22 +74,22 @@ export async function POST(request: NextRequest) {
       }
 
       case 'charge.refunded': {
-        await handleChargeRefunded(event.data.object as Stripe.Charge);
+        await handleChargeRefunded(event.data.object as Stripe.Charge, restaurantId);
         break;
       }
 
       case 'charge.failed': {
-        await handleChargeFailed(event.data.object as Stripe.Charge);
+        await handleChargeFailed(event.data.object as Stripe.Charge, restaurantId);
         break;
       }
 
       case 'charge.dispute.created': {
-        await handleDisputeCreated(event.data.object as Stripe.Dispute);
+        await handleDisputeCreated(event.data.object as Stripe.Dispute, restaurantId);
         break;
       }
 
       case 'charge.dispute.closed': {
-        await handleDisputeClosed(event.data.object as Stripe.Dispute);
+        await handleDisputeClosed(event.data.object as Stripe.Dispute, restaurantId);
         break;
       }
 
@@ -111,6 +100,18 @@ export async function POST(request: NextRequest) {
           error: pi.last_payment_error?.message ?? 'unknown',
           code: pi.last_payment_error?.code ?? 'unknown',
         });
+        break;
+      }
+
+      // TICK-178 — Accounts v2 : sync onboarding via webhook (filet si /return non atteint)
+      case 'account.updated': {
+        await handleAccountUpdated(event.data.object as Stripe.Account, restaurantId);
+        break;
+      }
+
+      // TICK-178 — Accounts v2 : le restaurant a révoqué l'accès depuis son dashboard Stripe
+      case 'account.application.deauthorized': {
+        await handleApplicationDeauthorized(restaurantId, event.account ?? null);
         break;
       }
 
@@ -144,13 +145,13 @@ export async function POST(request: NextRequest) {
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
-async function handleSessionCompleted(session: Stripe.Checkout.Session, stripe: Stripe) {
+async function handleSessionCompleted(
+  session: Stripe.Checkout.Session,
+  stripeAccount: string | null
+) {
   const metadata = session.metadata ?? {};
 
   await connectDB();
-
-  const existing = await Commande.findOne({ stripeSessionId: session.id });
-  if (existing) return;
 
   const pendingOrderId = metadata.pending_order_id;
   if (!pendingOrderId) {
@@ -175,12 +176,15 @@ async function handleSessionCompleted(session: Stripe.Checkout.Session, stripe: 
   const purgeAt = new Date();
   purgeAt.setFullYear(purgeAt.getFullYear() + 1);
 
+  // Récupère le receiptUrl via le compte Connect du restaurant (direct charge)
   let receiptUrl: string | undefined;
   try {
     if (session.payment_intent) {
+      const piOptions = stripeAccount ? { stripeAccount } : {};
       const pi = await stripe.paymentIntents.retrieve(
         session.payment_intent as string,
-        { expand: ['latest_charge'] }
+        { expand: ['latest_charge'] },
+        piOptions
       );
       receiptUrl = (pi.latest_charge as Stripe.Charge)?.receipt_url ?? undefined;
     }
@@ -188,10 +192,13 @@ async function handleSessionCompleted(session: Stripe.Checkout.Session, stripe: 
     // non-bloquant
   }
 
-  const commande = await Commande.create({
+  // TICK-172 — Insertion atomique via upsert + $setOnInsert (idempotence sous requêtes concurrentes)
+  // L'index unique sur stripeSessionId est le dernier filet de sécurité côté DB.
+  // result === null → insertion réussie ; result !== null → commande déjà existante (doublon webhook)
+  const commandeData = {
     stripeSessionId: session.id,
     ...(session.payment_intent ? { stripePaymentIntentId: session.payment_intent as string } : {}),
-    statut: 'payee',
+    statut: 'payee' as const,
     client,
     retrait,
     produits,
@@ -200,8 +207,24 @@ async function handleSessionCompleted(session: Stripe.Checkout.Session, stripe: 
     purgeAt,
     ...(clientId ? { clientId } : {}),
     ...(receiptUrl ? { receiptUrl } : {}),
-    restaurantId, // TICK-134
-  });
+    restaurantId,
+  };
+
+  const existingDoc = await Commande.findOneAndUpdate(
+    { stripeSessionId: session.id },
+    { $setOnInsert: commandeData },
+    { upsert: true, new: false }
+  );
+
+  if (existingDoc !== null) {
+    // Doublon webhook — commande déjà créée lors d'un précédent appel
+    logger.info('webhook_session_completed_idempotent', { stripeSessionId: session.id });
+    return;
+  }
+
+  // Insertion réussie — récupère le document créé pour l'email
+  const commande = await Commande.findOne({ stripeSessionId: session.id });
+  if (!commande) return; // ne devrait pas arriver
 
   await PendingOrder.findByIdAndDelete(pendingOrderId);
 
@@ -227,7 +250,7 @@ async function handleSessionExpired(session: Stripe.Checkout.Session) {
   });
 }
 
-async function handleChargeRefunded(charge: Stripe.Charge) {
+async function handleChargeRefunded(charge: Stripe.Charge, restaurantId: string | null) {
   const paymentIntentId = charge.payment_intent as string | null;
   if (!paymentIntentId) {
     logger.error('webhook_refund_no_payment_intent', { chargeId: charge.id });
@@ -236,7 +259,9 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
 
   await connectDB();
 
-  const commande = await Commande.findOne({ stripePaymentIntentId: paymentIntentId });
+  const filter: Record<string, unknown> = { stripePaymentIntentId: paymentIntentId };
+  if (restaurantId) filter.restaurantId = restaurantId;
+  const commande = await Commande.findOne(filter);
   if (!commande) {
     logger.error('webhook_refund_commande_not_found', { paymentIntentId, chargeId: charge.id });
     return;
@@ -272,7 +297,7 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
   });
 }
 
-async function handleChargeFailed(charge: Stripe.Charge) {
+async function handleChargeFailed(charge: Stripe.Charge, restaurantId: string | null) {
   const paymentIntentId = charge.payment_intent as string | null;
   if (!paymentIntentId) {
     logger.error('webhook_charge_failed_no_payment_intent', { chargeId: charge.id });
@@ -281,7 +306,9 @@ async function handleChargeFailed(charge: Stripe.Charge) {
 
   await connectDB();
 
-  const commande = await Commande.findOne({ stripePaymentIntentId: paymentIntentId });
+  const filter: Record<string, unknown> = { stripePaymentIntentId: paymentIntentId };
+  if (restaurantId) filter.restaurantId = restaurantId;
+  const commande = await Commande.findOne(filter);
   if (!commande) {
     logger.info('charge_failed_no_commande', {
       paymentIntentId,
@@ -319,7 +346,7 @@ async function handleChargeFailed(charge: Stripe.Charge) {
   }
 }
 
-async function handleDisputeCreated(dispute: Stripe.Dispute) {
+async function handleDisputeCreated(dispute: Stripe.Dispute, restaurantId: string | null) {
   const paymentIntentId = dispute.payment_intent as string | null;
   if (!paymentIntentId) {
     logger.error('webhook_dispute_no_payment_intent', { disputeId: dispute.id });
@@ -328,7 +355,9 @@ async function handleDisputeCreated(dispute: Stripe.Dispute) {
 
   await connectDB();
 
-  const commande = await Commande.findOne({ stripePaymentIntentId: paymentIntentId });
+  const filter: Record<string, unknown> = { stripePaymentIntentId: paymentIntentId };
+  if (restaurantId) filter.restaurantId = restaurantId;
+  const commande = await Commande.findOne(filter);
   if (!commande) {
     logger.error('webhook_dispute_commande_not_found', { paymentIntentId, disputeId: dispute.id });
     return;
@@ -362,13 +391,50 @@ async function handleDisputeCreated(dispute: Stripe.Dispute) {
   }
 }
 
-async function handleDisputeClosed(dispute: Stripe.Dispute) {
+// TICK-178 — Accounts v2 : sync onboarding si le restaurant ferme la fenêtre avant /return
+// TICK-180 — Vérifie charges_enabled en plus de details_submitted (KYC peut être en cours)
+async function handleAccountUpdated(account: Stripe.Account, restaurantId: string | null) {
+  if (!restaurantId) return;
+  // details_submitted = infos soumises, charges_enabled = KYC validé par Stripe
+  // Un second account.updated arrivera quand charges_enabled passera à true
+  if (!account.details_submitted || !account.charges_enabled) return;
+
+  await connectDB();
+  await Restaurant.findByIdAndUpdate(restaurantId, { stripeOnboardingComplete: true });
+
+  logger.info('stripe_account_onboarding_complete_via_webhook', {
+    restaurantId,
+    stripeAccountId: account.id,
+  });
+}
+
+// TICK-178 — Accounts v2 : le restaurant a révoqué l'accès depuis son dashboard Stripe
+// Nettoyage DB pour éviter des paiements qui échoueraient silencieusement
+async function handleApplicationDeauthorized(
+  restaurantId: string | null,
+  stripeAccountId: string | null
+) {
+  if (!restaurantId || !stripeAccountId) return;
+
+  await connectDB();
+  await Restaurant.findByIdAndUpdate(restaurantId, {
+    $unset: { stripeAccountId: 1 },
+    stripeOnboardingComplete: false,
+  });
+
+  logger.error('stripe_application_deauthorized', { restaurantId, stripeAccountId });
+  // TODO Sprint 23 : notifier l'admin par email que sa connexion Stripe a été révoquée
+}
+
+async function handleDisputeClosed(dispute: Stripe.Dispute, restaurantId: string | null) {
   const paymentIntentId = dispute.payment_intent as string | null;
   if (!paymentIntentId) return;
 
   await connectDB();
 
-  const commande = await Commande.findOne({ stripePaymentIntentId: paymentIntentId });
+  const filter: Record<string, unknown> = { stripePaymentIntentId: paymentIntentId };
+  if (restaurantId) filter.restaurantId = restaurantId;
+  const commande = await Commande.findOne(filter);
   if (!commande) {
     logger.error('webhook_dispute_closed_commande_not_found', { paymentIntentId, disputeId: dispute.id });
     return;
