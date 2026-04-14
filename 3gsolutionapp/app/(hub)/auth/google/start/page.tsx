@@ -16,8 +16,8 @@ export default function GoogleStartPage() {
   }, []);
 
   return (
-    <div className="py-10 text-center text-sm text-gray-600">
-      Redirection vers Google...
+    <div className="text-center text-sm text-gray-500">
+      Redirection vers Google&hellip;
     </div>
   );
 }

@@ -72,10 +72,32 @@ function extractHost(request: NextRequest): string {
   return host;
 }
 
+// Chemins accessibles sur le hub (tout le reste → 404)
+const HUB_ALLOWED_PREFIXES = [
+  '/api/auth/',        // NextAuth + routes auth custom (google-relay, cross-domain-hub, token…)
+  '/api/superadmin/',
+  '/superadmin/',
+  '/auth/google/start',
+];
+
 export default withAuth(
   async function middleware(request: NextRequest & { nextauth?: { token?: { role?: string; restaurantDomain?: string } } }) {
     const { pathname } = request.nextUrl;
     const ip = extractIp(request);
+
+    // ── Hub domain protection ──────────────────────────────────────────────
+    // Sur hub.nhesitepas.fr, seules les routes nécessaires au flow OAuth et
+    // au superadmin sont accessibles. Tout le reste retourne 404.
+    const hubHost = process.env.AUTH_HUB_HOST;
+    if (hubHost) {
+      const currentHost = extractHost(request);
+      if (currentHost === hubHost) {
+        const isHubAllowed = HUB_ALLOWED_PREFIXES.some(p => pathname.startsWith(p));
+        if (!isHubAllowed) {
+          return new NextResponse(null, { status: 404 });
+        }
+      }
+    }
 
     // ── Rate limiting login admin ──────────────────────────────────────────
     if (pathname === '/api/auth/callback/credentials') {
