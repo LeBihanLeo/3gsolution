@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
   // Utilise Host header plutôt que request.url : sur Vercel/proxy request.url peut retourner
   // l'URL interne (localhost:3000) au lieu de l'URL publique (même pattern que TICK-142).
   const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? 'localhost:3000';
-  const proto = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+  const proto = request.headers.get('x-forwarded-proto') ?? (process.env.NODE_ENV === 'production' ? 'https' : 'http');
   const hubBase = `${proto}://${host}`;
   const signinUrl = new URL('/auth/google/start', hubBase);
 

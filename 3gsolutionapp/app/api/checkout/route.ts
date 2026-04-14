@@ -90,8 +90,8 @@ export async function POST(request: NextRequest) {
     const { client, retrait, commentaire, produits: produitsClient } = parsed.data;
 
     // TICK-142 — baseUrl dynamique depuis Host header (fix Stripe multi-tenant)
-    const host = request.headers.get('host') ?? 'localhost:3000';
-    const proto = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+    const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? 'localhost:3000';
+    const proto = request.headers.get('x-forwarded-proto') ?? (process.env.NODE_ENV === 'production' ? 'https' : 'http');
     const baseUrl = `${proto}://${host}`;
 
     // TICK-075 — Récupération clientId si client connecté
