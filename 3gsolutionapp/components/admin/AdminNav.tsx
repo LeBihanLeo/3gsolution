@@ -35,7 +35,7 @@ export default function AdminNav() {
           {navLink('/admin/stripe', 'Paiements')}
         </div>
         <button
-          onClick={() => signOut({ callbackUrl: '/admin/login' })}
+          onClick={async () => { await signOut({ redirect: false }); window.location.href = '/admin/login'; }}
           className="text-sm text-gray-800 hover:text-red-600 hover:underline transition-colors min-h-[44px] font-medium"
         >
           Se déconnecter

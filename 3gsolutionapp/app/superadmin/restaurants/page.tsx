@@ -50,7 +50,7 @@ export default function SuperAdminRestaurantsPage() {
               + Nouveau restaurant
             </button>
             <button
-              onClick={() => signOut({ callbackUrl: '/superadmin/login' })}
+              onClick={async () => { await signOut({ redirect: false }); window.location.href = '/superadmin/login'; }}
               className="text-gray-400 hover:text-white text-sm px-3 py-2"
             >
               Déconnexion
