@@ -10,7 +10,7 @@ import { logger } from '@/lib/logger';
 import { verifyTurnstile } from '@/lib/turnstile';
 
 const RegisterSchema = z.object({
-  turnstileToken: z.string().optional(),
+  turnstileToken: z.string().nullable().optional(),
   email: z.string().email('Email invalide'),
   // TICK-087 — nom obligatoire
   nom: z.string().min(1, 'Le nom est requis').max(50),
