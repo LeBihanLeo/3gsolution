@@ -15,11 +15,17 @@ import RelayToken from '@/models/RelayToken';
 import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
+  // Utilise Host header pour construire les URLs de redirection — request.url peut retourner
+  // localhost:3000 sur Vercel/proxy (même pattern que TICK-142).
+  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? 'localhost:3000';
+  const proto = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+  const base = `${proto}://${host}`;
+
   const { searchParams } = request.nextUrl;
   const code = searchParams.get('code');
 
   if (!code) {
-    return NextResponse.redirect(new URL('/auth/login?error=invalid', request.url));
+    return NextResponse.redirect(new URL('/auth/login?error=invalid', base));
   }
 
   const authHubUrl = process.env.AUTH_HUB_URL;
@@ -27,7 +33,7 @@ export async function GET(request: NextRequest) {
 
   if (!authHubUrl || !interServiceSecret) {
     logger.error('cross_domain_exchange_failed', { error: 'AUTH_HUB_URL ou INTER_SERVICE_SECRET manquants' });
-    return NextResponse.redirect(new URL('/auth/login?error=server_error', request.url));
+    return NextResponse.redirect(new URL('/auth/login?error=server_error', base));
   }
 
   // ── Échange server-to-server avec timeout 5s ──────────────────────────
@@ -50,13 +56,13 @@ export async function GET(request: NextRequest) {
 
     if (!response.ok) {
       logger.warn('cross_domain_exchange_failed', { status: response.status });
-      return NextResponse.redirect(new URL('/auth/login?error=expired', request.url));
+      return NextResponse.redirect(new URL('/auth/login?error=expired', base));
     }
 
     userData = await response.json();
   } catch (err) {
     logger.error('cross_domain_exchange_failed', { error: 'fetch error' }, err);
-    return NextResponse.redirect(new URL('/auth/login?error=expired', request.url));
+    return NextResponse.redirect(new URL('/auth/login?error=expired', base));
   }
 
   // ── Création du RelayToken (TTL 10s) ──────────────────────────────────
@@ -74,10 +80,10 @@ export async function GET(request: NextRequest) {
     logger.info('cross_domain_exchange_success', { email: userData.email });
 
     return NextResponse.redirect(
-      new URL(`/auth/completing?t=${token}`, request.url)
+      new URL(`/auth/completing?t=${token}`, base)
     );
   } catch (err) {
     logger.error('cross_domain_relay_token_failed', {}, err);
-    return NextResponse.redirect(new URL('/auth/login?error=server_error', request.url));
+    return NextResponse.redirect(new URL('/auth/login?error=server_error', base));
   }
 }
