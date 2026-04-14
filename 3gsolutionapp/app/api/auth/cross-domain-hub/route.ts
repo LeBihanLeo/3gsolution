@@ -20,11 +20,17 @@ import { assertKnownDomain } from '@/lib/auth/assert-known-domain';
 import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
+  // Utilise Host header pour construire les URLs de redirection — request.url peut retourner
+  // localhost:3000 sur Vercel/proxy (même pattern que TICK-142).
+  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? 'localhost:3000';
+  const proto = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+  const hubBase = `${proto}://${host}`;
+
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.email) {
     // Pas de session — l'utilisateur n'a pas complété le flow Google
-    return NextResponse.redirect(new URL('/auth/login?error=google_failed', request.url));
+    return NextResponse.redirect(new URL('/auth/login?error=google_failed', hubBase));
   }
 
   const cookieStore = await cookies();
@@ -32,7 +38,7 @@ export async function GET(request: NextRequest) {
 
   if (!returnTo) {
     // Pas de returnTo : flow Google direct sans cross-domain — redirige vers la page d'accueil du hub
-    return NextResponse.redirect(new URL('/', request.url));
+    return NextResponse.redirect(new URL('/', hubBase));
   }
 
   try {
@@ -40,7 +46,7 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     logger.warn('cross_domain_hub_domain_rejected', { returnTo: returnTo.slice(0, 100) });
     cookieStore.delete('auth_return_to');
-    return NextResponse.redirect(new URL('/auth/login?error=invalid_domain', request.url));
+    return NextResponse.redirect(new URL('/auth/login?error=invalid_domain', hubBase));
   }
 
   try {
@@ -64,6 +70,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(redirectUrl.toString());
   } catch (err) {
     logger.error('cross_domain_hub_failed', {}, err);
-    return NextResponse.redirect(new URL('/auth/login?error=server_error', request.url));
+    return NextResponse.redirect(new URL('/auth/login?error=server_error', hubBase));
   }
 }

@@ -35,13 +35,18 @@ export async function GET(request: NextRequest) {
   // Cookie httpOnly stockant le domaine de retour — lu par /api/auth/cross-domain-hub après Google auth
   // La page /auth/google/start lance signIn('google') côté client (flow NextAuth standard)
   // pour garantir la bonne création des cookies state/pkce avant le callback.
-  const signinUrl = new URL('/auth/google/start', request.url);
+  // Utilise Host header plutôt que request.url : sur Vercel/proxy request.url peut retourner
+  // l'URL interne (localhost:3000) au lieu de l'URL publique (même pattern que TICK-142).
+  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? 'localhost:3000';
+  const proto = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+  const hubBase = `${proto}://${host}`;
+  const signinUrl = new URL('/auth/google/start', hubBase);
 
   const response = NextResponse.redirect(signinUrl);
 
   response.cookies.set('auth_return_to', returnTo, {
     httpOnly: true,
-    secure: request.url.startsWith('https://'),
+    secure: proto === 'https',
     sameSite: 'lax',
     maxAge: 300, // 5 minutes
     path: '/',
