@@ -76,6 +76,7 @@ function extractHost(request: NextRequest): string {
 const HUB_ALLOWED_PREFIXES = [
   '/api/auth/',        // NextAuth + routes auth custom (google-relay, cross-domain-hub, token…)
   '/api/superadmin/',
+  '/api/webhooks/',    // Webhooks Stripe Connect global
   '/superadmin/',
   '/auth/google/start',
 ];
