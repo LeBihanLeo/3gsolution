@@ -7,8 +7,9 @@ import { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
 import bcrypt from 'bcryptjs';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import { cookies } from 'next/headers';
+import { authenticator } from 'otplib';
 import { connectDB } from '@/lib/mongodb';
 import Client from '@/models/Client';
 import Restaurant from '@/models/Restaurant';
@@ -18,6 +19,31 @@ import { verifyTurnstile } from '@/lib/turnstile';
 import { resolveTenantId } from '@/lib/tenant';
 import { assertKnownDomain } from '@/lib/auth/assert-known-domain';
 import { logger } from '@/lib/logger';
+
+// TICK-186 — Vérifie le cookie device_trust_admin (pur crypto, sans DB)
+// Format : restaurantId.issuedAt.HMAC-SHA256(restaurantId:issuedAt, NEXTAUTH_SECRET)
+function isDeviceTokenValid(token: string, restaurantId: string): boolean {
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  const [rid, issuedAtStr, hmac] = parts;
+  if (rid !== restaurantId) return false;
+
+  const issuedAt = Number(issuedAtStr);
+  if (isNaN(issuedAt)) return false;
+
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+  if (Date.now() - issuedAt > THIRTY_DAYS_MS) return false;
+
+  const expected = createHmac('sha256', process.env.NEXTAUTH_SECRET ?? '')
+    .update(`${rid}:${issuedAt}`)
+    .digest('hex');
+
+  try {
+    return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(hmac, 'hex'));
+  } catch {
+    return false;
+  }
+}
 
 if (!process.env.NEXTAUTH_SECRET) {
   throw new Error(
@@ -39,6 +65,9 @@ export const authOptions: NextAuthOptions = {
         turnstileToken: { label: 'Turnstile', type: 'text' },
         // Le host est transmis par le formulaire login pour identifier le tenant
         tenantHost: { label: 'Tenant Host', type: 'text' },
+        // TICK-186 — Champs 2FA optionnels
+        totpCode: { label: 'Code TOTP', type: 'text' },
+        deviceToken: { label: 'Device Trust Token', type: 'text' },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
@@ -57,9 +86,9 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
-        // Charger le restaurant avec adminPasswordHash (select: false par défaut)
+        // TICK-186 — Charger adminPasswordHash ET adminTotpSecret
         const restaurant = await Restaurant.findById(restaurantId)
-          .select('+adminPasswordHash')
+          .select('+adminPasswordHash +adminTotpSecret')
           .lean();
 
         if (!restaurant) {
@@ -71,6 +100,29 @@ export const authOptions: NextAuthOptions = {
 
         const isValid = await bcrypt.compare(credentials.password, restaurant.adminPasswordHash);
         if (!isValid) return null;
+
+        // TICK-186 — Vérification 2FA si activé
+        if (restaurant.adminTotpSecret) {
+          const deviceToken = credentials.deviceToken ?? '';
+          const totpCode = credentials.totpCode ?? '';
+
+          const deviceTrusted = deviceToken
+            ? isDeviceTokenValid(deviceToken, restaurantId)
+            : false;
+
+          if (!deviceTrusted) {
+            if (!totpCode) {
+              throw new Error('TOTP_REQUIRED');
+            }
+            const totpValid = authenticator.verify({
+              token: totpCode,
+              secret: restaurant.adminTotpSecret,
+            });
+            if (!totpValid) {
+              throw new Error('TOTP_INVALID');
+            }
+          }
+        }
 
         return {
           id: restaurantId,

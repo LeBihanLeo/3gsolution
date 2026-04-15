@@ -6,6 +6,7 @@
 > Mis à jour le 2026-04-11 · Sprint 21 ajouté (Stripe Connect — correctifs sécurité post-audit)
 > Mis à jour le 2026-04-12 · Sprint 22 ajouté (Stripe Connect — Accounts v2 & robustesse)
 > Mis à jour le 2026-04-12 · Sprint 23 ajouté (Stripe Connect — Correctifs cross-domain & robustesse)
+> Mis à jour le 2026-04-15 · Sprint 24 ajouté (Sécurité admin — renommage /espace-restaurateur + TOTP 2FA + device trust)
 
 ---
 
@@ -38,7 +39,8 @@
 | 21 | Stripe Connect — correctifs sécurité post-audit | TICK-168 → 174 | 2,75 j | ⚠️ Planifié |
 | 22 | Stripe Connect — Accounts v2 & robustesse | TICK-175 → 178 | 4,25 j | ⚠️ Planifié |
 | 23 | Stripe Connect — Correctifs cross-domain & robustesse | TICK-179 → 182 | 2,0 j | ⚠️ Planifié |
-| **Total** | | **182 tickets** | **~108,0 j** |
+| 24 | Sécurité admin — renommage, TOTP 2FA, device trust | TICK-183 → 189 | 3,5 j | 🔄 En cours |
+| **Total** | | **189 tickets** | **~111,5 j** |
 
 > **Convention sizing :** 1 jour = 1 développeur full-stack junior/intermédiaire.
 > Réduire de ~30 % pour un dev senior ayant déjà travaillé sur Next.js + Stripe.
@@ -6112,6 +6114,239 @@ Semaine 7 — Corrections post-audit (Jours 32-34)
 ```
 
 ---
+
+---
+
+## Sprint 24 — Sécurité admin : renommage /espace-restaurateur, TOTP 2FA & device trust (3,5 j)
+
+> **Contexte :** Le formulaire de connexion admin était accessible à l'URL `/admin/login`, la route
+> la plus scannée par les bots de credential stuffing. Ce sprint renomme toutes les routes admin
+> en `/espace-restaurateur/`, ajoute un lien d'accès discret dans le footer, et implémente un
+> second facteur TOTP avec mécanisme "appareil de confiance" optimisé pour un usage tablette
+> quotidien (le code TOTP n'est demandé qu'une seule fois par appareil tous les 30 jours).
+
+---
+
+### TICK-183 — Renommage `/admin` → `/espace-restaurateur`
+**Épic :** Sécurité admin
+**Priorité :** 🟠 Haute
+**Sizing :** 0,5 j
+**Dépendances :** —
+**Statut :** ✅ Implémenté
+
+**Contexte :**
+`/admin/login` est l'URL testée en premier par tous les scanners automatisés (Shodan, Nuclei,
+bots de credential stuffing). Renommer les routes de pages (pas les API) en `/espace-restaurateur/`
+réduit le bruit sans modifier la sécurité réelle (qui repose sur password + Turnstile + rate limiting).
+
+**Fichiers modifiés :**
+- `app/admin/` → `app/espace-restaurateur/` (dossier déplacé)
+- `middleware.ts` — 3 occurrences `/admin/login` et `/admin/`
+- `components/admin/AdminNav.tsx` — 5 liens nav + logout
+- `app/(client)/auth/login/page.tsx` — redirect admin post-login
+- `app/api/stripe/connect/return/route.ts` + `refresh/route.ts` — URLs de redirect Stripe
+- `__tests__/api/stripe-connect.test.ts` — assertion URL mise à jour
+- `scripts/migrate-stripe-connect.ts` + `app/api/superadmin/restaurants/[id]/route.ts` — commentaires
+
+**Note :** Les routes API `/api/admin/` restent inchangées (routes internes protégées, renommage sans bénéfice sécurité).
+
+**Critères d'acceptance :**
+- [x] `app/espace-restaurateur/login` répond correctement
+- [x] `app/espace-restaurateur/(protected)/*` protégé par le middleware (role admin)
+- [x] Aucune occurrence `/admin/` dans les routes de pages (grep clean)
+- [x] Redirect Stripe Connect pointe vers `/espace-restaurateur/stripe`
+- [x] 334/338 tests passent (baseline inchangée)
+
+---
+
+### TICK-184 — Lien "Espace restaurateur" dans le footer
+**Épic :** UX admin
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,25 j
+**Dépendances :** TICK-183
+**Statut :** ✅ Implémenté
+
+**Contexte :**
+Le restaurateur devait taper l'URL à la main. Un lien discret dans le footer (même style que
+"Mentions légales") donne un accès simple sans exposer l'URL dans le menu principal.
+
+**Fichier modifié :** `app/(client)/layout.tsx`
+
+**Critères d'acceptance :**
+- [x] Lien "Espace restaurateur" visible dans le footer du site public
+- [x] Pointe vers `/espace-restaurateur/login`
+- [x] Style cohérent avec "Mentions légales" (texte gris discret)
+- [x] Aucune régression layout
+
+---
+
+### TICK-185 — TOTP 2FA admin : modèle + routes API
+**Épic :** Sécurité admin
+**Priorité :** 🟠 Haute
+**Sizing :** 1,0 j
+**Dépendances :** TICK-183
+**Librairies :** `otplib`, `qrcode`, `@types/qrcode`
+
+**Contexte :**
+Ajout du second facteur TOTP (RFC 6238 — compatible Google Authenticator, Authy, etc.)
+pour le compte admin. Le secret TOTP est stocké chiffré dans le modèle `Restaurant` avec
+`select: false` (jamais retourné par défaut).
+
+**Modèle — `models/Restaurant.ts` :**
+```typescript
+adminTotpSecret?: string;  // select: false — secret TOTP base32, null si 2FA désactivé
+```
+
+**Routes API créées :**
+
+`POST /api/admin/2fa/setup` (session admin requise)
+- Génère un secret TOTP aléatoire (base32, 20 bytes)
+- Retourne `{ secret, qrCodeDataUrl }` (QR code en data URL PNG)
+- Ne sauvegarde PAS encore le secret en DB (en attente de confirmation)
+
+`POST /api/admin/2fa/confirm` (session admin requise)
+- Body : `{ secret, code }` — code TOTP saisi par l'admin pour valider l'enrôlement
+- Valide le code TOTP contre le secret
+- Si valide : sauvegarde `adminTotpSecret` en DB → 2FA activé
+
+`POST /api/admin/2fa/disable` (session admin requise)
+- Body : `{ code }` — code TOTP requis pour désactiver (pas de désactivation sans preuve possession)
+- Si valide : `$unset adminTotpSecret`
+
+`POST /api/admin/2fa/trust-device` (session admin requise)
+- Pose le cookie `device_trust_admin` (30 jours, SameSite=Strict, Secure, Path=/espace-restaurateur)
+- Valeur : `restaurantId.issuedAt.HMAC-SHA256(restaurantId:issuedAt, NEXTAUTH_SECRET)`
+- Pas de DB : le HMAC permet la vérification pure crypto
+
+**Critères d'acceptance :**
+- [ ] `adminTotpSecret` absent du select par défaut sur `Restaurant`
+- [ ] `POST /api/admin/2fa/setup` retourne QR code data URL valide
+- [ ] `POST /api/admin/2fa/confirm` : code invalide → 400, code valide → secret sauvegardé
+- [ ] `POST /api/admin/2fa/disable` : code invalide → 400, code valide → secret supprimé
+- [ ] `POST /api/admin/2fa/trust-device` : pose cookie httpOnly SameSite=Strict 30j
+- [ ] Toutes les routes : 401 si pas de session admin
+- [ ] Tests unitaires couvrant les 4 routes (cas nominal + cas erreur)
+
+---
+
+### TICK-186 — TOTP 2FA admin : modification flow `lib/auth.ts`
+**Épic :** Sécurité admin
+**Priorité :** 🔴 Bloquant (dépend de TICK-185)
+**Sizing :** 0,75 j
+**Dépendances :** TICK-185
+
+**Contexte :**
+Modification du provider `credentials` dans NextAuth pour intercepter la connexion admin
+quand le 2FA est activé. Le `authorize()` reçoit deux champs optionnels supplémentaires :
+`totpCode` (code saisi) et `deviceToken` (valeur du cookie device trust lue par JS côté client).
+
+**Logique dans `authorize()` :**
+```
+1. Validation Turnstile
+2. Résolution tenant + chargement restaurant (+adminPasswordHash +adminTotpSecret)
+3. Vérification email + password (bcrypt)
+4. Si adminTotpSecret absent → JWT émis (2FA non activé, flow normal)
+5. Si adminTotpSecret présent :
+   a. deviceToken fourni ET HMAC valide ET non expiré (30j) → JWT émis
+   b. totpCode fourni ET code TOTP valide (fenêtre ±1 step) → JWT émis
+   c. Sinon → throw new Error('TOTP_REQUIRED')
+```
+
+**Validation du deviceToken (pur crypto, sans DB) :**
+```typescript
+// Format cookie : restaurantId.issuedAt.hmac
+const [rid, issuedAt, hmac] = deviceToken.split('.');
+const expected = createHmac('sha256', NEXTAUTH_SECRET)
+  .update(`${rid}:${issuedAt}`).digest('hex');
+const valid = timingSafeEqual(Buffer.from(expected), Buffer.from(hmac))
+           && rid === restaurantId
+           && Date.now() - Number(issuedAt) < 30 * 24 * 3600 * 1000;
+```
+
+**Critères d'acceptance :**
+- [ ] `authorize()` sélecte `+adminTotpSecret` en plus de `+adminPasswordHash`
+- [ ] Sans 2FA activé : comportement identique à avant
+- [ ] Avec 2FA activé, deviceToken valide : JWT émis sans demander le code
+- [ ] Avec 2FA activé, totpCode valide : JWT émis
+- [ ] Avec 2FA activé, ni deviceToken ni totpCode : erreur `TOTP_REQUIRED`
+- [ ] deviceToken expiré (> 30j) → rejet, code TOTP demandé
+- [ ] deviceToken d'un autre restaurant → rejet
+- [ ] Tests auth mis à jour
+
+---
+
+### TICK-187 — TOTP 2FA admin : login page deux étapes
+**Épic :** UX admin
+**Priorité :** 🟠 Haute
+**Sizing :** 0,75 j
+**Dépendances :** TICK-185, TICK-186
+
+**Contexte :**
+La page `/espace-restaurateur/login` devient une interface à deux étapes conditionnelles :
+étape 1 (toujours visible) email + password, étape 2 (uniquement si TOTP activé et appareil
+non reconnu) saisie du code à 6 chiffres + option "Se souvenir de cet appareil".
+
+**Flow UI :**
+```
+Mount : lire cookie device_trust_admin → extraire deviceToken → passer en credential
+
+Étape 1 : email + password + deviceToken → signIn('credentials')
+  → ok             → redirection /espace-restaurateur/commandes
+  → TOTP_REQUIRED  → afficher étape 2 (garder email/password en state)
+  → autre erreur   → message "Email ou mot de passe incorrect"
+
+Étape 2 : input 6 chiffres (autoFocus, inputMode=numeric, maxLength=6)
+           checkbox "Se souvenir de cet appareil pendant 30 jours"
+  → signIn('credentials', { email, password, totpCode, turnstileToken: nouveau })
+  → ok + rememberDevice → POST /api/admin/2fa/trust-device → cookie posé
+  → ok               → redirection /espace-restaurateur/commandes
+  → erreur           → "Code incorrect ou expiré"
+```
+
+**Détails UX tablette :**
+- Input TOTP : `inputMode="numeric"`, `pattern="[0-9]*"` → clavier numérique natif sur tablette
+- `autoFocus` sur l'input TOTP à l'apparition de l'étape 2
+- Bouton retour vers étape 1 (si l'utilisateur veut changer email/password)
+- Nouveau Turnstile challenge pour l'étape 2
+
+**Critères d'acceptance :**
+- [ ] Étape 1 : fonctionnement identique à avant si 2FA non activé
+- [ ] Étape 2 apparaît uniquement sur erreur `TOTP_REQUIRED`
+- [ ] Input TOTP : `inputMode="numeric"` déclenche clavier chiffres sur tablette iOS/Android
+- [ ] Checkbox "Se souvenir 30 jours" : si cochée → cookie posé après succès TOTP
+- [ ] Cookie lu depuis `document.cookie` au mount et passé comme `deviceToken`
+- [ ] Sur appareil de confiance : pas d'étape 2 (transparent)
+- [ ] Nouveau Turnstile widget visible à l'étape 2
+
+---
+
+### TICK-188 — TOTP 2FA admin : page Sécurité + lien AdminNav
+**Épic :** UX admin
+**Priorité :** 🟡 Moyenne
+**Sizing :** 0,25 j
+**Dépendances :** TICK-185, TICK-186, TICK-187
+
+**Page `/espace-restaurateur/(protected)/securite` :**
+
+Si 2FA désactivé :
+- Bouton "Activer l'authentification à deux facteurs"
+- Au clic : appel `POST /api/admin/2fa/setup` → affiche QR code + champ code
+- Validation du premier code → `POST /api/admin/2fa/confirm` → 2FA actif
+
+Si 2FA activé :
+- Badge "2FA activé ✓"
+- Bouton "Désactiver" → champ code → `POST /api/admin/2fa/disable`
+
+**`components/admin/AdminNav.tsx` :**
+- Ajout lien "Sécurité" → `/espace-restaurateur/securite`
+
+**Critères d'acceptance :**
+- [ ] Page accessible uniquement avec session `role: admin`
+- [ ] QR code scannable par Google Authenticator / Authy
+- [ ] Activation impossible sans valider un premier code correct
+- [ ] Désactivation impossible sans code TOTP valide
+- [ ] Lien "Sécurité" présent dans `AdminNav`
+- [ ] États 2FA activé/désactivé correctement affichés
 
 ---
 

@@ -21,6 +21,7 @@ export interface IRestaurant extends Document {
   // Auth admin (remplace ADMIN_EMAIL / ADMIN_PASSWORD_HASH env vars)
   adminEmail: string;
   adminPasswordHash: string;   // select: false — jamais exposé par défaut
+  adminTotpSecret?: string;    // select: false — secret TOTP base32, absent si 2FA désactivé
 
   // Stripe Connect — account_id OAuth (acct_xxx), jamais de clé secrète stockée
   stripeAccountId?: string;              // acct_xxx — pas secret, mais limité via select
@@ -50,6 +51,7 @@ const RestaurantSchema = new Schema<IRestaurant>(
     // Auth admin — SECURITE : select: false → jamais retourné par défaut
     adminEmail: { type: String, required: true },
     adminPasswordHash: { type: String, required: true, select: false },
+    adminTotpSecret: { type: String, select: false },
 
     // Stripe Connect — account_id uniquement, pas de clés secrètes en DB
     stripeAccountId: { type: String, index: true, sparse: true },

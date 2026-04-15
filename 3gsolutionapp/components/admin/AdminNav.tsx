@@ -33,6 +33,7 @@ export default function AdminNav() {
           {navLink('/espace-restaurateur/menu', 'Menu')}
           {navLink('/espace-restaurateur/personnalisation', 'Personnalisation')}
           {navLink('/espace-restaurateur/stripe', 'Paiements')}
+          {navLink('/espace-restaurateur/securite', 'Sécurité')}
         </div>
         <button
           onClick={async () => { await signOut({ redirect: false }); window.location.href = '/espace-restaurateur/login'; }}
