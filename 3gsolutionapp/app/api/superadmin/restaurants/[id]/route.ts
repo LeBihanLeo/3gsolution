@@ -26,7 +26,7 @@ const UpdateSchema = z.object({
   couleurSecondaire: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   horaireOuverture: z.string().optional(),
   horaireFermeture: z.string().optional(),
-  // Stripe : géré exclusivement par l'admin restaurant via /admin/stripe (OAuth Connect)
+  // Stripe : géré exclusivement par l'admin restaurant via /espace-restaurateur/stripe (OAuth Connect)
 });
 
 type RouteParams = { params: Promise<{ id: string }> };

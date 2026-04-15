@@ -231,7 +231,7 @@ describe('GET /api/stripe/connect/return', () => {
     const res = await returnGET(makeReq(url));
     expect(res.status).toBe(302);
     const location = res.headers.get('location') ?? '';
-    expect(location).toBe('https://resto-test.com/admin/stripe?connected=true');
+    expect(location).toBe('https://resto-test.com/espace-restaurateur/stripe?connected=true');
     expect(mockRestaurantModel.findByIdAndUpdate).toHaveBeenCalledWith(
       TEST_RESTAURANT_ID,
       { stripeOnboardingComplete: true }

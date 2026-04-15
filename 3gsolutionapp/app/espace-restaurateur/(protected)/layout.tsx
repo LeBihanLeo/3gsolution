@@ -6,7 +6,7 @@ import AdminNav from '@/components/admin/AdminNav';
 
 export default async function AdminLayout({ children }: { children: ReactNode }) {
   const session = await getServerSession(authOptions);
-  if (!session) redirect('/admin/login');
+  if (!session) redirect('/espace-restaurateur/login');
 
   return (
     <div className="min-h-screen bg-gray-100">

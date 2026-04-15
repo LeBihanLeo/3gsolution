@@ -34,7 +34,7 @@ export default function LoginPage() {
     if (result?.error) {
       setError('Email ou mot de passe incorrect.');
     } else {
-      router.push('/admin/commandes');
+      router.push('/espace-restaurateur/commandes');
     }
   }
 

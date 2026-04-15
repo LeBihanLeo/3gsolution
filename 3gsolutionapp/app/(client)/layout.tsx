@@ -102,6 +102,10 @@ export default async function ClientLayout({ children }: { children: ReactNode }
           </Link>
           <span className="mx-2 text-gray-200">·</span>
           <span>© {new Date().getFullYear()} {config.nomRestaurant}</span>
+          <span className="mx-2 text-gray-200">·</span>
+          <Link href="/espace-restaurateur/login" className="hover:text-orange-600 transition-colors">
+            Espace restaurateur
+          </Link>
         </footer>
       </div>
       <CookieBanner />

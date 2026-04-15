@@ -20,8 +20,8 @@ import { logger } from '@/lib/logger';
  */
 function getFallbackErrorUrl(): string {
   const hubUrl = process.env.AUTH_HUB_URL;
-  if (hubUrl) return `${hubUrl}/admin/stripe`;
-  return 'http://localhost:3000/admin/stripe';
+  if (hubUrl) return `${hubUrl}/espace-restaurateur/stripe`;
+  return 'http://localhost:3000/espace-restaurateur/stripe';
 }
 
 // TICK-179 — Vérifie le state token HMAC généré lors de initiate.
@@ -85,7 +85,7 @@ export async function GET(request: NextRequest) {
         charges_enabled: account.charges_enabled,
       });
       return NextResponse.redirect(
-        `https://${restaurant.domaine}/admin/stripe?error=onboarding_incomplete`,
+        `https://${restaurant.domaine}/espace-restaurateur/stripe?error=onboarding_incomplete`,
         302
       );
     }
@@ -99,7 +99,7 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.redirect(
-      `https://${restaurant.domaine}/admin/stripe?connected=true`,
+      `https://${restaurant.domaine}/espace-restaurateur/stripe?connected=true`,
       302
     );
   } catch (err) {

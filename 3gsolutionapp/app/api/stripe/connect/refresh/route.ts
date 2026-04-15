@@ -14,8 +14,8 @@ import { logger } from '@/lib/logger';
 
 function getFallbackErrorUrl(): string {
   const hubUrl = process.env.AUTH_HUB_URL;
-  if (hubUrl) return `${hubUrl}/admin/stripe`;
-  return 'http://localhost:3000/admin/stripe';
+  if (hubUrl) return `${hubUrl}/espace-restaurateur/stripe`;
+  return 'http://localhost:3000/espace-restaurateur/stripe';
 }
 
 // TICK-179 — Même logique de vérification que dans return/route.ts

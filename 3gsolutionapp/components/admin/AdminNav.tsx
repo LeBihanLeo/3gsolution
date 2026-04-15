@@ -29,13 +29,13 @@ export default function AdminNav() {
       <div className="min-w-[768px] max-w-5xl mx-auto px-4 flex items-center justify-between">
         <div className="flex items-center gap-1">
           <span className="font-bold text-gray-900 mr-4 py-3">Admin</span>
-          {navLink('/admin/commandes', 'Commandes')}
-          {navLink('/admin/menu', 'Menu')}
-          {navLink('/admin/personnalisation', 'Personnalisation')}
-          {navLink('/admin/stripe', 'Paiements')}
+          {navLink('/espace-restaurateur/commandes', 'Commandes')}
+          {navLink('/espace-restaurateur/menu', 'Menu')}
+          {navLink('/espace-restaurateur/personnalisation', 'Personnalisation')}
+          {navLink('/espace-restaurateur/stripe', 'Paiements')}
         </div>
         <button
-          onClick={async () => { await signOut({ redirect: false }); window.location.href = '/admin/login'; }}
+          onClick={async () => { await signOut({ redirect: false }); window.location.href = '/espace-restaurateur/login'; }}
           className="text-sm text-gray-800 hover:text-red-600 hover:underline transition-colors min-h-[44px] font-medium"
         >
           Se déconnecter

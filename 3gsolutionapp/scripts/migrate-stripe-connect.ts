@@ -8,7 +8,7 @@
  *   npx tsx scripts/migrate-stripe-connect.ts
  *
  * ATTENTION : Ce script modifie la base de données de production.
- * Les restaurants devront re-connecter leur compte Stripe via /admin/stripe.
+ * Les restaurants devront re-connecter leur compte Stripe via /espace-restaurateur/stripe.
  */
 
 import { connectDB } from '../lib/mongodb';
@@ -56,7 +56,7 @@ async function migrate() {
   console.log('[migrate-stripe-connect] Migration terminée.');
   console.log('');
   console.log('  → Les restaurants doivent maintenant connecter leur compte Stripe via :');
-  console.log('    https://<domaine-restaurant>/admin/stripe');
+  console.log('    https://<domaine-restaurant>/espace-restaurateur/stripe');
 
   await mongoose.disconnect();
 }

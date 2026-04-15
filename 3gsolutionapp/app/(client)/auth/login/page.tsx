@@ -24,7 +24,7 @@ export default function LoginPage() {
   useEffect(() => {
     if (status === 'authenticated') {
       if (session?.user && (session.user as { role?: string }).role === 'admin') {
-        router.replace('/admin/commandes');
+        router.replace('/espace-restaurateur/commandes');
       } else {
         router.replace('/');
       }

@@ -192,7 +192,7 @@ export default function AdminDashboardPage() {
           <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
             Commandes en cours
           </h2>
-          <Link href="/admin/commandes" className="text-xs text-blue-600 hover:underline">
+          <Link href="/espace-restaurateur/commandes" className="text-xs text-blue-600 hover:underline">
             Voir toutes →
           </Link>
         </div>
@@ -226,9 +226,9 @@ export default function AdminDashboardPage() {
           Accès rapide
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <NavCard href="/admin/commandes" label="Commandes" icon="📋" />
-          <NavCard href="/admin/menu" label="Menu" icon="🍽" />
-          <NavCard href="/admin/personnalisation" label="Personnalisation" icon="🎨" />
+          <NavCard href="/espace-restaurateur/commandes" label="Commandes" icon="📋" />
+          <NavCard href="/espace-restaurateur/menu" label="Menu" icon="🍽" />
+          <NavCard href="/espace-restaurateur/personnalisation" label="Personnalisation" icon="🎨" />
         </div>
       </section>
     </div>

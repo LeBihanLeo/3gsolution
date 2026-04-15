@@ -127,7 +127,7 @@ export default withAuth(
     // ── Vérification de rôle : admin requis ───────────────────────────────
     const token = request.nextauth?.token;
     const isAdminRoute =
-      (pathname.startsWith('/admin/') && pathname !== '/admin/login') ||
+      (pathname.startsWith('/espace-restaurateur/') && pathname !== '/espace-restaurateur/login') ||
       (pathname.startsWith('/api/commandes') && pathname !== '/api/commandes/suivi') ||
       pathname.startsWith('/api/admin/') ||
       pathname === '/api/upload';
@@ -158,7 +158,7 @@ export default withAuth(
             headers: { 'Content-Type': 'application/json' },
           });
         }
-        return NextResponse.redirect(new URL('/admin/login', request.url));
+        return NextResponse.redirect(new URL('/espace-restaurateur/login', request.url));
       }
     }
 
@@ -247,10 +247,10 @@ export default withAuth(
         if (clientProtected) return !!token;
 
         // Routes admin
-        if (pathname === '/admin/login') return true;
+        if (pathname === '/espace-restaurateur/login') return true;
 
         const adminRoute =
-          pathname.startsWith('/admin/') ||
+          pathname.startsWith('/espace-restaurateur/') ||
           (pathname.startsWith('/api/commandes') && pathname !== '/api/commandes/suivi') ||
           pathname.startsWith('/api/admin/') ||
           pathname === '/api/upload' ||
