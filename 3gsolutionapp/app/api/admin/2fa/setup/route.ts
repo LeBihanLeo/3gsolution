@@ -1,11 +1,10 @@
-// TICK-185 — Génération du secret TOTP + QR code (SVG) pour l'activation 2FA admin
+// TICK-185 — Génération du secret TOTP pour l'activation 2FA admin
 // POST /api/admin/2fa/setup
-// Retourne { secret, qrCodeSvg } — le secret n'est PAS encore sauvegardé en DB.
-// L'admin doit confirmer avec un premier code valide via /api/admin/2fa/confirm.
-// Note : toString({ type: 'svg' }) ne nécessite pas le package canvas — compatible Node.js.
+// Retourne { secret, otpauthUri } — aucune dépendance externe.
+// Le secret n'est PAS encore sauvegardé en DB.
+// L'admin confirme avec un premier code valide via /api/admin/2fa/confirm.
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import QRCode from 'qrcode';
 import { generateTotpSecret, totpKeyUri } from '@/lib/totp';
 import { authOptions } from '@/lib/auth';
 
@@ -17,8 +16,7 @@ export async function POST() {
 
   const secret = generateTotpSecret();
   const email = session.user?.email ?? 'admin';
-  const otpauth = totpKeyUri(secret, email, 'Espace Restaurateur');
-  const qrCodeSvg = await QRCode.toString(otpauth, { type: 'svg' });
+  const otpauthUri = totpKeyUri(secret, email, 'Espace Restaurateur');
 
-  return NextResponse.json({ secret, qrCodeSvg });
+  return NextResponse.json({ secret, otpauthUri });
 }
