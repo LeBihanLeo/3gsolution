@@ -2,13 +2,12 @@
 // TICK-188 — Page Sécurité admin : activation / désactivation TOTP 2FA
 
 import { useState, useEffect } from 'react';
-import Image from 'next/image';
 
 type Status = 'loading' | 'disabled' | 'enrolling' | 'enabled' | 'disabling';
 
 export default function SecuritePage() {
   const [status, setStatus] = useState<Status>('loading');
-  const [qrCodeDataUrl, setQrCodeDataUrl] = useState('');
+  const [qrCodeSvg, setQrCodeSvg] = useState('');
   const [pendingSecret, setPendingSecret] = useState('');
   const [confirmCode, setConfirmCode] = useState('');
   const [disableCode, setDisableCode] = useState('');
@@ -31,7 +30,7 @@ export default function SecuritePage() {
     const data = await res.json();
     setLoading(false);
     if (!res.ok) { setError(data.error ?? 'Erreur lors de la génération.'); return; }
-    setQrCodeDataUrl(data.qrCodeDataUrl);
+    setQrCodeSvg(data.qrCodeSvg);
     setPendingSecret(data.secret);
     setStatus('enrolling');
   }
@@ -110,17 +109,11 @@ export default function SecuritePage() {
             &ldquo;+&rdquo; et scannez le code ci-dessous.
           </p>
 
-          {qrCodeDataUrl && (
-            <div className="flex justify-center">
-              <Image
-                src={qrCodeDataUrl}
-                alt="QR code 2FA"
-                width={200}
-                height={200}
-                className="rounded-lg border border-gray-200"
-                unoptimized
-              />
-            </div>
+          {qrCodeSvg && (
+            <div
+              className="flex justify-center [&>svg]:w-48 [&>svg]:h-48 [&>svg]:rounded-lg [&>svg]:border [&>svg]:border-gray-200"
+              dangerouslySetInnerHTML={{ __html: qrCodeSvg }}
+            />
           )}
 
           <div>
