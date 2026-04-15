@@ -3,7 +3,7 @@
 // Valide le code contre le secret, puis active le 2FA sur le compte admin.
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authenticator } from 'otplib';
+import { verifyTotp } from '@/lib/totp';
 import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
 import Restaurant from '@/models/Restaurant';
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   }
 
   const { secret, code } = parsed.data;
-  const isValid = authenticator.verify({ token: code, secret });
+  const isValid = verifyTotp(code, secret);
   if (!isValid) {
     return NextResponse.json({ error: 'Code incorrect ou expiré.' }, { status: 400 });
   }

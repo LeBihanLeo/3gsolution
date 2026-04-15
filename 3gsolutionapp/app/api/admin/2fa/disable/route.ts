@@ -2,7 +2,7 @@
 // POST /api/admin/2fa/disable  { code: string }
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authenticator } from 'otplib';
+import { verifyTotp } from '@/lib/totp';
 import { z } from 'zod';
 import { connectDB } from '@/lib/mongodb';
 import Restaurant from '@/models/Restaurant';
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '2FA non activé.' }, { status: 400 });
   }
 
-  const isValid = authenticator.verify({ token: parsed.data.code, secret: restaurant.adminTotpSecret });
+  const isValid = verifyTotp(parsed.data.code, restaurant.adminTotpSecret);
   if (!isValid) {
     return NextResponse.json({ error: 'Code incorrect ou expiré.' }, { status: 400 });
   }

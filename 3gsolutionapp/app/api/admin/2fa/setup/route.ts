@@ -4,8 +4,8 @@
 // L'admin doit confirmer avec un premier code valide via /api/admin/2fa/confirm.
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authenticator } from 'otplib';
 import QRCode from 'qrcode';
+import { generateTotpSecret, totpKeyUri } from '@/lib/totp';
 import { authOptions } from '@/lib/auth';
 
 export async function POST() {
@@ -14,9 +14,9 @@ export async function POST() {
     return NextResponse.json({ error: 'Accès refusé.' }, { status: 401 });
   }
 
-  const secret = authenticator.generateSecret(20);
+  const secret = generateTotpSecret();
   const email = session.user?.email ?? 'admin';
-  const otpauth = authenticator.keyuri(email, 'Espace Restaurateur', secret);
+  const otpauth = totpKeyUri(secret, email, 'Espace Restaurateur');
   const qrCodeDataUrl = await QRCode.toDataURL(otpauth);
 
   return NextResponse.json({ secret, qrCodeDataUrl });

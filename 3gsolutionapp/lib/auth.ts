@@ -9,7 +9,7 @@ import GoogleProvider from 'next-auth/providers/google';
 import bcrypt from 'bcryptjs';
 import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import { cookies } from 'next/headers';
-import { authenticator } from 'otplib';
+import { verifyTotp } from '@/lib/totp';
 import { connectDB } from '@/lib/mongodb';
 import Client from '@/models/Client';
 import Restaurant from '@/models/Restaurant';
@@ -114,10 +114,7 @@ export const authOptions: NextAuthOptions = {
             if (!totpCode) {
               throw new Error('TOTP_REQUIRED');
             }
-            const totpValid = authenticator.verify({
-              token: totpCode,
-              secret: restaurant.adminTotpSecret,
-            });
+            const totpValid = verifyTotp(totpCode, restaurant.adminTotpSecret);
             if (!totpValid) {
               throw new Error('TOTP_INVALID');
             }
