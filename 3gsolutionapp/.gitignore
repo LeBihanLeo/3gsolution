@@ -39,6 +39,9 @@ yarn-error.log*
 # uploads locaux (fallback dev sans Vercel Blob)
 /public/uploads/
 
+# service worker généré (source : public/sw.template.js)
+/public/sw.js
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

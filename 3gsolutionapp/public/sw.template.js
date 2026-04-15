@@ -1,7 +1,7 @@
 // Service Worker — 3G Solution
 // Stratégie : stale-while-revalidate pour assets statiques, network-first pour pages
 
-const CACHE_VERSION = '1776260310651';
+const CACHE_VERSION = '__BUILD_TIMESTAMP__';
 const CACHE_STATIC = `3gsolution-static-${CACHE_VERSION}`;
 const CACHE_PAGES  = `3gsolution-pages-${CACHE_VERSION}`;
 
