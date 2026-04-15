@@ -1,46 +1,55 @@
 'use client';
 // TICK-188 — Page Sécurité admin : activation / désactivation TOTP 2FA
-// Zéro dépendance externe — fonctionne avec les modules Node.js natifs uniquement.
-// UX tablette : bouton "Ouvrir dans l'app" (lien otpauth://) + clé secrète manuelle.
+// QR code généré côté client via import dynamique (bundlé au build, pas de dépendance serveur).
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 type Status = 'loading' | 'disabled' | 'enrolling' | 'enabled';
 
 export default function SecuritePage() {
-  const [status, setStatus] = useState<Status>('loading');
-  const [otpauthUri, setOtpauthUri] = useState('');
-  const [pendingSecret, setPendingSecret] = useState('');
-  const [showSecret, setShowSecret] = useState(false);
-  const [confirmCode, setConfirmCode] = useState('');
-  const [disableCode, setDisableCode] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [status, setStatus]           = useState<Status>('loading');
+  const [otpauthUri, setOtpauthUri]   = useState('');
+  const [pendingSecret, setPending]   = useState('');
+  const [showSecret, setShowSecret]   = useState(false);
+  const [confirmCode, setConfirm]     = useState('');
+  const [disableCode, setDisable]     = useState('');
+  const [error, setError]             = useState('');
+  const [success, setSuccess]         = useState('');
+  const [loading, setLoading]         = useState(false);
+  const qrRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetch('/api/admin/2fa/status')
-      .then((r) => r.json())
-      .then((data) => setStatus(data.enabled ? 'enabled' : 'disabled'))
+      .then(r => r.json())
+      .then(d => setStatus(d.enabled ? 'enabled' : 'disabled'))
       .catch(() => setStatus('disabled'));
   }, []);
 
+  // Génère le QR code côté client dès que l'URI est disponible
+  useEffect(() => {
+    if (!otpauthUri || !qrRef.current) return;
+    import('qrcode').then(async QRCode => {
+      const svg = await (QRCode as typeof import('qrcode')).toString(otpauthUri, { type: 'svg' });
+      if (qrRef.current) qrRef.current.innerHTML = svg;
+    }).catch(() => {
+      // Fallback silencieux — l'UI de saisie manuelle reste disponible
+    });
+  }, [otpauthUri]);
+
   async function handleStartEnrollment() {
-    setError('');
-    setLoading(true);
-    const res = await fetch('/api/admin/2fa/setup', { method: 'POST' });
+    setError(''); setLoading(true);
+    const res  = await fetch('/api/admin/2fa/setup', { method: 'POST' });
     const data = await res.json();
     setLoading(false);
     if (!res.ok) { setError(data.error ?? 'Erreur lors de la génération.'); return; }
     setOtpauthUri(data.otpauthUri);
-    setPendingSecret(data.secret);
+    setPending(data.secret);
     setShowSecret(false);
     setStatus('enrolling');
   }
 
   async function handleConfirm() {
-    setError('');
-    setLoading(true);
+    setError(''); setLoading(true);
     const res = await fetch('/api/admin/2fa/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -51,12 +60,11 @@ export default function SecuritePage() {
     if (!res.ok) { setError(data.error ?? 'Code incorrect.'); return; }
     setStatus('enabled');
     setSuccess('Authentification à deux facteurs activée.');
-    setConfirmCode('');
+    setConfirm('');
   }
 
   async function handleDisable() {
-    setError('');
-    setLoading(true);
+    setError(''); setLoading(true);
     const res = await fetch('/api/admin/2fa/disable', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -67,7 +75,7 @@ export default function SecuritePage() {
     if (!res.ok) { setError(data.error ?? 'Code incorrect.'); return; }
     setStatus('disabled');
     setSuccess('Authentification à deux facteurs désactivée.');
-    setDisableCode('');
+    setDisable('');
   }
 
   return (
@@ -81,14 +89,12 @@ export default function SecuritePage() {
         </div>
       )}
 
-      {/* ── Chargement ── */}
       {status === 'loading' && (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <div className="h-8 bg-gray-100 rounded animate-pulse" />
         </div>
       )}
 
-      {/* ── 2FA désactivé ── */}
       {status === 'disabled' && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
           <div className="flex items-center gap-3">
@@ -108,38 +114,40 @@ export default function SecuritePage() {
         </div>
       )}
 
-      {/* ── Enrôlement ── */}
       {status === 'enrolling' && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
-          <p className="font-medium text-gray-900">Ajouter votre compte à l&apos;application</p>
+          <p className="font-medium text-gray-900">Associer votre application d&apos;authentification</p>
+          <p className="text-sm text-gray-500">
+            Scannez le QR code avec <strong>Google Authenticator</strong> ou <strong>Authy</strong>
+            , ou entrez la clé manuellement.
+          </p>
 
-          {/* Bouton direct — ouvre l'app authenticator sur tablette/mobile */}
-          <a
-            href={otpauthUri}
-            className="flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg transition-colors text-sm"
+          {/* QR code — rempli côté client via import dynamique */}
+          <div
+            ref={qrRef}
+            className="flex justify-center [&>svg]:w-48 [&>svg]:h-48 [&>svg]:mx-auto [&>svg]:rounded-lg [&>svg]:border [&>svg]:border-gray-200 min-h-[196px] items-center"
           >
-            <span>📱</span>
-            Ouvrir dans Google Authenticator / Authy
-          </a>
+            <div className="w-48 h-48 bg-gray-100 rounded-lg animate-pulse" />
+          </div>
 
           <div className="relative flex items-center">
             <div className="flex-1 h-px bg-gray-200" />
-            <span className="mx-3 text-xs text-gray-400">ou entrez la clé manuellement</span>
+            <span className="mx-3 text-xs text-gray-400 shrink-0">ou entrez la clé manuellement</span>
             <div className="flex-1 h-px bg-gray-200" />
           </div>
 
-          {/* Clé secrète pour saisie manuelle */}
+          {/* Clé secrète */}
           <div>
             <p className="text-xs text-gray-500 mb-2">
               Dans l&apos;application : <strong>+</strong> → <strong>Entrer une clé de configuration</strong>
             </p>
             <div className="flex items-center gap-2">
-              <code className="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono tracking-wider break-all">
-                {showSecret ? pendingSecret : '••••••••••••••••••••••••••••••••'}
+              <code className="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono tracking-wider break-all select-all">
+                {showSecret ? pendingSecret : '•'.repeat(pendingSecret.length)}
               </code>
               <button
                 type="button"
-                onClick={() => setShowSecret((v) => !v)}
+                onClick={() => setShowSecret(v => !v)}
                 className="px-3 py-2 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 shrink-0"
               >
                 {showSecret ? 'Masquer' : 'Afficher'}
@@ -149,10 +157,9 @@ export default function SecuritePage() {
 
           <hr className="border-gray-100" />
 
-          {/* Confirmation du premier code */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Entrez le code affiché dans l&apos;application pour confirmer
+              Code de l&apos;application pour confirmer
             </label>
             <input
               type="text"
@@ -160,7 +167,7 @@ export default function SecuritePage() {
               pattern="[0-9]*"
               maxLength={6}
               value={confirmCode}
-              onChange={(e) => setConfirmCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              onChange={e => setConfirm(e.target.value.replace(/\D/g, '').slice(0, 6))}
               placeholder="000000"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-center tracking-widest font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
@@ -177,7 +184,7 @@ export default function SecuritePage() {
             disabled={loading || confirmCode.length !== 6}
             className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2 rounded-lg transition-colors text-sm"
           >
-            {loading ? 'Vérification…' : 'Confirmer l\'activation'}
+            {loading ? 'Vérification…' : "Confirmer l'activation"}
           </button>
 
           <button
@@ -190,7 +197,6 @@ export default function SecuritePage() {
         </div>
       )}
 
-      {/* ── 2FA activé ── */}
       {status === 'enabled' && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
           <div className="flex items-center gap-3">
@@ -208,7 +214,7 @@ export default function SecuritePage() {
           <div>
             <p className="text-sm font-medium text-gray-700 mb-2">Désactiver le 2FA</p>
             <p className="text-xs text-gray-400 mb-3">
-              Entrez un code de votre application pour confirmer la désactivation.
+              Entrez un code de votre application pour confirmer.
             </p>
             <input
               type="text"
@@ -216,7 +222,7 @@ export default function SecuritePage() {
               pattern="[0-9]*"
               maxLength={6}
               value={disableCode}
-              onChange={(e) => setDisableCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              onChange={e => setDisable(e.target.value.replace(/\D/g, '').slice(0, 6))}
               placeholder="000000"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-center tracking-widest font-mono focus:outline-none focus:ring-2 focus:ring-red-400 mb-3"
             />
