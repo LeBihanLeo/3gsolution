@@ -74,9 +74,11 @@ function extractHost(request: NextRequest): string {
 
 // Chemins accessibles sur le hub (tout le reste → 404)
 const HUB_ALLOWED_PREFIXES = [
-  '/api/auth/',        // NextAuth + routes auth custom (google-relay, cross-domain-hub, token…)
+  '/api/auth/',             // NextAuth + routes auth custom (google-relay, cross-domain-hub, token…)
   '/api/superadmin/',
-  '/api/webhooks/',    // Webhooks Stripe Connect global
+  '/api/webhooks/',         // Webhooks Stripe Connect global
+  '/api/stripe/connect/return',   // Stripe → hub après onboarding (TICK-175)
+  '/api/stripe/connect/refresh',  // Stripe → hub si lien expiré (TICK-175)
   '/superadmin/',
   '/auth/google/start',
 ];
