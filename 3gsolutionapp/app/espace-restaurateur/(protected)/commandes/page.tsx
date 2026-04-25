@@ -579,44 +579,44 @@ export default function AdminCommandesPage() {
           <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-5">
             <div className="grid grid-cols-3 gap-4">
                 {/* À préparer */}
-                <div className="flex flex-col rounded-xl overflow-hidden border border-blue-100">
-                  <div className="bg-blue-50 px-4 py-2.5 border-b border-blue-100 shrink-0">
-                    <h2 className="text-sm font-semibold text-blue-700 uppercase tracking-wider flex items-center gap-2">
+                <div className="flex flex-col rounded-xl overflow-hidden border-2 border-blue-400">
+                  <div className="bg-blue-100 px-4 py-3 border-b-2 border-blue-400 shrink-0">
+                    <h2 className="text-sm font-bold text-blue-900 uppercase tracking-wider flex items-center gap-2">
                       À préparer
-                      <span className="bg-blue-100 text-blue-700 text-xs font-bold px-1.5 py-0.5 rounded-full">{commandesEnAttente.length}</span>
+                      <span className="bg-blue-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{commandesEnAttente.length}</span>
                     </h2>
                   </div>
-                  <div className="min-h-[30vh] max-h-[55vh] overflow-y-auto p-3 space-y-3">
+                  <div className="min-h-[30vh] max-h-[55vh] overflow-y-auto p-3 space-y-3 bg-blue-50/40">
                     {commandesEnAttente.map((c) => <OrderCard key={c._id} commande={c} onAdvance={advanceStatut} />)}
-                    {commandesEnAttente.length === 0 && <p className="text-xs text-gray-400 italic text-center mt-4">Aucune.</p>}
+                    {commandesEnAttente.length === 0 && <p className="text-xs text-blue-400 italic text-center mt-4">Aucune.</p>}
                   </div>
                 </div>
 
                 {/* En préparation */}
-                <div className="flex flex-col rounded-xl overflow-hidden border border-orange-100">
-                  <div className="bg-orange-50 px-4 py-2.5 border-b border-orange-100 shrink-0">
-                    <h2 className="text-sm font-semibold text-amber-700 uppercase tracking-wider flex items-center gap-2">
+                <div className="flex flex-col rounded-xl overflow-hidden border-2 border-amber-500">
+                  <div className="bg-amber-100 px-4 py-3 border-b-2 border-amber-500 shrink-0">
+                    <h2 className="text-sm font-bold text-amber-900 uppercase tracking-wider flex items-center gap-2">
                       En préparation
-                      <span className="bg-orange-100 text-orange-700 text-xs font-bold px-1.5 py-0.5 rounded-full">{commandesEnPreparation.length}</span>
+                      <span className="bg-amber-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{commandesEnPreparation.length}</span>
                     </h2>
                   </div>
-                  <div className="min-h-[30vh] max-h-[55vh] overflow-y-auto p-3 space-y-3">
+                  <div className="min-h-[30vh] max-h-[55vh] overflow-y-auto p-3 space-y-3 bg-amber-50/40">
                     {commandesEnPreparation.map((c) => <OrderCard key={c._id} commande={c} onAdvance={advanceStatut} />)}
-                    {commandesEnPreparation.length === 0 && <p className="text-xs text-gray-400 italic text-center mt-4">Aucune.</p>}
+                    {commandesEnPreparation.length === 0 && <p className="text-xs text-amber-400 italic text-center mt-4">Aucune.</p>}
                   </div>
                 </div>
 
                 {/* Prêtes */}
-                <div className="flex flex-col rounded-xl overflow-hidden border border-green-100">
-                  <div className="bg-green-50 px-4 py-2.5 border-b border-green-100 shrink-0">
-                    <h2 className="text-sm font-semibold text-green-700 uppercase tracking-wider flex items-center gap-2">
+                <div className="flex flex-col rounded-xl overflow-hidden border-2 border-green-500">
+                  <div className="bg-green-100 px-4 py-3 border-b-2 border-green-500 shrink-0">
+                    <h2 className="text-sm font-bold text-green-900 uppercase tracking-wider flex items-center gap-2">
                       Prêtes
-                      <span className="bg-green-100 text-green-700 text-xs font-bold px-1.5 py-0.5 rounded-full">{commandesPrêtes.length}</span>
+                      <span className="bg-green-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">{commandesPrêtes.length}</span>
                     </h2>
                   </div>
-                  <div className="min-h-[30vh] max-h-[55vh] overflow-y-auto p-3 space-y-3">
+                  <div className="min-h-[30vh] max-h-[55vh] overflow-y-auto p-3 space-y-3 bg-green-50/40">
                     {commandesPrêtes.map((c) => <OrderCard key={c._id} commande={c} onAdvance={advanceStatut} />)}
-                    {commandesPrêtes.length === 0 && <p className="text-xs text-gray-400 italic text-center mt-4">Aucune.</p>}
+                    {commandesPrêtes.length === 0 && <p className="text-xs text-green-400 italic text-center mt-4">Aucune.</p>}
                   </div>
                 </div>
               </div>

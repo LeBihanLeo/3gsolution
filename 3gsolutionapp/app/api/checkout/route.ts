@@ -73,7 +73,12 @@ export async function POST(request: NextRequest) {
     const nowMin = parisHour * 60 + parisMinute;
     const [hO, mO] = ouvertureStr.split(':').map(Number);
     const [hF, mF] = fermetureStr.split(':').map(Number);
-    if (nowMin < hO * 60 + mO || nowMin >= hF * 60 + mF) {
+    // Autoriser les commandes jusqu'à 2h avant l'ouverture (les créneaux proposés
+    // restent toujours dans la plage ouverture→fermeture, donc jamais de créneau passé).
+    const ouvertureMin = hO * 60 + mO;
+    const fermetureMin = hF * 60 + mF;
+    const PRECOMMANDE_BUFFER_MIN = 120;
+    if (nowMin < ouvertureMin - PRECOMMANDE_BUFFER_MIN || nowMin >= fermetureMin) {
       return NextResponse.json(
         { error: `La boutique est fermée. Commandes acceptées de ${ouvertureStr} à ${fermetureStr}.` },
         { status: 503 }
