@@ -33,7 +33,12 @@ export async function resolveTenantId(host: string): Promise<string | null> {
 
   await connectDB();
   const restaurant = await Restaurant.findOne({ domaine: host }).select('_id').lean();
-  if (!restaurant) return null;
+  if (!restaurant) {
+    // DEBUG temporaire — à retirer après correction
+    const all = await Restaurant.find().select('domaine').lean();
+    console.error(`[tenant] Domaine "${host}" introuvable. Domaines en base :`, all.map(r => r.domaine));
+    return null;
+  }
 
   const id = restaurant._id.toString();
   tenantCache.set(host, { id, expiresAt: Date.now() + 60_000 });
