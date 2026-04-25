@@ -17,9 +17,9 @@ const ACTION_NEXT: Partial<Record<StatutCommande, { label: string; statut: Statu
 };
 
 const CARD_BORDER: Partial<Record<StatutCommande, string>> = {
-  payee: 'border-gray-400',
-  en_preparation: 'border-gray-400',
-  prete: 'border-gray-400',
+  payee: 'border border-[rgb(195,195,195)]',
+  en_preparation: 'border border-[rgb(195,195,195)]',
+  prete: 'border border-[rgb(195,195,195)]',
 };
 
 function formatPrix(centimes: number): string {
@@ -50,7 +50,7 @@ export default function OrderCard({ commande, onAdvance }: OrderCardProps) {
       exit={{ opacity: 0, y: -6 }}
       whileHover={{ scale: 1.02, boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}
       transition={{ duration: 0.18 }}
-      className={`bg-white rounded-2xl shadow-md border-2 p-4 ${borderClass}`}
+      className={`bg-white rounded-2xl shadow-md p-4 ${borderClass}`}
     >
       {/* Ligne 1 — ID + Heure + Prix */}
       <div className="flex items-center justify-between mb-1.5">
