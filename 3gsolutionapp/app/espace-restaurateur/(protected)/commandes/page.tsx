@@ -602,7 +602,7 @@ export default function AdminCommandesPage() {
                   </div>
                   <div className="min-h-[30vh] max-h-[55vh] overflow-y-auto p-3 space-y-3 bg-amber-50/40">
                     {commandesEnPreparation.map((c) => <OrderCard key={c._id} commande={c} onAdvance={advanceStatut} />)}
-                    {commandesEnPreparation.length === 0 && <p className="text-xs text-amber-400 italic text-center mt-4">Aucune.</p>}
+                    {commandesEnPreparation.length === 0 && <p className="text-xs italic text-center mt-4" style={{ color: 'rgb(169, 122, 0)' }}>Aucune.</p>}
                   </div>
                 </div>
 
