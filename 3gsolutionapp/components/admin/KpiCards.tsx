@@ -55,22 +55,22 @@ export default function KpiCards({ commandes, loading }: KpiCardsProps) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
       <KpiCard
-        label="Commandes"
+        label="🍽️ Commandes"
         value={commandesAujourdhui.length}
         sub="payées aujourd'hui"
       />
       <KpiCard
-        label="CA du jour"
+        label="💲 CA du jour"
         value={formatPrix(caAujourdhui)}
         sub="toutes commandes payées"
       />
       <KpiCard
-        label="En cours"
+        label="⏳ En cours"
         value={commandesEnCours.length}
         sub="à préparer / en préparation"
       />
       <KpiCard
-        label="Récupérées"
+        label="✅ Récupérées"
         value={commandesRecuperees.length}
         sub="aujourd'hui"
       />
