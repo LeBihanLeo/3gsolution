@@ -75,7 +75,6 @@ describe('ProduitForm', () => {
     render(<ProduitForm {...defaultProps} />);
     fireEvent.change(screen.getByPlaceholderText('Burger Classic'), { target: { value: 'Produit' } });
     fireEvent.change(screen.getByPlaceholderText(/steak haché/i), { target: { value: 'Desc' } });
-    fireEvent.change(screen.getByPlaceholderText('Burgers, Boissons...'), { target: { value: 'Cat' } });
     fireEvent.change(screen.getByPlaceholderText('8,50'), { target: { value: 'abc' } });
     fireEvent.submit(document.querySelector('form')!);
     await waitFor(() => {
@@ -102,7 +101,7 @@ describe('ProduitForm', () => {
     render(<ProduitForm {...defaultProps} />);
     fireEvent.change(screen.getByPlaceholderText('Burger Classic'), { target: { value: 'Nouveau burger' } });
     fireEvent.change(screen.getByPlaceholderText(/steak haché/i), { target: { value: 'Une description' } });
-    fireEvent.change(screen.getByPlaceholderText('Burgers, Boissons...'), { target: { value: 'Burgers' } });
+    fireEvent.change(document.querySelector('select[name="categorie"]')!, { target: { value: 'Plats' } });
     fireEvent.change(screen.getByPlaceholderText('8,50'), { target: { value: '9,90' } });
     fireEvent.submit(document.querySelector('form')!);
     await waitFor(() => {
@@ -110,7 +109,7 @@ describe('ProduitForm', () => {
         expect.objectContaining({
           nom: 'Nouveau burger',
           prix: 990,
-          categorie: 'Burgers',
+          categorie: 'Plats',
           description: 'Une description',
           options: [],
           actif: true,
@@ -123,7 +122,6 @@ describe('ProduitForm', () => {
     render(<ProduitForm {...defaultProps} />);
     fireEvent.change(screen.getByPlaceholderText('Burger Classic'), { target: { value: 'Produit' } });
     fireEvent.change(screen.getByPlaceholderText(/steak haché/i), { target: { value: 'Desc' } });
-    fireEvent.change(screen.getByPlaceholderText('Burgers, Boissons...'), { target: { value: 'Cat' } });
     fireEvent.change(screen.getByPlaceholderText('8,50'), { target: { value: '5,00' } });
     // Ajout d'une option avec nom vide
     fireEvent.click(screen.getByText(/ajouter une option/i));

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { z } from 'zod';
 import DropZone from '@/components/admin/DropZone';
+import { PRODUIT_CATEGORIES } from '@/lib/produit-categories';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,9 @@ export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitForm
   const [imageUrl, setImageUrl] = useState<string | null>(initial?.imageUrl ?? null);
   // TICK-128 — taux TVA
   const [tauxTva, setTauxTva] = useState<0 | 5.5 | 10 | 20>(initial?.taux_tva ?? 10);
+  const [categorie, setCategorie] = useState<string>(initial?.categorie ?? PRODUIT_CATEGORIES[0]);
+  // Catégorie legacy : valeur existante hors de la liste prédéfinie (ancienne saisie libre)
+  const isLegacyCategorie = initial?.categorie && !(PRODUIT_CATEGORIES as readonly string[]).includes(initial.categorie);
   const [prixEurosStr, setPrixEurosStr] = useState<string>(initial ? centimesToEuros(initial.prix) : '');
 
   const addOption = () => setOptions((prev) => [...prev, { nom: '', prix: '0' }]);
@@ -189,12 +193,19 @@ export default function ProduitForm({ initial, onSubmit, onCancel }: ProduitForm
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Catégorie <span className="text-red-400">*</span>
           </label>
-          <input
+          <select
             name="categorie"
-            defaultValue={initial?.categorie}
+            value={categorie}
+            onChange={(e) => setCategorie(e.target.value)}
             className={inputCls}
-            placeholder="Burgers, Boissons..."
-          />
+          >
+            {isLegacyCategorie && (
+              <option value={initial!.categorie}>{initial!.categorie}</option>
+            )}
+            {PRODUIT_CATEGORIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
           {errors.categorie && (
             <p className="text-xs text-red-500 mt-1">{errors.categorie}</p>
           )}

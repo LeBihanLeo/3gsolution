@@ -3,6 +3,7 @@
 
 import { useState, useCallback } from 'react';
 import DropZone from '@/components/admin/DropZone';
+import { PRODUIT_CATEGORIES } from '@/lib/produit-categories';
 import type { StepProps } from '../types';
 
 interface ProduitAdded {
@@ -27,7 +28,6 @@ const DEFAULT_FORM: FormData = {
   image: '',
 };
 
-const CATEGORIES = ['Entrées', 'Plats', 'Desserts', 'Boissons', 'Formules'];
 
 function formatPrix(centimes: number) {
   return (centimes / 100).toFixed(2).replace('.', ',') + ' €';
@@ -71,7 +71,7 @@ export default function StepMenu({ onNext, onMarkStep, stepId }: StepProps) {
           taux_tva: 10,
           options: [],
           actif: true,
-          ...(form.image ? { image: form.image } : {}),
+          ...(form.image ? { imageUrl: form.image } : {}),
         }),
       });
       if (!res.ok) {
@@ -165,7 +165,7 @@ export default function StepMenu({ onNext, onMarkStep, stepId }: StepProps) {
               onChange={(e) => set('categorie', e.target.value)}
               className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              {CATEGORIES.map((c) => (
+              {PRODUIT_CATEGORIES.map((c) => (
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>
