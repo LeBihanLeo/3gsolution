@@ -98,6 +98,15 @@ export async function GET(request: NextRequest) {
       stripeAccountId: restaurant.stripeAccountId,
     });
 
+    // TICK-196 — Si returnTo=onboarding, redirige vers le wizard onboarding (step Stripe)
+    const returnTo = searchParams.get('returnTo');
+    if (returnTo === 'onboarding') {
+      return NextResponse.redirect(
+        `https://${restaurant.domaine}/espace-restaurateur/onboarding?step=3&connected=true`,
+        302
+      );
+    }
+
     return NextResponse.redirect(
       `https://${restaurant.domaine}/espace-restaurateur/stripe?connected=true`,
       302

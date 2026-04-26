@@ -28,6 +28,10 @@ export interface IRestaurant extends Document {
   stripeOnboardingComplete: boolean;     // true = flow OAuth finalisé
   // Note : commission plateforme configurée via STRIPE_APPLICATION_FEE_PERCENT (env var) — pas en DB
 
+  // TICK-189 — Onboarding admin first-login wizard
+  onboardingCompleted: boolean;          // true = wizard terminé ou skippé
+  onboardingStepsCompleted: string[];    // ex: ['personnalisation','menu','stripe','commandes','2fa']
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -56,6 +60,10 @@ const RestaurantSchema = new Schema<IRestaurant>(
     // Stripe Connect — account_id uniquement, pas de clés secrètes en DB
     stripeAccountId: { type: String, index: true, sparse: true },
     stripeOnboardingComplete: { type: Boolean, default: false },
+
+    // TICK-189 — Onboarding admin first-login wizard
+    onboardingCompleted: { type: Boolean, default: false },
+    onboardingStepsCompleted: { type: [String], default: [] },
   },
   { timestamps: true }
 );

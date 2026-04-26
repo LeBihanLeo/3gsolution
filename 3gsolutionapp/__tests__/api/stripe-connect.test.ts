@@ -120,6 +120,30 @@ describe('POST /api/stripe/connect/initiate', () => {
     );
   });
 
+  // TICK-196 — returnTo=onboarding propagé dans les URLs de retour
+  it('returnTo=onboarding propagé dans return_url et refresh_url', async () => {
+    const req = makeReq('https://hub.test/api/stripe/connect/initiate?returnTo=onboarding', 'POST');
+    await initiatePOST(req);
+    expect(mockAccountLinksCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        return_url: expect.stringContaining('returnTo=onboarding'),
+        refresh_url: expect.stringContaining('returnTo=onboarding'),
+      })
+    );
+  });
+
+  // TICK-196 — returnTo invalide ignoré (open redirect protection)
+  it('returnTo valeur invalide ignorée dans les URLs', async () => {
+    const req = makeReq('https://hub.test/api/stripe/connect/initiate?returnTo=https://evil.com', 'POST');
+    await initiatePOST(req);
+    expect(mockAccountLinksCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        return_url: expect.not.stringContaining('returnTo=https'),
+        refresh_url: expect.not.stringContaining('returnTo=https'),
+      })
+    );
+  });
+
   // TICK-182 — country: 'FR' + capabilities card_payments + transfers demandées à la création
   it('accounts.create appelé avec type: express, country: FR, capabilities et restaurantId', async () => {
     const req = makeReq('https://hub.test/api/stripe/connect/initiate', 'POST');
@@ -320,6 +344,25 @@ describe('GET /api/stripe/connect/return', () => {
     const res = await returnGET(makeReq(url));
     expect(res.status).toBe(302);
     expect(res.headers.get('location') ?? '').toContain('error=connect_failed');
+  });
+
+  // TICK-196 — returnTo=onboarding : redirige vers le wizard onboarding après OAuth
+  it('returnTo=onboarding → redirect vers /espace-restaurateur/onboarding?step=3&connected=true', async () => {
+    const { state, expires } = buildStateToken(TEST_RESTAURANT_ID);
+    const url = `https://hub.test/api/stripe/connect/return?restaurantId=${TEST_RESTAURANT_ID}&state=${state}&expires=${expires}&returnTo=onboarding`;
+    const res = await returnGET(makeReq(url));
+    expect(res.status).toBe(302);
+    const location = res.headers.get('location') ?? '';
+    expect(location).toBe('https://resto-test.com/espace-restaurateur/onboarding?step=3&connected=true');
+  });
+
+  // TICK-196 — returnTo absent → comportement existant (page stripe normale)
+  it('sans returnTo → redirect vers /espace-restaurateur/stripe?connected=true (comportement existant)', async () => {
+    const url = buildReturnUrl('https://hub.test/api/stripe/connect/return', TEST_RESTAURANT_ID);
+    const res = await returnGET(makeReq(url));
+    expect(res.status).toBe(302);
+    const location = res.headers.get('location') ?? '';
+    expect(location).toBe('https://resto-test.com/espace-restaurateur/stripe?connected=true');
   });
 });
 

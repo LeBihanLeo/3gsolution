@@ -32,7 +32,7 @@ function generateStateToken(restaurantId: string): { state: string; expires: num
   return { state, expires };
 }
 
-export async function POST(_request: NextRequest) {
+export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   const user = session?.user as { role?: string; restaurantId?: string } | undefined;
 
@@ -41,6 +41,12 @@ export async function POST(_request: NextRequest) {
   }
 
   const restaurantId = user.restaurantId;
+
+  // TICK-196 — returnTo optionnel : "onboarding" pour revenir au wizard après OAuth
+  const { searchParams } = new URL(request.url);
+  const returnTo = searchParams.get('returnTo') ?? '';
+  // Valide la valeur pour éviter une open redirect
+  const safeReturnTo = returnTo === 'onboarding' ? 'onboarding' : '';
 
   // AUTH_HUB_URL centralise tous les callbacks cross-domaine (même pattern que Social Login Sprint 19).
   // Tous les restaurants partagent le même hub — aucune variable par restaurant nécessaire.
@@ -85,11 +91,14 @@ export async function POST(_request: NextRequest) {
     // Le hub vérifie la signature sans session (cross-domain safe)
     const { state, expires } = generateStateToken(restaurantId);
 
+    // TICK-196 — Propagation du returnTo dans les URLs de retour
+    const returnToParam = safeReturnTo ? `&returnTo=${safeReturnTo}` : '';
+
     // Génère le lien d'onboarding hébergé (valide 5 minutes)
     const accountLink = await stripe.accountLinks.create({
       account: stripeAccountId,
-      return_url:  `${returnUrl}?restaurantId=${restaurantId}&state=${state}&expires=${expires}`,
-      refresh_url: `${refreshUrl}?restaurantId=${restaurantId}&state=${state}&expires=${expires}`,
+      return_url:  `${returnUrl}?restaurantId=${restaurantId}&state=${state}&expires=${expires}${returnToParam}`,
+      refresh_url: `${refreshUrl}?restaurantId=${restaurantId}&state=${state}&expires=${expires}${returnToParam}`,
       type: 'account_onboarding',
     });
 

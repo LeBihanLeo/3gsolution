@@ -1,10 +1,12 @@
 'use client';
 
 // TICK-103 — Dashboard admin : KPIs + 4 dernières commandes en cours + nav rapide
+// TICK-199 — OnboardingReminderBanner si Stripe non connecté
 
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { CommandeData } from '@/components/admin/CommandeRow';
+import OnboardingReminderBanner from '@/components/admin/OnboardingReminderBanner';
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -91,6 +93,7 @@ export default function AdminDashboardPage() {
   const [commandes, setCommandes] = useState<CommandeData[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [stripeConnected, setStripeConnected] = useState(true); // optimiste par défaut
 
   const fetchCommandes = useCallback(async () => {
     try {
@@ -104,6 +107,14 @@ export default function AdminDashboardPage() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // TICK-199 — Vérifie le statut Stripe pour la bannière reminder
+  useEffect(() => {
+    fetch('/api/admin/stripe-status')
+      .then((r) => r.json())
+      .then((d) => setStripeConnected(d.connected === true))
+      .catch(() => {}); // silencieux
   }, []);
 
   useEffect(() => {
@@ -139,6 +150,9 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="space-y-8">
+      {/* TICK-199 — Bannière reminder Stripe */}
+      <OnboardingReminderBanner stripeConnected={stripeConnected} />
+
       {/* En-tête */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
