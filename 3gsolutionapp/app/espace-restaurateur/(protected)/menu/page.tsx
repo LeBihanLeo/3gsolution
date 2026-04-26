@@ -68,7 +68,7 @@ function ProduitCard({
 }) {
   return (
     <div
-      className={`bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-opacity flex flex-col h-full ${
+      className={`bg-white rounded-2xl border border-gray-200 shadow-md overflow-hidden transition-opacity flex flex-col h-full ${
         !produit.actif ? 'opacity-60' : ''
       }`}
     >
@@ -287,7 +287,7 @@ export default function AdminMenuPage() {
 
       {/* Formulaire de création */}
       {creating && (
-        <div className="bg-white rounded-xl border shadow-sm p-6 mb-6">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-md p-6 mb-6">
           <h2 className="text-lg font-bold text-gray-900 mb-4">Nouveau produit</h2>
           <ProduitForm
             onSubmit={handleCreate}
@@ -298,7 +298,7 @@ export default function AdminMenuPage() {
 
       {/* Formulaire d'édition (panneau plein) */}
       {editing && (
-        <div className="bg-white rounded-xl border shadow-sm p-6 mb-6">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-md p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">
             Modifier — {editing.nom}
           </h2>

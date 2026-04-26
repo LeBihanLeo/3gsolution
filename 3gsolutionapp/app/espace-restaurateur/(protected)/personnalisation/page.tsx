@@ -123,7 +123,7 @@ export default function PersonnalisationPage() {
       <div className="flex flex-col md:flex-row gap-6 items-start">
       {/* Colonne gauche : formulaire */}
       <div className="flex-1 min-w-0">
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm p-6 space-y-6">
+      <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-gray-200 shadow-md p-6 space-y-6">
 
         {/* Nom du restaurant */}
         <div>

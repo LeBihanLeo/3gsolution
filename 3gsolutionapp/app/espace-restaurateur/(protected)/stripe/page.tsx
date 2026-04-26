@@ -86,7 +86,7 @@ export default function AdminStripePage() {
       )}
 
       {/* Carte statut */}
-      <div className="bg-white rounded-xl shadow-sm p-6 space-y-5">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-md p-6 space-y-5">
         {loading ? (
           <div className="h-16 bg-gray-100 rounded-lg animate-pulse" />
         ) : status?.connected ? (
