@@ -17,6 +17,8 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import CommandeRow, { CommandeData, StatutCommande } from '@/components/admin/CommandeRow';
 import OrderCard from '@/components/admin/OrderCard';
+import KpiCards from '@/components/admin/KpiCards';
+import OnboardingReminderBanner from '@/components/admin/OnboardingReminderBanner';
 
 const POLL_INTERVAL_MS = 10_000;
 
@@ -100,6 +102,7 @@ export default function AdminCommandesPage() {
   const [fermeeAujourdhui, setFermeeAujourdhui] = useState(false);
   const [loadingFermeture, setLoadingFermeture] = useState(false);
   const [showConfirmFermer, setShowConfirmFermer] = useState(false);
+  const [stripeConnected, setStripeConnected] = useState(true);
 
   // TICK-127 — Modale export
   const [showExportModal, setShowExportModal] = useState(false);
@@ -150,6 +153,13 @@ export default function AdminCommandesPage() {
     fetch('/api/site-config', { cache: 'no-store' })
       .then((r) => r.json())
       .then(({ data }) => setFermeeAujourdhui(data?.fermeeAujourdhui ?? false))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/admin/stripe-status')
+      .then((r) => r.json())
+      .then((d) => setStripeConnected(d.connected === true))
       .catch(() => {});
   }, []);
 
@@ -489,6 +499,9 @@ export default function AdminCommandesPage() {
         </div>
       )}
 
+      {/* Bannière reminder Stripe */}
+      <OnboardingReminderBanner stripeConnected={stripeConnected} />
+
       {/* En-tête */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-3">
@@ -506,6 +519,9 @@ export default function AdminCommandesPage() {
             : 'Synchronisation…'}
         </div>
       </div>
+
+      {/* KPI cards du jour */}
+      <KpiCards commandes={commandes} loading={loading} />
 
       {/* TICK-105 — Toggle boutique */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
