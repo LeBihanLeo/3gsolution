@@ -2,6 +2,7 @@
 // TICK-195 — Step 2 : Menu — ajouter les premiers produits
 
 import { useState, useCallback } from 'react';
+import DropZone from '@/components/admin/DropZone';
 import type { StepProps } from '../types';
 
 interface ProduitAdded {
@@ -15,6 +16,7 @@ interface FormData {
   description: string;
   categorie: string;
   prix: string; // euros (string pour l'input)
+  image: string; // URL Vercel Blob après upload
 }
 
 const DEFAULT_FORM: FormData = {
@@ -22,6 +24,7 @@ const DEFAULT_FORM: FormData = {
   description: '',
   categorie: 'Plats',
   prix: '',
+  image: '',
 };
 
 const CATEGORIES = ['Entrées', 'Plats', 'Desserts', 'Boissons', 'Formules'];
@@ -68,6 +71,7 @@ export default function StepMenu({ onNext, onMarkStep, stepId }: StepProps) {
           taux_tva: 10,
           options: [],
           actif: true,
+          ...(form.image ? { image: form.image } : {}),
         }),
       });
       if (!res.ok) {
@@ -117,6 +121,15 @@ export default function StepMenu({ onNext, onMarkStep, stepId }: StepProps) {
         <p className="text-sm font-semibold text-gray-700">
           {added.length === 0 ? 'Premier produit' : 'Ajouter un autre produit'}
         </p>
+
+        {/* Photo du produit */}
+        <DropZone
+          currentImageUrl={form.image || undefined}
+          onUploadSuccess={(url) => set('image', url)}
+          onRemove={() => set('image', '')}
+          label="Photo du produit (optionnel)"
+          aspectRatio="square"
+        />
 
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">

@@ -1,5 +1,6 @@
 // TICK-192 — Page onboarding admin (hors layout protégé — pas de sidebar nav)
 // Déclenchée depuis le layout (protected) quand onboardingCompleted=false.
+import { Suspense } from 'react';
 import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
@@ -14,7 +15,13 @@ export default async function OnboardingPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 flex flex-col">
-      <OnboardingWizard />
+      <Suspense fallback={
+        <div className="flex-1 flex items-center justify-center">
+          <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      }>
+        <OnboardingWizard />
+      </Suspense>
     </div>
   );
 }

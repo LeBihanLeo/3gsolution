@@ -31,7 +31,7 @@ export default function OnboardingStepper({ currentIndex, completedSteps }: Prop
         {/* Ligne de progression */}
         <div
           className="absolute left-0 top-1/2 -translate-y-1/2 h-0.5 bg-blue-500 transition-all duration-500"
-          style={{ width: `${(currentIndex / (ONBOARDING_STEPS.length - 1)) * 100}%` }}
+          style={{ width: `${(Math.min(currentIndex, ONBOARDING_STEPS.length - 1) / (ONBOARDING_STEPS.length - 1)) * 100}%` }}
         />
 
         {ONBOARDING_STEPS.map((step, i) => {
@@ -66,7 +66,7 @@ export default function OnboardingStepper({ currentIndex, completedSteps }: Prop
 
       {/* Indicateur mobile */}
       <p className="text-center text-xs text-gray-500 sm:hidden mt-1">
-        Étape {currentIndex + 1} sur {ONBOARDING_STEPS.length} — {ONBOARDING_STEPS[currentIndex].label}
+        Étape {Math.min(currentIndex + 1, ONBOARDING_STEPS.length)} sur {ONBOARDING_STEPS.length} — {ONBOARDING_STEPS[Math.min(currentIndex, ONBOARDING_STEPS.length - 1)]?.label ?? ''}
       </p>
     </div>
   );

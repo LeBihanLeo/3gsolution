@@ -74,6 +74,16 @@ export default function OnboardingWizard() {
     }).catch(() => {});
   }, [completedSteps]);
 
+  // Synchronise le step dans l'URL pour survivre aux remounts (useSearchParams)
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    const urlStep = params.get('step');
+    if (urlStep !== String(currentIndex)) {
+      params.set('step', String(currentIndex));
+      router.replace(`/espace-restaurateur/onboarding?${params.toString()}`);
+    }
+  }, [currentIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const goNext = useCallback(() => {
     setDirection(1);
     setCurrentIndex((i) => Math.min(i + 1, STEP_COMPONENTS.length - 1));
