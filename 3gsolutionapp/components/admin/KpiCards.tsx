@@ -15,7 +15,7 @@ function startOfTodayParis(): Date {
 
 function KpiCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
-    <div className="bg-white rounded-xl shadow-lg p-5 flex flex-col gap-1">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-md p-5 flex flex-col gap-1">
       <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">{label}</p>
       <p className="text-2xl font-bold text-gray-900">{value}</p>
       {sub && <p className="text-xs text-gray-400">{sub}</p>}
